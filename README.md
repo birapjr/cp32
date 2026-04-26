@@ -5,3 +5,4 @@ This is a personal project to write a unix like os for the Cardputer.
 
 I will be using the Minix v1 as base for the code, ajusting it as it goes.
 
+The project initial goal have the os kernel, a shell and some applications
