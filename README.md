@@ -1,2 +1,7 @@
 # cp32
 CP32 OS - M5Stack Cardputer Adv ESP32-S3 Unix like OS
+
+This is a personal project to write a unix like os for the Cardputer.
+
+I will be using the Minix v1 as base for the code, ajusting it as it goes.
+
