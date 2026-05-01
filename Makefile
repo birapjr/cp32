@@ -14,8 +14,11 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32
 
 # Files
-BUILD_MAIN_O  = $(BUILD_DIR)/main.o
-BUILD_MPX32_O  = $(BUILD_DIR)/mpx32.o
+# Files
+C_SRCS = main.c serial.c
+C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
+
+BUILD_MPX32_O = $(BUILD_DIR)/mpx32.o
 TARGET  = cp32
 
 # Directories
@@ -25,11 +28,11 @@ BUILD_DIR = build
 # Default target
 all: $(BUILD_DIR)/$(TARGET).bin
 
-# Compile main.c from kernel folder
-$(BUILD_MAIN_O): $(SRC_DIR)/main.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $(SRC_DIR)/main.c -o $(BUILD_MAIN_O)
+# Compile all .c files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Assemble mpx32.S from kernel folder
+# Assemble mpx32.S
 $(BUILD_MPX32_O): $(SRC_DIR)/mpx32.S | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $(SRC_DIR)/mpx32.S -o $(BUILD_MPX32_O)
 
@@ -38,20 +41,21 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Link
-$(BUILD_DIR)/$(TARGET).elf: $(BUILD_MAIN_O) $(BUILD_MPX32_O)
-	$(LD) $(LDFLAGS) $(BUILD_MAIN_O) $(BUILD_MPX32_O) -o $(BUILD_DIR)/$(TARGET).elf
+$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(BUILD_MPX32_O)
+	$(LD) $(LDFLAGS) $(C_OBJS) $(BUILD_MPX32_O) -o $@
 
 # Convert to raw binary for flashing
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 	esptool --chip esp32s3 elf2image \
-		--flash-mode dio \
-		--flash-freq 40m \
-		--flash-size 4MB \
-		$(BUILD_DIR)/$(TARGET).elf
+	  --flash-mode dio \
+	  --flash-freq 40m \
+	  --flash-size 4MB \
+	  $(BUILD_DIR)/$(TARGET).elf
+	
 
 # Flash to ESP32-S3
 flash: $(BUILD_DIR)/$(TARGET).bin
-	esptool --chip esp32s3 --port /dev/cu.usbmodem2101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
+	esptool --chip esp32s3 --port /dev/cu.usbmodem101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
 
 # Clean build artifacts
 clean:
