@@ -6,5 +6,6 @@
 
 void usbj_print(const char *str);
 void usbj_print_u32(uint32_t val);
+void usbj_print_hex32(uint32_t val);
 
 #endif

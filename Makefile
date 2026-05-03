@@ -9,7 +9,7 @@ LD      = xtensa-esp32s3-elf-gcc
 OBJCOPY = xtensa-esp32s3-elf-objcopy
 
 # Flags
-CFLAGS  = -ffreestanding -nostdlib -nostartfiles -O0 -mlongcalls -mtext-section-literals -mabi=call0
+CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -mlongcalls -mtext-section-literals -mabi=call0
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32
 
