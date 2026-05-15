@@ -9,8 +9,6 @@
 .section .text, "ax"            # Executable code, a - Allocatable, x - Executable
 .global CP32
 CP32:                           # this is the entry point for the CP32 kernel
-    #rsil    a8, 15             # disable all interrupts
-
     # Stack pointer: _stack_top is the high address (stack grows down)
     movi    a1, _stack_top
     movi    a5, -16
