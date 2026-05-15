@@ -49,7 +49,7 @@ $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 	esptool --chip esp32s3 elf2image \
 	  --flash-mode dio \
 	  --flash-freq 40m \
-	  --flash-size 4MB \
+	  --flash-size 8MB \
 	  $(BUILD_DIR)/$(TARGET).elf
 	
 
