@@ -60,3 +60,37 @@ flash: $(BUILD_DIR)/$(TARGET).bin
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
+
+# ── ELF inspection targets ──────────────────────────────────────
+
+# Section sizes — how much each section actually uses
+size: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-size -A $(BUILD_DIR)/$(TARGET).elf
+
+# Full symbol table sorted by address — see exactly where every
+# function and variable lands in memory
+nm: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-nm -n $(BUILD_DIR)/$(TARGET).elf
+
+# Disassembly — read the actual machine code with source interleaved
+disasm: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-objdump -d -S $(BUILD_DIR)/$(TARGET).elf | less
+
+# Section headers — VMA, LMA, size, flags for every section
+headers: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-objdump -h $(BUILD_DIR)/$(TARGET).elf
+
+# Full linker map — verbose version of the above, shows which .o
+# file contributed each symbol and exactly how sections were placed
+map: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-nm --print-size --size-sort --radix=x \
+	    $(BUILD_DIR)/$(TARGET).elf
+
+# Dump all ELF segment headers (LMA vs VMA — critical for verifying
+# the AT > irom placement is correct)
+segments: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-readelf -l $(BUILD_DIR)/$(TARGET).elf
+
+# Dump all section headers with addresses
+sections: $(BUILD_DIR)/$(TARGET).elf
+	xtensa-esp32s3-elf-readelf -S $(BUILD_DIR)/$(TARGET).elf
