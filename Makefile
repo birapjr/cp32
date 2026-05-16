@@ -18,8 +18,12 @@ LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP3
 C_SRCS = main.c serial.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 
-BUILD_MPX32_O = $(BUILD_DIR)/mpx32.o
 TARGET  = cp32
+
+# Assembly objects
+BUILD_MPX32_O = $(BUILD_DIR)/mpx32.o
+BUILD_VECTORS_O = $(BUILD_DIR)/vectors.o
+BUILD_IRQ_O = $(BUILD_DIR)/irq.o
 
 # Directories
 SRC_DIR = kernel
@@ -32,17 +36,25 @@ all: $(BUILD_DIR)/$(TARGET).bin
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Assemble mpx32.S
+# Compile mpx32.S
 $(BUILD_MPX32_O): $(SRC_DIR)/mpx32.S | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $(SRC_DIR)/mpx32.S -o $(BUILD_MPX32_O)
+
+# Compile vectors.S - gets a special flag: no automatic literal pool injection
+$(BUILD_VECTORS_O): $(SRC_DIR)/vectors.S | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -mno-text-section-literals -c $< -o $@
+
+# Compile irq.S
+$(BUILD_IRQ_O): $(SRC_DIR)/irq.S | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -c $(SRC_DIR)/irq.S -o $(BUILD_IRQ_O)
 
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Link
-$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(BUILD_MPX32_O)
-	$(LD) $(LDFLAGS) $(C_OBJS) $(BUILD_MPX32_O) -o $@
+$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O)
+	$(LD) $(LDFLAGS) $(C_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) -o $@
 
 # Convert to raw binary for flashing
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
@@ -61,7 +73,7 @@ flash: $(BUILD_DIR)/$(TARGET).bin
 clean:
 	rm -rf $(BUILD_DIR)
 
-# ── ELF inspection targets ──────────────────────────────────────
+# ---- ELF inspection targets ----
 
 # Section sizes — how much each section actually uses
 size: $(BUILD_DIR)/$(TARGET).elf
