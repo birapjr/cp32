@@ -32,4 +32,8 @@ void start() {
     /* Feed/disable all watchdogs at the top of every iteration */
     wdt_feed_all();
     swd_disable(); /* extra SWD latch — cheap insurance */
+
+    printk("\r\nCP32 OS kernel booting...\r\n");
+
+    printk("exiting start()\r\n");
 }

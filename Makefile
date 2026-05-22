@@ -15,7 +15,7 @@ LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP3
 
 # Files
 # Files
-C_SRCS = start.c serial.c wdt.c klib.c
+C_SRCS = start.c main.c serial.c wdt.c klib.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 
 TARGET  = cp32
@@ -67,7 +67,7 @@ $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 
 # Flash to ESP32-S3
 flash: $(BUILD_DIR)/$(TARGET).bin
-	esptool --chip esp32s3 --port /dev/cu.usbmodem101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
+	esptool --chip esp32s3 --port /dev/cu.usbmodem1101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
 
 # Clean build artifacts
 clean:

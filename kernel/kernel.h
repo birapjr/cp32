@@ -16,3 +16,4 @@
 #include "serial.h"
 #include "wdt.h"
 #include "klib.h"
+#include "glo.h"
