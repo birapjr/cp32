@@ -1,9 +1,8 @@
 #
-# This file is part of the lowest layer of CP32 kernel. All processing
-# switching and message handling is done here and in file proc.
+# This file is part of the lowest layer of CP32 kernel.
 #
 # Author: Ubirajara Cortes
-# Date: 2026
+# Date: 16.05.2026
 #
 
 #*====================================*
@@ -68,7 +67,12 @@ bss_done:
     rsync
 
     # ----------------------------------------------------------------
-    # STEP 5- Enter Kernel
+    # STEP 4- Prepare environmnet for the Kernel
+    # ----------------------------------------------------------------
+    call0   start
+
+    # ----------------------------------------------------------------
+    # STEP 6- Enter Kernel
     # ----------------------------------------------------------------
     call0   main                # call main() in C
 

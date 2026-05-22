@@ -1,86 +1,58 @@
-# CP32 Memoty Map
+# CP32 Memory Map
 
-On this file I will document the memory map of the CP32 and the ESP32-S3.
+This document tracks the current ELF layout for CP32 on ESP32-S3.
 
 ![CP32 Memory Map](cp32-memory-map.png)
 
-## make size
+## Section layout
 
-```text
-.vectors    0    1077346304   ← Not yet defined: zero bytes
-.startup   79    1077346304
-.text    1840    1077346384
-```
-.vectors is empty (0 bytes). Your linker script has a .vectors section with KEEP(*(.vectors)) but nothing in your code emits a .vectors section. mpx32.S uses .startup.text — so there is no vector table at all yet. The _vectors_start and _vectors_end symbols both land at 0x40370000 which is why make nm shows them as ? (undefined size). This is fine for now since you haven't written ISR handlers yet, but wsr vecbase is pointing at empty memory.
+| Section | Size | VMA | LMA | Notes |
+|---|---:|---:|---:|---|
+| `.vectors` | `0x0400` | `0x40370000` | `0x42010000` | Vector table in IRAM |
+| `.startup` | `0x004f` | `0x40370400` | `0x42010400` | Startup code in IRAM |
+| `.text` | `0x0788` | `0x40370450` | `0x42010450` | Main code in IRAM |
+| `.data` | `0x0004` | `0x3fc88000` | `0x42010bd8` | Initialized data in DRAM |
+| `.rodata` | `0x0158` | `0x3fc88004` | `0x42010bdc` | Read-only data in DRAM |
+| `.bss` | `0x0004` | `0x3fc8815c` | `-` | Zeroed at startup |
+| `.heap` | `0x20000` | `0x3fc88160` | `-` | Heap reservation |
+| `.stack` | `0x08000` | `0x3fca8160` | `-` | Stack reservation |
 
-```text
-.data        4    0x3FC88000   ← g_magic (4 bytes) ✓
-.rodata    344    0x3FC88004   ← strings from serial/wdt code ✓
-.bss         4    0x3FC8815C   ← g_boot_count (4 bytes) ✓
-.heap   131072    0x3FC88928   ← 128 KB reserved ✓
-.stack   32768    0x3FCA8160   ← 32 KB ✓
-```
+## Section summary
 
-All the data sections are correct and in the right order in DRAM.
-Total RAM used: .data + .rodata + .bss + .heap + .stack = 4 + 344 + 4 + 131072 + 32768 = 164192 bytes = 160 KB out of 480 KB. You have 320 KB free DRAM.
-Total IRAM used: .startup + .text = 79 + 1840 = 1919 bytes = ~1.9 KB out of 320 KB. Enormous room to grow.
+| Region | Start | End | Total | Notes |
+|---|---:|---:|---:|---|
+| IRAM | `0x40370000` | `0x40370bd8` | `0x0bd8` | `.vectors + .startup + .text` |
+| DRAM data | `0x3fc88000` | `0x3fca8160` | `0x20160` | `.data + .rodata + .bss + .heap` |
+| Stack | `0x3fca8160` | `0x3fcb0160` | `0x8000` | Reserved stack space |
 
-## make segments — the critical one
-```text
-LOAD  VirtAddr=0x40370000  PhysAddr=0x42010000  FileSiz=0x780  MemSiz=0x780
-LOAD  VirtAddr=0x3FC88000  PhysAddr=0x42010780  FileSiz=0x15C  MemSiz=0x20160
-LOAD  VirtAddr=0x3FCA8160  PhysAddr=0x420108E0  FileSiz=0x000  MemSiz=0x08000
-```
+## Program headers
 
-This is exactly right. Breaking it down:
-Segment 0 — IRAM code:
+| Segment | Offset | VMA | LMA | FileSiz | MemSiz | Flags | Notes |
+|---|---:|---:|---:|---:|---:|---|---|
+| 0 | `0x001000` | `0x40370000` | `0x42010000` | `0x0bd8` | `0x0bd8` | `R E` | IRAM code |
+| 1 | `0x002000` | `0x3fc88000` | `0x42010bd8` | `0x015c` | `0x20160` | `RW` | Initialized data plus zeroed RAM |
+| 2 | `0x000160` | `0x3fca8160` | `0x42010d40` | `0x0000` | `0x8000` | `RW` | Stack reservation |
 
-```text
-VMA 0x40370000 — where CPU executes it
-LMA 0x42010000 — where esptool writes it in flash
-FileSiz = MemSiz = 0x780 — no BSS-like expansion, pure code
-```
+## Symbol map
 
-Segment 1 — DRAM data:
+| Symbol | Address | Type | Notes |
+|---|---:|---|---|
+| `_data_start` | `0x3fc88000` | `D` | Start of `.data` |
+| `_data_end` | `0x3fc88004` | `D` | End of `.data` |
+| `_rodata_start` | `0x3fc88004` | `R` | Start of `.rodata` |
+| `_rodata_end` | `0x3fc8815c` | `R` | End of `.rodata` |
+| `_heap_start` | `0x3fc88160` | `B` | Start of heap |
+| `_heap_end` | `0x3fca8160` | `B` | End of heap |
+| `_stack_bottom` | `0x3fca8160` | `B` | Bottom of stack |
+| `_stack_top` | `0x3fcb0160` | `B` | Top of stack |
+| `_iram_vma` | `0x40370000` | `T` | IRAM base |
+| `_vectors_start` | `0x40370000` | `T` | Start of vectors |
+| `_vector_table_end` | `0x40370400` | `t` | End of vector table |
+| `CP32` | `0x40370410` | `T` | Entry trampoline |
 
-```
-VMA 0x3FC88000 — runtime address
-LMA 0x42010780 — stored in flash right after the code segment
-```
-FileSiz=0x15C (348 bytes) vs MemSiz=0x20160 (131424 bytes) — the difference is .bss + .heap which take no flash space but are reserved in RAM. The ROM bootloader copies the 348 bytes and zeroes the rest.
+## Quick read
 
-
-Segment 2 — Stack:
-
-```text
-FileSiz=0x000 — takes no flash space at all, just reserves 32 KB in RAM
-```
-The ROM bootloader knows to reserve it but copies nothing
-
-The _vectors issue confirmed:
-
-Segment Sections...
-```text
- 00     .startup .text        ← .vectors missing! it's empty
- 01     .data .rodata .bss .heap
- 02     .stack
-```
-.vectors doesn't appear in any segment because it has zero size.
-
-## make nm — symbols
-
-```text
-3fc88000  D  _data_start
-3fc88000  d  g_magic          ← .data, 4 bytes, value 0xC0320000
-3fc88004  D  _data_end
-3fc8815c  B  _bss_start
-3fc8815c  b  g_boot_count     ← .bss, 4 bytes, zeroed by startup
-3fc88160  B  _bss_end
-3fca8160  B  _stack_bottom
-3fcb0160  B  _stack_top       ← a1 loaded here, stack is 32 KB ✓
-40370000  ?  _vectors_end     ← same address as _vectors_start = empty
-40370000  ?  _vectors_start
-42010780  A  _data_lma        ← flash address startup copies .data from
-```
-
-Everything is where it should be. One thing worth noting — _data_lma is 0x42010780 which is _iram_lma + 0x780 (right after the code segment in flash), exactly matching the LMA in the segment dump.
+- The vector table now occupies `0x0400` bytes at `0x40370000`.
+- The startup code begins at `0x40370400` and `.text` begins at `0x40370450`.
+- `.data`, `.rodata`, `.bss`, `.heap`, and `.stack` are contiguous in DRAM.
+- Flash load addresses are tightly packed, starting at `0x42010000`.
