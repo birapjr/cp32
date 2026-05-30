@@ -14,7 +14,7 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32
 
 # Files
-C_SRCS = start.c main.c misc.c serial.c wdt.c klib.c
+C_SRCS = start.c main.c misc.c proc.c serial.c wdt.c klib.c
 LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))

@@ -36,9 +36,9 @@ void start() {
     wdt_feed_all();
     swd_disable(); /* extra SWD latch — cheap insurance */
 
-    printf("\r\nCP32 OS kernel booting...\r\n");
+    status_line("\r\nCP32 OS kernel booting", 34);
 
-    printf("exiting start()\r\n");
+    status_line("exiting start()", 32);
 }
 
 /*==========================================================================*

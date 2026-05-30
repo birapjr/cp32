@@ -11,13 +11,14 @@
  */
 
 #include "kernel.h"
+#include "proc.h"
 
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
 void main(void) {
-  printk("main() starting...\r\n");
+  status_line("main() starting", 32);
 
-  printf("setup initial kernel variables...\r\n");
+  status_line("setup initial kernel variables", 32);
   register struct proc *rp;
   register int t;
   int sizeindex;
@@ -30,8 +31,19 @@ void main(void) {
   struct tasktab *ttp;
 
   /* Interpret memory sizes. */
-  printf("initialize memory...\r\n");
+  status_line("initialize memory", 32);
   mem_init();
+
+
+  /* Clear the process table.
+   * Set up mappings for proc_addr() and proc_number() macros.
+   */
+  status_line("cleaning proccess table", 32);
+  for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
+	rp->p_flags = P_SLOT_FREE;
+	rp->p_nr = t;		/* proc number from ptr */
+        (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
+  }
 
   while(1){}
   // TODO: Continue kernel from here

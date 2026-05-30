@@ -12,12 +12,16 @@
  * Replace them one at a time as real functionality is needed.
  *
  * Register ownership on interrupt entry (Xtensa LX7):
- *   a0       — saved automatically into EPC[N] (PC) and EPS[N] (PS)
  *   a0..a15  — caller's registers, NOT saved by hardware
+ *   EPC[N]   — saved PC for the interrupted context
+ *   EPS[N]   — saved PS for the interrupted context
  *   EXCCAUSE — reason code for exceptions
  *   EXCVADDR — faulting address (for load/store exceptions)
  *   excsave1 — scratch register saved by hardware for level-1
  *   excsaveN — scratch for level N
+ *
+ * Our C-visible process frame mirrors what the kernel can observe directly:
+ * the saved a0 scratch plus the saved processor status bits.
  */
 
 .section .text, "ax"

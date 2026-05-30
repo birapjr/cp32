@@ -51,8 +51,7 @@
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))
 
 /* Number of tasks. */
-#define NR_TASKS	(9 + ENABLE_WINI + ENABLE_SCSI + ENABLE_CDROM \
-			+ ENABLE_NETWORKING + 2 * ENABLE_AUDIO)
+#define NR_TASKS	9
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)

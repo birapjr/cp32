@@ -1,7 +1,5 @@
 /* function to log/write to serial */
-#include <stdint.h>
-#include <esp32s3/const.h>
-#include "klib.h"
+#include "kernel.h"
 
 static void usbj_putc(char c) {
     volatile uint32_t t = 200000;
@@ -115,4 +113,11 @@ void startup_usb_conn(void) {
 
         delay(100000); /* ~5.8 ms per chunk, 20 chunks = ~116 ms total */
     }
+}
+
+/**
+ * Print kernel startup stage to serial connection
+ */
+void status_line(const char *msg, int width) {
+    printk("%-*s...\r\n", width, msg);
 }
