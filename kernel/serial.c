@@ -1,6 +1,6 @@
 /* function to log/write to serial */
 #include <stdint.h>
-#include "const.h"
+#include <esp32s3/const.h>
 #include "klib.h"
 
 static void usbj_putc(char c) {
@@ -115,8 +115,4 @@ void startup_usb_conn(void) {
 
         delay(100000); /* ~5.8 ms per chunk, 20 chunks = ~116 ms total */
     }
-}
-
-void printk(const char *s) {
-    usbj_print(s);
 }

@@ -7,6 +7,9 @@
  * 
  */
 #include "kernel.h"
+#include <stdlib.h>
+
+PRIVATE char k_environ[256];	/* environment strings passed by loader */
 
 void start() {
       /* Step 1 — strobe the Super WDT before anything else. */
@@ -33,7 +36,42 @@ void start() {
     wdt_feed_all();
     swd_disable(); /* extra SWD latch — cheap insurance */
 
-    printk("\r\nCP32 OS kernel booting...\r\n");
+    printf("\r\nCP32 OS kernel booting...\r\n");
 
-    printk("exiting start()\r\n");
+    printf("exiting start()\r\n");
+}
+
+/*==========================================================================*
+ *				k_atoi					    *
+ *==========================================================================*/
+PRIVATE int k_atoi(s)
+register char *s;
+{
+/* Convert string to integer. */
+
+  return strtol(s, (char **) NULL, 10);
+}
+
+
+/*==========================================================================*
+ *				k_getenv				    *
+ *==========================================================================*/
+PUBLIC char *k_getenv(name)
+char *name;
+{
+/* Get environment value - kernel version of getenv to avoid setting up the
+ * usual environment array.
+ */
+
+  register char *namep;
+  register char *envp;
+
+  for (envp = k_environ; *envp != 0;) {
+	for (namep = name; *namep != 0 && *namep == *envp; namep++, envp++)
+		;
+	if (*namep == '\0' && *envp == '=') return(envp + 1);
+	while (*envp++ != 0)
+		;
+  }
+  return(NIL_PTR);
 }

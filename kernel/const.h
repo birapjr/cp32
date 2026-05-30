@@ -1,123 +1,159 @@
-/* General constants used by the kernel.
- *
- * All peripheral registers are memory-mapped on the ESP32-S3.
- * Offsets were verified by live register dumps on real hardware —
- * several differ from what early versions of the TRM document. */
+/* General constants used by the kernel. */
 
-#ifndef CONST_H
-#define CONST_H
+#if (CHIP == INTEL)
 
-/* ── USB Serial/JTAG ──────────────────────────────────────────────────────────
- * The ESP32-S3 has a built-in USB Serial/JTAG controller that exposes a CDC
- * serial port over USB without any external chip. We use it as the kernel
- * console. EP1 is the IN endpoint (device → host).
- *
- * USBJ_EP1      : write one byte here to queue it for transmission
- * USBJ_EP1_CONF : control/status register for EP1
- *   bit 0 (WR_DONE)         : strobe — write 1 to commit the queued byte
- *   bit 1 (IN_EP_DATA_FREE) : 1 when the FIFO has room for another byte */
-#define USB_SERIAL_JTAG_BASE    0x60038000
-#define USBJ_EP1      (*(volatile uint32_t*)(USB_SERIAL_JTAG_BASE + 0x00))
-#define USBJ_EP1_CONF (*(volatile uint32_t*)(USB_SERIAL_JTAG_BASE + 0x04))
-#define USBJ_WR_DONE          (1u << 0)
-#define USBJ_IN_EP_DATA_FREE  (1u << 1)
+#define K_STACK_BYTES   1024	/* how many bytes for the kernel stack */
 
-/* ── System clock ─────────────────────────────────────────────────────────────
- * These two registers select the CPU and system bus clock sources/dividers.
- * We do not currently change the clock — the ROM bootloader leaves the CPU
- * running at 240 MHz which is what all our delay calibrations assume. */
-#define SYSTEM_BASE      0x600C0000
-#define SYS_CPU_PER_CONF (*(volatile uint32_t*)(SYSTEM_BASE + 0x08))
-#define SYS_SYSCLK_CONF  (*(volatile uint32_t*)(SYSTEM_BASE + 0x58))
+#define INIT_PSW      0x0200	/* initial psw */
+#define INIT_TASK_PSW 0x1200	/* initial psw for tasks (with IOPL 1) */
+#define TRACEBIT       0x100	/* OR this with psw in proc[] for tracing */
+#define SETPSW(rp, new)	/* permits only certain bits to be set */ \
+	((rp)->p_reg.psw = (rp)->p_reg.psw & ~0xCD5 | (new) & 0xCD5)
 
-/* ── Timer Group 0 WDT (TG0) ─────────────────────────────────────────────────
- * The ESP32-S3 has two independent Timer Groups (TG0, TG1), each containing
- * a watchdog timer. The ROM bootloader arms both before handing control to
- * user code. If not fed or disabled they reset the chip.
- *
- * WDTCONFIG0  : main config register — writing 0 disables the WDT entirely
- * WDTFEED     : write any value to reset the WDT counter (feed it)
- * WDTWPROTECT : write-protect register — must write WDT_UNLOCK_KEY before
- *               any other WDT register can be modified, then lock again with
- *               WDT_LOCK_KEY (0) when done */
-#define TIMG0_BASE        0x6001F000
-#define TIMG0_WDTCONFIG0  (*(volatile uint32_t*)(TIMG0_BASE + 0x0048))
-#define TIMG0_WDTFEED     (*(volatile uint32_t*)(TIMG0_BASE + 0x0060))
-#define TIMG0_WDTWPROTECT (*(volatile uint32_t*)(TIMG0_BASE + 0x0064))
-
-/* ── Timer Group 1 WDT (TG1) ─────────────────────────────────────────────────
- * Identical layout to TG0, different base address. */
-#define TIMG1_BASE        0x60020000
-#define TIMG1_WDTCONFIG0  (*(volatile uint32_t*)(TIMG1_BASE + 0x0048))
-#define TIMG1_WDTFEED     (*(volatile uint32_t*)(TIMG1_BASE + 0x0060))
-#define TIMG1_WDTWPROTECT (*(volatile uint32_t*)(TIMG1_BASE + 0x0064))
-
-/* ── RTC WDT + Super WDT (SWD) ───────────────────────────────────────────────
- * The RTC controller (RTC_CNTL) houses two more watchdogs:
- *
- *  RTC WDT  — a conventional staged watchdog clocked from the RTC domain.
- *             The ROM arms it during boot. It fires reset cause 0x10.
- *
- *  Super WDT (SWD) — a background watchdog that cannot be fully disabled by
- *             normal means; it can only be neutered by setting its AUTO_FEED
- *             (disable) bit and strobing the feed bit simultaneously, and
- *             the write must be repeated because the RTC slow clock (~150 kHz)
- *             needs several cycles to latch the value. It fires reset cause
- *             0x12.
- *
- * IMPORTANT — offset correction:
- *   Early drafts of the ESP32-S3 TRM list WDTFEED at +0xA4 and WDTWPROTECT
- *   at +0xA8. Live register dumps on real hardware show those addresses hold
- *   WDTCONFIG2/3 (timer reload values). The real layout is:
- *
- *     +0x0098  WDTCONFIG0   (enable + stage actions)
- *     +0x009C  WDTCONFIG1   (stage 0 timeout)
- *     +0x00A0  WDTCONFIG2   (stage 1 timeout)
- *     +0x00A4  WDTCONFIG3   (stage 2 timeout)
- *     +0x00A8  WDTCONFIG4   (stage 3 timeout)
- *     +0x00AC  WDTFEED      ← was wrongly documented as +0xA4
- *     +0x00B0  WDTWPROTECT  ← was wrongly documented as +0xA8
- *     +0x00B4  SWD_CONF     ← was wrongly documented as +0xAC
- *     +0x00B8  SWD_WPROTECT ← was wrongly documented as +0xB0
+/* Initial sp for mm, fs and init.
+ *	2 bytes for short jump
+ *	2 bytes unused
+ *	3 words for init_org[] used by fs only
+ *	3 words for real mode debugger trap (actually needs 1 more)
+ *	3 words for save and restart temporaries
+ *	3 words for interrupt
+ * Leave no margin, to flush bugs early.
  */
-#define RTC_CNTL_BASE   0x60008000
+#define INIT_SP (2 + 2 + 3 * 2 + 3 * 2 + 3 * 2 + 3 * 2)
 
-/* RTC general options — not currently used but defined for completeness */
-#define RTC_OPTIONS0    (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x0000))
+#define HCLICK_SHIFT       4	/* log2 of HCLICK_SIZE */
+#define HCLICK_SIZE       16	/* hardware segment conversion magic */
+#if CLICK_SIZE >= HCLICK_SIZE
+#define click_to_hclick(n) ((n) << (CLICK_SHIFT - HCLICK_SHIFT))
+#else
+#define click_to_hclick(n) ((n) >> (HCLICK_SHIFT - CLICK_SHIFT))
+#endif
+#define hclick_to_physb(n) ((phys_bytes) (n) << HCLICK_SHIFT)
+#define physb_to_hclick(n) ((n) >> HCLICK_SHIFT)
 
-/* RTC WDT registers */
-#define RTC_WDTCONFIG0  (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x0098))
-#define RTC_WDTCONFIG1  (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x009C))
-#define RTC_WDTCONFIG2  (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00A0))
-#define RTC_WDTCONFIG3  (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00A4))
-#define RTC_WDTCONFIG4  (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00A8))
-#define RTC_WDTFEED     (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00AC)) /* corrected from +0xA4 */
-#define RTC_WDTWPROTECT (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00B0)) /* corrected from +0xA8 */
+/* Interrupt vectors defined/reserved by processor. */
+#define DIVIDE_VECTOR      0	/* divide error */
+#define DEBUG_VECTOR       1	/* single step (trace) */
+#define NMI_VECTOR         2	/* non-maskable interrupt */
+#define BREAKPOINT_VECTOR  3	/* software breakpoint */
+#define OVERFLOW_VECTOR    4	/* from INTO */
 
-/* Super WDT registers */
-#define RTC_SWD_CONF    (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00B4)) /* corrected from +0xAC */
-#define RTC_SWD_WPROTECT (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x00B8)) /* corrected from +0xB0 */
+/* Fixed system call vector. */
+#define SYS_VECTOR        32	/* system calls are made with int SYSVEC */
+#define SYS386_VECTOR     33	/* except 386 system calls use this */
+#define LEVEL0_VECTOR     34	/* for execution of a function at level 0 */
 
-/* ── WDT keys ─────────────────────────────────────────────────────────────────
- * Writing WDT_UNLOCK_KEY to a WDTWPROTECT register allows writes to the
- * associated WDT config registers. Writing WDT_LOCK_KEY (0) re-locks them.
- * The TG0/TG1 and RTC WDT share the same key value. */
-#define WDT_UNLOCK_KEY  0x50D83AA1u
-#define WDT_LOCK_KEY    0x00000000u
+/* Suitable irq bases for hardware interrupts.  Reprogram the 8259(s) from
+ * the PC BIOS defaults since the BIOS doesn't respect all the processor's
+ * reserved vectors (0 to 31).
+ */
+#define BIOS_IRQ0_VEC   0x08	/* base of IRQ0-7 vectors used by BIOS */
+#define BIOS_IRQ8_VEC   0x70	/* base of IRQ8-15 vectors used by BIOS */
+#define IRQ0_VECTOR     0x28	/* more or less arbitrary, but > SYS_VECTOR */
+#define IRQ8_VECTOR     0x30 	/* together for simplicity */
 
-/* RTC WDT enable bit — bit 31 of WDTCONFIG0.
- * Writing 0 to the whole register clears this and disables the WDT. */
-#define RTC_WDT_EN      (1u << 31)
+/* Hardware interrupt numbers. */
+#define NR_IRQ_VECTORS    16
+#define CLOCK_IRQ          0
+#define KEYBOARD_IRQ       1
+#define CASCADE_IRQ        2	/* cascade enable for 2nd AT controller */
+#define ETHER_IRQ          3	/* default ethernet interrupt vector */
+#define SECONDARY_IRQ      3	/* RS232 interrupt vector for port 2 */
+#define RS232_IRQ          4	/* RS232 interrupt vector for port 1 */
+#define XT_WINI_IRQ        5	/* xt winchester */
+#define FLOPPY_IRQ         6	/* floppy disk */
+#define PRINTER_IRQ        7
+#define AT_WINI_IRQ       14	/* at winchester */
 
-/* ── Super WDT bits ───────────────────────────────────────────────────────────
- * SWD_UNLOCK_KEY  : written to SWD_WPROTECT to allow writes to SWD_CONF
- * SWD_DISABLE_BIT : bit 31 of SWD_CONF — sets AUTO_FEED mode (disables SWD)
- * SWD_FEED_BIT    : bit 30 of SWD_CONF — strobes the feed; hardware clears
- *                   it automatically after latching. Must be written together
- *                   with SWD_DISABLE_BIT in a single write to latch the
- *                   disable — two separate writes do not work reliably. */
-#define SWD_UNLOCK_KEY  0x8F1D312Au
-#define SWD_DISABLE_BIT (1u << 31)
-#define SWD_FEED_BIT    (1u << 30)
+/* Interrupt number to hardware vector. */
+#define BIOS_VECTOR(irq)	\
+	(((irq) < 8 ? BIOS_IRQ0_VEC : BIOS_IRQ8_VEC) + ((irq) & 0x07))
+#define VECTOR(irq)	\
+	(((irq) < 8 ? IRQ0_VECTOR : IRQ8_VECTOR) + ((irq) & 0x07))
 
-#endif /* CONST_H */
+/* BIOS hard disk parameter vectors. */
+#define WINI_0_PARM_VEC 0x41
+#define WINI_1_PARM_VEC 0x46
+
+/* 8259A interrupt controller ports. */
+#define INT_CTL         0x20	/* I/O port for interrupt controller */
+#define INT_CTLMASK     0x21	/* setting bits in this port disables ints */
+#define INT2_CTL        0xA0	/* I/O port for second interrupt controller */
+#define INT2_CTLMASK    0xA1	/* setting bits in this port disables ints */
+
+/* Magic numbers for interrupt controller. */
+#define ENABLE          0x20	/* code used to re-enable after an interrupt */
+
+/* Sizes of memory tables. */
+#ifndef NR_MEMS
+#define NR_MEMS            3	/* number of chunks of memory */
+#endif
+
+/* Miscellaneous ports. */
+#define PCR		0x65	/* Planar Control Register */
+#define PORT_B          0x61	/* I/O port for 8255 port B (kbd, beeper...) */
+#define TIMER0          0x40	/* I/O port for timer channel 0 */
+#define TIMER2          0x42	/* I/O port for timer channel 2 */
+#define TIMER_MODE      0x43	/* I/O port for timer mode control */
+
+#endif /* (CHIP == INTEL) */
+
+#if (CHIP == M68000)
+
+#define K_STACK_BYTES   1024	/* how many bytes for the kernel stack */
+
+/* Sizes of memory tables. */
+#define NR_MEMS            2	/* number of chunks of memory */
+
+/* p_reg contains: d0-d7, a0-a6,   in that order. */
+#define NR_REGS           15	/* number of general regs in each proc slot */
+ 
+#define TRACEBIT      0x8000	/* or this with psw in proc[] for tracing */
+#define SETPSW(rp, new)		/* permits only certain bits to be set */ \
+	((rp)->p_reg.psw = (rp)->p_reg.psw & ~0xFF | (new) & 0xFF)
+ 
+#define MEM_BYTES  0xffffffff	/* memory size for /dev/mem */
+ 
+#ifdef __ACK__
+#define FSTRUCOPY
+#endif
+
+#endif /* (CHIP == M68000) */
+
+#if (CHIP == ESP32_S3)
+
+#define K_STACK_BYTES   4096	/* stack space for the kernel on DRAM */
+
+/* Sizes of memory tables. */
+#define NR_MEMS            3	/* number of chunks of memory */
+
+#define NR_REGS           16	/* Xtensa core register window is not used here */
+
+#define TRACEBIT       0x0000	/* no legacy tracing bit on this port */
+
+#endif /* (CHIP == ESP32_S3) */
+
+/* The following items pertain to the scheduling queues. */
+#define TASK_Q             0	/* ready tasks are scheduled via queue 0 */
+#define SERVER_Q           1	/* ready servers are scheduled via queue 1 */
+#define USER_Q             2	/* ready users are scheduled via queue 2 */
+
+#if (MACHINE == ATARI)
+#define SHADOW_Q           3	/* runnable, but shadowed processes */
+#define NQ                 4	/* # of scheduling queues */
+#else
+#define NQ                 3	/* # of scheduling queues */
+#endif
+
+/* Env_parse() return values. */
+#define EP_UNSET	0	/* variable not set */
+#define EP_OFF		1	/* var = off */
+#define EP_ON		2	/* var = on (or field left blank) */
+#define EP_SET		3	/* var = 1:2:3 (nonblank field) */
+
+/* To translate an address in kernel space to a physical address.  This is
+ * the same as umap(proc_ptr, D, vir, sizeof(*vir)), but a lot less costly.
+ */
+#define vir2phys(vir)	(data_base + (vir_bytes) (vir))
+
+#define printf        printk	/* the kernel really uses printk, not printf */
