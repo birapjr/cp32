@@ -9,14 +9,15 @@ LD      = xtensa-esp32s3-elf-gcc
 OBJCOPY = xtensa-esp32s3-elf-objcopy
 
 # Flags
-CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -mlongcalls -mtext-section-literals -mabi=call0
+CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32
 
 # Files
-# Files
-C_SRCS = start.c main.c serial.c wdt.c klib.c
+C_SRCS = start.c main.c misc.c serial.c wdt.c klib.c
+LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
+LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 
 TARGET  = cp32
 
@@ -53,8 +54,11 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Link
-$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O)
-	$(LD) $(LDFLAGS) $(C_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) -o $@
+$(BUILD_DIR)/%.o: lib/other/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O)
+	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) -o $@
 
 # Convert to raw binary for flashing
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
@@ -67,7 +71,7 @@ $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 
 # Flash to ESP32-S3
 flash: $(BUILD_DIR)/$(TARGET).bin
-	esptool --chip esp32s3 --port /dev/cu.usbmodem1101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
+	esptool --chip esp32s3 --port /dev/cu.usbmodem2101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
 
 # Clean build artifacts
 clean:

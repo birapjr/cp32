@@ -9,6 +9,5 @@ void usbj_print_u32(uint32_t val);
 void usbj_print_hex32(uint32_t val);
 void print_diagnostics(void);
 void startup_usb_conn(void);
-void printk(const char *str);
 
 #endif
