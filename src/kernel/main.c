@@ -16,9 +16,9 @@
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
 void main(void) {
-  status_line("main() starting", 32);
+  status_line("main() starting", 0);
 
-  status_line("setup initial kernel variables", 32);
+  status_line("setup initial kernel variables", 0);
   register struct proc *rp;
   register int t;
   int sizeindex;
@@ -31,14 +31,14 @@ void main(void) {
   struct tasktab *ttp;
 
   /* Interpret memory sizes. */
-  status_line("initialize memory", 32);
+  status_line("initialize memory", 0);
   mem_init();
 
 
   /* Clear the process table.
    * Set up mappings for proc_addr() and proc_number() macros.
    */
-  status_line("cleaning proccess table", 32);
+  status_line("cleaning proccess table", 0);
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
 	rp->p_flags = P_SLOT_FREE;
 	rp->p_nr = t;		/* proc number from ptr */

@@ -8,8 +8,11 @@
  */
 #include "kernel.h"
 #include <stdlib.h>
+#include <minix/boot.h>
 
 PRIVATE char k_environ[256];	/* environment strings passed by loader */
+//struct bparam_s boot_parameters;
+unsigned int processor;
 
 void start() {
       /* Step 1 — strobe the Super WDT before anything else. */
@@ -36,9 +39,17 @@ void start() {
     wdt_feed_all();
     swd_disable(); /* extra SWD latch — cheap insurance */
 
-    status_line("\r\nCP32 OS kernel booting", 34);
+    status_line("\r\nCP32 OS kernel booting", 2);
 
-    status_line("exiting start()", 32);
+    status_line("setup boot parameters to kernel memory", 0);
+    boot_parameters.bp_rootdev = 0;
+    boot_parameters.bp_ramimagedev = 0;
+    boot_parameters.bp_ramsize = 480 * 1024;
+    boot_parameters.bp_processor = 32; /* magic number for esp32s3 */
+
+    processor = boot_parameters.bp_processor;
+
+    status_line("exiting start()", 0);
 }
 
 /*==========================================================================*

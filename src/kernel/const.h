@@ -157,3 +157,5 @@
 #define vir2phys(vir)	(data_base + (vir_bytes) (vir))
 
 #define printf        printk	/* the kernel really uses printk, not printf */
+
+#define BASE_PRINT_WIDTH 40 /* used to format the status_line() output size */

@@ -22,5 +22,6 @@ static volatile uint32_t g_magic = 0xC0320000u;  /* .data — copied by startup 
 /* Kernel memory map populated by mem_init(). */
 extern struct memory mem[3];
 extern phys_clicks tot_mem_size;
+EXTERN unsigned int processor;	/* 32 for esp32s3 */
 
 #endif

@@ -119,5 +119,6 @@ void startup_usb_conn(void) {
  * Print kernel startup stage to serial connection
  */
 void status_line(const char *msg, int width) {
-    printk("%-*s...\r\n", width, msg);
+    int widthF = width + BASE_PRINT_WIDTH;
+    printk("%-*s...\r\n", widthF, msg);
 }
