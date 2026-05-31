@@ -23,29 +23,6 @@ struct stackframe_s {
 struct proc {
   struct stackframe_s p_reg;	/* process' registers saved in stack frame */
 
-#if (CHIP == INTEL)
-  reg_t p_ldt_sel;		/* selector in gdt giving ldt base and limit*/
-  struct segdesc_s p_ldt[2];	/* local descriptors for code and data */
-				/* 2 is LDT_SIZE - avoid include protect.h */
-#endif /* (CHIP == INTEL) */
-
-#if (CHIP == M68000)
-  reg_t p_splow;		/* lowest observed stack value */
-  int p_trap;			/* trap type (only low byte) */
-#if (SHADOWING == 0)
-  char *p_crp;			/* mmu table pointer (really struct _rpr *) */
-#else
-  phys_clicks p_shadow;		/* set if shadowed process image */
-  int align;			/* make the struct size a multiple of 4 */
-#endif
-  int p_nflips;			/* statistics */
-  char p_physio;		/* cannot be (un)shadowed now if set */
-#if defined(FPP)
-  struct fsave p_fsave;		/* FPP state frame and registers */
-  int align2;			/* make the struct size a multiple of 4 */
-#endif
-#endif /* (CHIP == M68000) */
-
   reg_t *p_stguard;		/* stack guard word */
 
   int p_nr;			/* number of this process (for fast access) */
