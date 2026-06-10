@@ -1156,3 +1156,19 @@ register struct proc *rp;
   }
 }
 #endif /* (CHIP == INTEL) */
+
+#if (CHIP == ESP32_S3)
+/*==========================================================================*
+ *				alloc_segments				    *
+ *==========================================================================*/
+PUBLIC void alloc_segments(rp)
+register struct proc *rp;
+{
+/* Xtensa/ESP32-S3 has no Intel-style segment registers or LDT to program.
+ * The MINIX process memory map is still maintained in p_map[] for software
+ * checks, but there is no hardware segment state to allocate here.
+ */
+
+  (void) rp;
+}
+#endif /* (CHIP == ESP32_S3) */

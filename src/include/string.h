@@ -5,12 +5,10 @@
 #ifndef _STRING_H
 #define _STRING_H
 
-#define NULL    ((void *)0)
+#include <stddef.h>
+#include <sys/types.h>
 
-#ifndef _SIZE_T
-#define _SIZE_T
-typedef unsigned int size_t;	/* type returned by sizeof */
-#endif /*_SIZE_T */
+#define NULL    ((void *)0)
 
 /* Function Prototypes. */
 #ifndef _ANSI_H

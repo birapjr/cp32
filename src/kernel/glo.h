@@ -10,6 +10,20 @@
 
 #include <stdint.h>
 #include <minix/type.h>
+#include "kernel.h"
+
+/* Global variables used in the kernel. */
+
+/* EXTERN is defined as extern except in table.c. */
+#ifdef _TABLE
+#undef EXTERN
+#define EXTERN
+#endif
+
+/* Kernel memory. */
+EXTERN phys_bytes code_base;	/* base of kernel code */
+EXTERN phys_bytes data_base;	/* base of kernel data */
+
 
 /* ── Persistent kernel state ──────────────────────────────────────────────────
  * Placing at least one symbol in .bss and one in .data ensures the linker

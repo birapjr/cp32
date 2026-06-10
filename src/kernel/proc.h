@@ -16,6 +16,7 @@
  */
 struct stackframe_s {
   reg_t a0;
+  reg_t retreg;		/* syscall return value register (Xtensa a2) */
   reg_t psw;
 };
 #endif

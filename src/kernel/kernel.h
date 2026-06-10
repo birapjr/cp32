@@ -15,8 +15,12 @@
 #include <ansi.h> /* must be second */
 #include <sys/types.h>
 #include <minix/const.h>
+#include <minix/type.h>
+#include <minix/syslib.h>
+
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 #include "const.h"
 #include "serial.h"
 #include "wdt.h"
@@ -24,7 +28,7 @@
 #include "proto.h"
 #include "glo.h"
 
-#include <minix/type.h>
+
 
 #if (CHIP == ESP32_S3)
 #include <esp32s3/const.h>

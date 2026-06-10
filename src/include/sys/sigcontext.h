@@ -81,7 +81,29 @@ struct sigregs {
   short sr_dummy;		/* make size multiple of 4 for system.c */
 };
 #else
+#if (CHIP == ESP32_S3)
+/* ESP32-S3 / Xtensa port: keep the signal register image aligned with the
+ * minimal kernel frame in proc.h. Expand this as the trap handlers start to
+ * save more architectural state.
+ */
+struct sigregs {
+  reg_t sr_a0;
+  reg_t sr_retreg;
+  reg_t sr_psw;
+};
+
+struct sigframe {
+  _PROTOTYPE( void (*sf_retadr), (void) );
+  int sf_signo;
+  int sf_code;
+  struct sigcontext *sf_scp;
+  int sf_fp;
+  _PROTOTYPE( void (*sf_retadr2), (void) );
+  struct sigcontext *sf_scpcopy;
+};
+#else
 #include "error, CHIP is not supported"
+#endif
 #endif
 #endif /* CHIP == INTEL */
 
@@ -135,6 +157,12 @@ struct sigcontext {
 #define sc_pc sc_regs.sr_pc
 #define sc_psw sc_regs.sr_psw
 #endif /* CHIP == M68000 */
+
+#if (CHIP == ESP32_S3)
+#define sc_a0 sc_regs.sr_a0
+#define sc_retreg sc_regs.sr_retreg
+#define sc_psw sc_regs.sr_psw
+#endif
 
 /* Values for sc_flags.  Must agree with <minix/jmp_buf.h>. */
 #define SC_SIGCONTEXT	2	/* nonzero when signal context is included */

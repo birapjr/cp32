@@ -25,6 +25,7 @@ TARGET  = cp32
 BUILD_MPX32_O = $(BUILD_DIR)/mpx32.o
 BUILD_VECTORS_O = $(BUILD_DIR)/vectors.o
 BUILD_IRQ_O = $(BUILD_DIR)/irq.o
+BUILD_KLIB32_O = $(BUILD_DIR)/klib32.o
 
 # Directories
 SRC_DIR = kernel
@@ -49,6 +50,10 @@ $(BUILD_VECTORS_O): $(SRC_DIR)/vectors.S | $(BUILD_DIR)
 $(BUILD_IRQ_O): $(SRC_DIR)/irq.S | $(BUILD_DIR)
 	$(AS) $(ASFLAGS) -c $(SRC_DIR)/irq.S -o $(BUILD_IRQ_O)
 
+# Compile klib32.S
+$(BUILD_KLIB32_O): $(SRC_DIR)/klib32.S | $(BUILD_DIR)
+	$(AS) $(ASFLAGS) -c $(SRC_DIR)/klib32.S -o $(BUILD_KLIB32_O)
+
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -57,8 +62,8 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: lib/other/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O)
-	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) -o $@
+$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O)
+	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O) -o $@
 
 # Convert to raw binary for flashing
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf

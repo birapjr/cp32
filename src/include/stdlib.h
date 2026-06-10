@@ -3,6 +3,8 @@
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
+#include <stddef.h>
+
 /* The macros are NULL, EXIT_FAILURE, EXIT_SUCCESS, RAND_MAX, and MB_CUR_MAX.*/
 #define NULL    ((void *)0)
 
@@ -15,11 +17,6 @@ typedef struct { int quot, rem; } div_t;
 typedef struct { long quot, rem; } ldiv_t;
 
 /* The types are size_t, wchar_t, div_t, and ldiv_t. */
-#ifndef _SIZE_T
-#define _SIZE_T
-typedef unsigned int size_t;	/* type returned by sizeof */
-#endif
-
 #ifndef _WCHAR_T
 #define _WCHAR_T
 typedef char wchar_t;		/* type expanded character set */
