@@ -626,17 +626,6 @@ register message *m_ptr;
   }
   sc.sc_psw  = rp->p_reg.psw;
 
-#if (CHIP == INTEL)
-  /* Don't panic kernel if user gave bad selectors. */
-  sc.sc_cs = rp->p_reg.cs;
-  sc.sc_ds = rp->p_reg.ds;
-  sc.sc_es = rp->p_reg.es;
-#if _WORD_SIZE == 4
-  sc.sc_fs = rp->p_reg.fs;
-  sc.sc_gs = rp->p_reg.gs;
-#endif
-#endif
-
   /* Restore the registers. */
   memcpy(&rp->p_reg, (char *)&sc.sc_regs, sizeof(struct sigregs));
 

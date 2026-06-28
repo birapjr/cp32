@@ -9,15 +9,18 @@
  */
 
 #if (CHIP == ESP32_S3)
-/* Minimal saved-register frame for the current Xtensa port.
- * The trap entry code preserves a0 explicitly and the CPU provides PS/PC
- * in EPC/EPS on exception return, so the kernel-visible process frame tracks
- * the fields the C code can actually reason about today.
+/* Xtensa LX7 does not have the Intel-style segment/register frame.  Keep
+ * only the process state that the ESP32-S3 kernel actually saves/restores:
+ * the scratch return register, frame pointer, program counter, stack pointer,
+ * and processor status.
  */
-struct stackframe_s {
-  reg_t a0;
-  reg_t retreg;		/* syscall return value register (Xtensa a2) */
-  reg_t psw;
+struct stackframe_s {           /* proc_ptr points here */
+  reg_t a0;			/* saved scratch/return register */
+  reg_t retreg;			/* process return value */
+  reg_t fp;			/* frame pointer used by signal glue */
+  reg_t pc;			/* next instruction to execute */
+  reg_t sp;			/* stack pointer */
+  reg_t psw;			/* saved processor status */
 };
 #endif
 
