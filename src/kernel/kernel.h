@@ -19,16 +19,19 @@
 #include <minix/syslib.h>
 
 #include <stdint.h>
-#include <string.h>
 #include <errno.h>
-#include "const.h"
+
+#include <string.h>
+#include <limits.h>
+
 #include "serial.h"
 #include "wdt.h"
 #include "klib.h"
+
+#include "const.h"
+#include "type.h"
 #include "proto.h"
 #include "glo.h"
-
-
 
 #if (CHIP == ESP32_S3)
 #include <esp32s3/const.h>

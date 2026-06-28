@@ -8,12 +8,6 @@ typedef unsigned int vir_clicks; /* virtual  addresses and lengths in clicks */
 typedef unsigned long phys_bytes;/* physical addresses and lengths in bytes */
 typedef unsigned int phys_clicks;/* physical addresses and lengths in clicks */
 typedef unsigned long reg_t;	/* register-sized integer used by kernel code */
-
-struct memory {
-  phys_clicks base;		/* base of memory chunk in clicks */
-  phys_clicks size;		/* size of chunk in clicks */
-};
-
 typedef unsigned int vir_bytes;	/* virtual addresses and lengths in bytes */
 
 /* Types relating to messages. */

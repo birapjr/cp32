@@ -24,6 +24,8 @@
 EXTERN phys_bytes code_base;	/* base of kernel code */
 EXTERN phys_bytes data_base;	/* base of kernel data */
 
+/* Signals. */
+EXTERN int sig_procs;		/* number of procs with p_pending != 0 */
 
 /* ── Persistent kernel state ──────────────────────────────────────────────────
  * Placing at least one symbol in .bss and one in .data ensures the linker
@@ -37,5 +39,13 @@ static volatile uint32_t g_magic = 0xC0320000u;  /* .data — copied by startup 
 extern struct memory mem[3];
 extern phys_clicks tot_mem_size;
 EXTERN unsigned int processor;	/* 32 for esp32s3 */
+
+/* Interrupt re-entrancy counter for ESP32-S3 (Xtensa LX7).
+ * Incremented on interrupt entry, decremented on exit.
+ * If > 0 when clock_handler fires, we interrupted another interrupt
+ * handler — charge time to HARDWARE instead of proc_ptr.
+ * Replaces the Intel-specific k_reenter variable.
+ */
+EXTERN int k_reenter;           /* kernel reenter count (0 = from user/task) */
 
 #endif

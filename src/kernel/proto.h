@@ -16,8 +16,11 @@ _PROTOTYPE( void panic, (const char *s, int n)				);
 _PROTOTYPE( void mem_init, (void)					);
 
 /* klib32.S */
-_PROTOTYPE( void phys_copy, (phys_bytes source, phys_bytes destination,
-		phys_bytes bytecount)				);
+_PROTOTYPE( void phys_copy, (phys_bytes source, phys_bytes destination, phys_bytes bytecount)				);
+
+/* mpx32.S */
+_PROTOTYPE( void lock, (void)						);
+_PROTOTYPE( void unlock, (void)						);
 
 /* start.c */
 _PROTOTYPE( char *k_getenv, (char *name)				);

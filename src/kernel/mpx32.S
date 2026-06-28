@@ -78,3 +78,32 @@ bss_done:
 
 halt:
     j       halt                # this should be never executed
+
+;*===========================================================================*
+;*        lock                                                                *
+;*===========================================================================*
+; void lock(void);
+; Disable CPU interrupts by clearing PS.INTLEVEL to maximum (level 15).
+    .section .text
+    .align  4
+    .global lock
+    .type   lock, @function
+lock:
+    rsil    a2, 15          /* read PS, then set INTLEVEL=15 (disable all interrupts) */
+    ret
+    .size   lock, . - lock
+
+
+;*===========================================================================*
+;*        unlock                                                              *
+;*===========================================================================*
+; void unlock(void);
+; Enable CPU interrupts by setting PS.INTLEVEL to 0.
+    .section .text
+    .align  4
+    .global unlock
+    .type   unlock, @function
+unlock:
+    rsil    a2, 0           /* read PS, then set INTLEVEL=0 (enable all interrupts) */
+    ret
+    .size   unlock, . - unlock

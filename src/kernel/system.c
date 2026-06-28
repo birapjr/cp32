@@ -104,9 +104,6 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
-#if (CHIP == INTEL)
-#include "protect.h"
-#endif
 
 /* PSW masks. */
 #define IF_MASK 0x00000200
