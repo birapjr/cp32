@@ -413,10 +413,7 @@ int irq;
   /* Step 5: Wake TTY if its timeout has expired. */
   if (tty_timeout <= now) tty_wakeup(now);
 
-  /* Step 6: Give printer a chance to restart if stalled. */
-  pr_restart();
-
-  /* Step 7: Switch to do_clocktick() if:
+  /* Step 6: Switch to do_clocktick() if:
    *   (a) an alarm has expired, OR
    *   (b) the scheduling quantum is up AND the current bill_ptr has not
    *       changed since last tick AND a user process is waiting to run.
@@ -434,7 +431,7 @@ int irq;
     return 1;       /* re-enable interrupts */
   }
 
-  /* Step 8: Count down the scheduling quantum. */
+  /* Step 7: Count down the scheduling quantum. */
   if (--sched_ticks == 0) {
     sched_ticks = SCHED_RATE;   /* reset quantum        */
     prev_ptr    = bill_ptr;     /* new previous process */
@@ -480,7 +477,9 @@ PRIVATE void init_clock()
   REG_SET_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
 
   /* Register Minix IRQ handler and enable the CPU-side interrupt line. */
-  put_irq_handler(CLOCK_IRQ, clock_handler);
+  // TODO: , is this line needed at ESP32-S3?
+  //put_irq_handler(CLOCK_IRQ, clock_handler);
+  
   enable_irq(CLOCK_IRQ);
 }
 
@@ -507,24 +506,6 @@ PUBLIC void clock_stop()
   disable_irq(CLOCK_IRQ);
 }
 
-
-/*===========================================================================*
- *                              milli_delay                                   *
- *===========================================================================*/
-PUBLIC void milli_delay(millisec)
-unsigned millisec;
-{
-/* Busy-wait for at least 'millisec' milliseconds.
- * Used during early boot and driver init before the clock task is running.
- * Safe to call from any context; does not rely on interrupts or the
- * Minix scheduler.
- */
-  struct milli_state ms;
-  milli_start(&ms);
-  while (milli_elapsed(&ms) < millisec) {}
-}
-
-
 /*===========================================================================*
  *                              milli_start                                   *
  *===========================================================================*/
@@ -536,7 +517,6 @@ struct milli_state *msp;
  */
   msp->start_count = systimer_unit0_read();
 }
-
 
 /*===========================================================================*
  *                              milli_elapsed                                 *
@@ -558,4 +538,20 @@ struct milli_state *msp;
   uint64_t now   = systimer_unit0_read();
   uint64_t delta = now - msp->start_count;
   return (unsigned)(delta / (SYSTIMER_CLK_HZ / 1000));
+}
+
+/*===========================================================================*
+ *                              milli_delay                                   *
+ *===========================================================================*/
+PUBLIC void milli_delay(millisec)
+unsigned millisec;
+{
+/* Busy-wait for at least 'millisec' milliseconds.
+ * Used during early boot and driver init before the clock task is running.
+ * Safe to call from any context; does not rely on interrupts or the
+ * Minix scheduler.
+ */
+  struct milli_state ms;
+  milli_start(&ms);
+  while (milli_elapsed(&ms) < millisec) {}
 }

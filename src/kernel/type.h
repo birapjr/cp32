@@ -20,6 +20,7 @@ struct memory {
 struct milli_state {
   unsigned long accum_count;	/* accumulated clock ticks */
   unsigned prev_count;		/* previous clock value */
+  uint64_t start_count; /* start of timer */
 };
 
 #if (CHIP == INTEL)

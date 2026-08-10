@@ -17,6 +17,8 @@ _PROTOTYPE( void mem_init, (void)					);
 
 /* klib32.S */
 _PROTOTYPE( void phys_copy, (phys_bytes source, phys_bytes destination, phys_bytes bytecount)				);
+_PROTOTYPE( void enable_irq, (unsigned irq)				);
+_PROTOTYPE( int disable_irq, (unsigned irq)				);
 
 /* mpx32.S */
 _PROTOTYPE( void lock, (void)						);
@@ -38,7 +40,6 @@ _PROTOTYPE( void lock_unready, (struct proc *rp)			);
 _PROTOTYPE( int sys_call, (int function, int src_dest, message *m_ptr)	);
 _PROTOTYPE( void unhold, (void)						);
 
-
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);
 _PROTOTYPE( void inform, (void)						);
@@ -48,5 +49,8 @@ _PROTOTYPE( phys_bytes numap, (int proc_nr, vir_bytes vir_addr,
 _PROTOTYPE( void sys_task, (void)					);
 _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 		vir_bytes bytes)					);
+
+/* tty.c */
+_PROTOTYPE( void tty_wakeup, (clock_t now)				);
 
 #endif /* PROTO_H */
