@@ -89,6 +89,9 @@ struct sigregs {
 struct sigregs {
   reg_t sr_a0;
   reg_t sr_retreg;
+  reg_t sr_fp;
+  reg_t sr_pc;
+  reg_t sr_sp;
   reg_t sr_psw;
 };
 
@@ -161,6 +164,9 @@ struct sigcontext {
 #if (CHIP == ESP32_S3)
 #define sc_a0 sc_regs.sr_a0
 #define sc_retreg sc_regs.sr_retreg
+#define sc_fp sc_regs.sr_fp
+#define sc_pc sc_regs.sr_pc
+#define sc_sp sc_regs.sr_sp
 #define sc_psw sc_regs.sr_psw
 #endif
 

@@ -1,5 +1,20 @@
 #include <stdint.h>
 
+void *memcpy(void *dst, const void *src, unsigned int n)
+{
+	unsigned char *d = (unsigned char *) dst;
+	const unsigned char *s = (const unsigned char *) src;
+	while (n--) *d++ = *s++;
+	return dst;
+}
+
+char *strcpy(char *dst, const char *src)
+{
+	char *ret = dst;
+	while ((*dst++ = *src++) != '\0') { }
+	return ret;
+}
+
 /* ── delay ────────────────────────────────────────────────────────────────────
  * Busy-wait loop calibrated for 240 MHz with -O0.
  * Each iteration is ~7 CPU cycles, so delay(200000) ≈ 5.8 ms. */

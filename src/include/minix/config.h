@@ -191,6 +191,10 @@
 #define CHIP          ESP32_S3
 #define SHADOWING	  0
 #define FP_FORMAT   FP_NONE
+#define ENABLE_WINI  0
+#define ENABLE_SCSI  0
+#define ENABLE_CDROM 0
+#define ENABLE_AUDIO 0
 #endif
 
 #if (MACHINE == ATARI) || (MACHINE == SUN_4)

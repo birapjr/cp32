@@ -11,10 +11,10 @@ OBJCOPY = xtensa-esp32s3-elf-objcopy
 # Flags
 CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
-LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32
+LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = start.c main.c misc.c proc.c serial.c wdt.c klib.c clock.c system.c tty.c
+C_SRCS = start.c main.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c
 LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
@@ -63,7 +63,7 @@ $(BUILD_DIR)/%.o: lib/other/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O)
-	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O) -o $@
+	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O) -lgcc -o $@
 
 # Convert to raw binary for flashing
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf

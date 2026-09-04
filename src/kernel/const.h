@@ -130,6 +130,8 @@
 #define NR_REGS           16	/* Xtensa core register window is not used here */
 
 #define TRACEBIT       0x0000	/* no legacy tracing bit on this port */
+#define SETPSW(rp, new)		/* no x86-style PSW mask on Xtensa */ \
+	((rp)->p_reg.psw = (reg_t) (new))
 
 #endif /* (CHIP == ESP32_S3) */
 

@@ -64,6 +64,12 @@
 #define CLICK_SHIFT	  12	/* 2log of CLICK_SIZE */
 #endif
 
+#if (CHIP == ESP32_S3)
+/* The ESP32-S3 port uses 4 KiB pages/clicks for process mappings. */
+#define CLICK_SIZE	4096
+#define CLICK_SHIFT	  12
+#endif
+
 #define click_to_round_k(n) \
 	((unsigned) ((((unsigned long) (n) << CLICK_SHIFT) + 512) / 1024))
 #if CLICK_SIZE < 1024

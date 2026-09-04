@@ -50,7 +50,16 @@ _PROTOTYPE( void sys_task, (void)					);
 _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 		vir_bytes bytes)					);
 
+/* clock.c */
+_PROTOTYPE( void clock_task, (void)					);
+_PROTOTYPE( void clock_stop, (void)					);
+_PROTOTYPE( clock_t get_uptime, (void)					);
+_PROTOTYPE( void syn_alrm_task, (void)					);
+
 /* tty.c */
+_PROTOTYPE( void handle_events, (struct tty *tp)                 );
+_PROTOTYPE( void tty_reply, (int code, int replyee, int proc_nr,
+		int status)                                      );
 _PROTOTYPE( void tty_wakeup, (clock_t now)				);
 
 #endif /* PROTO_H */

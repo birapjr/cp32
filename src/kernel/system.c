@@ -124,6 +124,7 @@ FORWARD _PROTOTYPE( int do_sendsig, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_sigreturn, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_endsig, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_times, (message *m_ptr) );
+FORWARD _PROTOTYPE( void system_reset, (void) );
 FORWARD _PROTOTYPE( int do_trace, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_umap, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_xit, (message *m_ptr) );
@@ -470,25 +471,36 @@ register message *m_ptr;	/* pointer to request message */
  *				do_abort				     *
  *===========================================================================*/
 PRIVATE int do_abort(m_ptr)
-message *m_ptr;			/* pointer to request message */
+message *m_ptr;
 {
-/* Handle sys_abort.  MINIX is unable to continue.  Terminate operation. */
-  char monitor_code[64];
-  phys_bytes src_phys;
+  switch (m_ptr->m1_i1) {
+    case RBT_HALT:
+      /* disable interrupts and stop */
+      for (;;) { }
 
-  if (m_ptr->m1_i1 == RBT_MONITOR) {
-	/* The monitor is to run user specified instructions. */
-	src_phys = numap(m_ptr->m_source, (vir_bytes) m_ptr->m1_p1,
-					(vir_bytes) sizeof(monitor_code));
-	if (src_phys == 0) panic("bad monitor code from", m_ptr->m_source);
-	phys_copy(src_phys, vir2phys(monitor_code),
-					(phys_bytes) sizeof(monitor_code));
-	reboot_code = vir2phys(monitor_code);
+    case RBT_REBOOT:
+    case RBT_RESET:
+      /* call the ESP32-S3 reset implementation */
+      system_reset();
+      break;
+
+    default:
+      panic("unknown abort request", m_ptr->m1_i1);
   }
-  wreboot(m_ptr->m1_i1);
-  return(OK);			/* pro-forma (really EDISASTER) */
+
+  return OK;
 }
 
+/*===========================================================================*
+ *                              system_reset                                *
+ *===========================================================================*/
+PRIVATE void system_reset()
+{
+/* Minimal reset placeholder until the ESP32-S3 reset registers are wired in. */
+  for (;;) {
+    /* A reset request must not return to the caller. */
+  }
+}
 
 #if (SHADOWING == 1)
 /*===========================================================================*
@@ -1030,7 +1042,7 @@ vir_bytes bytes;		/* # of bytes to be copied */
 
   vir_clicks vc;		/* the virtual address in clicks */
   phys_bytes pa;		/* intermediate variables as phys_bytes */
-#if (CHIP == INTEL)
+#if (CHIP == INTEL) || (CHIP == ESP32_S3)
   phys_bytes seg_base;
 #endif
 
@@ -1058,6 +1070,9 @@ vir_bytes bytes;		/* # of bytes to be copied */
 #if (CHIP == INTEL)
   seg_base = (phys_bytes) rp->p_map[seg].mem_phys;
   seg_base = seg_base << CLICK_SHIFT;	/* segment origin in bytes */
+#elif (CHIP == ESP32_S3)
+  /* ESP32-S3 uses flat byte addressing; mem_phys is still stored in clicks. */
+  seg_base = (phys_bytes) rp->p_map[seg].mem_phys << CLICK_SHIFT;
 #endif
   pa = (phys_bytes) vir_addr;
 #if (CHIP != M68000)

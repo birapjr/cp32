@@ -33,6 +33,12 @@
 #define UINT_MAX  0xFFFFFFFF	/* maximum value of an unsigned 32-bit int */
 #endif
 
+#ifndef INT_MAX
+#define INT_MIN (-2147483647-1)
+#define INT_MAX 2147483647
+#define UINT_MAX 0xFFFFFFFF
+#endif
+
 /*Definitions about longs (32 bits in MINIX). */
 #define LONG_MIN (-2147483647L-1)/* minimum value of a long */
 #define LONG_MAX  2147483647L	/* maximum value of a long */

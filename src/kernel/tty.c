@@ -94,6 +94,10 @@ FORWARD _PROTOTYPE( void do_open, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_close, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_read, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_write, (tty_t *tp, message *m_ptr)		);
+FORWARD _PROTOTYPE( void sigchar, (tty_t *tp, int sig)			);
+FORWARD _PROTOTYPE( void tty_devnop, (tty_t *tp)			);
+FORWARD _PROTOTYPE( void scr_init, (tty_t *tp)				);
+FORWARD _PROTOTYPE( void rs_init, (tty_t *tp)				);
 FORWARD _PROTOTYPE( void in_transfer, (tty_t *tp)			);
 FORWARD _PROTOTYPE( int echo, (tty_t *tp, int ch)			);
 FORWARD _PROTOTYPE( void rawecho, (tty_t *tp, int ch)			);
@@ -1368,6 +1372,21 @@ tty_t *tp;
   /* Some functions need not be implemented at the device level. */
 }
 
+/* Minimal ESP32-S3 stubs until console and UART drivers are connected. */
+PUBLIC void scr_init(tp)
+tty_t *tp;
+{
+  tp->tty_devread = tty_devnop;
+  tp->tty_devwrite = tty_devnop;
+}
+
+PUBLIC void rs_init(tp)
+tty_t *tp;
+{
+  tp->tty_devread = tty_devnop;
+  tp->tty_devwrite = tty_devnop;
+}
+
 
 #if ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT
 /*===========================================================================*
@@ -1712,6 +1731,5 @@ message *m_ptr;
 }
 #endif /* ENABLE_BINCOMPAT */
 #endif /* ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT */
-
 
 
