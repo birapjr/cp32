@@ -718,3 +718,23 @@ ownership before scheduler code is allowed to consume the frame.
 Hardware validation passed for `CP32-IRQ-FRAME-64-ABI-4`: `c`, `f`, and `s`
 match on every bridge invocation, proving the frame is non-null, 16-byte
 aligned, and fully inside the kernel stack. `r=0` and `e=0` remain correct.
+
+Implemented the first scheduler primitive: `pick_proc()` now selects the head
+of the highest-priority non-empty ready queue and updates `proc_ptr` and
+`bill_ptr`. It is not called by the timer or boot path yet. Marker:
+`CP32-IRQ-FRAME-64-SCHED-1`.
+
+Implemented `ready()` as the next isolated scheduler primitive. It classifies
+the process into task, server, or user priority and appends it FIFO to that
+queue. It is not called by the timer or current boot path. Marker:
+`CP32-IRQ-FRAME-64-SCHED-2`.
+
+Implemented `unready()` as the next isolated scheduler primitive. It removes
+a process from its task/server/user ready queue and repairs the queue head,
+tail, and link. It is not called by the current boot or timer path. Marker:
+`CP32-IRQ-FRAME-64-SCHED-3`.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-SCHED-3`: the new marker is
+present, periodic timer delivery remains stable, `r=0`, `e=0`, and bridge/frame
+counters remain consistent. The `unready()` implementation caused no runtime
+regression and remains isolated from the active boot/timer path.

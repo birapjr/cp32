@@ -62,7 +62,21 @@ PUBLIC void interrupt(task)
 int task;			/* number of task to be started */
 {
 /* An interrupt has occurred.  Schedule the task that handles it. */
-// to be implemented
+  int q;
+  struct proc *rp = NIL_PROC;
+
+  /* Lower queue number means higher priority. */
+  for (q = 0; q < NQ; q++) {
+    if (rdy_head[q] != NIL_PROC) {
+      rp = rdy_head[q];
+      break;
+    }
+  }
+  if (rp == NIL_PROC)
+    return;
+
+  proc_ptr = rp;
+  bill_ptr = rp;
 }
 
 /*===========================================================================*
@@ -93,7 +107,7 @@ message *m_ptr;			/* pointer to message buffer */
  * for this message, copy the message to it and unblock 'dest'. If 'dest' is
  * not waiting at all, or is waiting for another source, queue 'caller_ptr'.
  */
-//to be implemented
+  /* TODO: message delivery is not implemented yet. */
 }
 
 /*===========================================================================*
@@ -137,7 +151,23 @@ register struct proc *rp;	/* this process is now runnable */
  *   SERVER_Q - (middle priority) for MM and FS only
  *   USER_Q   - (lowest priority) for user processes
  */
-//to be implemented
+  int q;
+
+  if (rp == NIL_PROC)
+    return;
+  if (rp->p_nr < NR_TASKS)
+    q = TASK_Q;
+  else if (rp->p_nr < NR_TASKS + LOW_USER)
+    q = SERVER_Q;
+  else
+    q = USER_Q;
+
+  rp->p_nextready = NIL_PROC;
+  if (rdy_tail[q] == NIL_PROC)
+    rdy_head[q] = rp;
+  else
+    rdy_tail[q]->p_nextready = rp;
+  rdy_tail[q] = rp;
 }
 
 /*===========================================================================*
@@ -147,7 +177,25 @@ PRIVATE void unready(rp)
 register struct proc *rp;	/* this process is no longer runnable */
 {
 /* A process has blocked. */
-// to be implemented
+  int q;
+  struct proc *prev, *cur;
+  if (rp == NIL_PROC) return;
+  if (rp->p_nr < NR_TASKS) q = TASK_Q;
+  else if (rp->p_nr < NR_TASKS + LOW_USER) q = SERVER_Q;
+  else q = USER_Q;
+  prev = NIL_PROC;
+  cur = rdy_head[q];
+  while (cur != NIL_PROC) {
+    if (cur == rp) {
+      if (prev == NIL_PROC) rdy_head[q] = cur->p_nextready;
+      else prev->p_nextready = cur->p_nextready;
+      if (rdy_tail[q] == cur) rdy_tail[q] = prev;
+      cur->p_nextready = NIL_PROC;
+      return;
+    }
+    prev = cur;
+    cur = cur->p_nextready;
+  }
 }
 
 /*===========================================================================*
