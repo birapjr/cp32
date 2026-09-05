@@ -87,6 +87,8 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 
 /* Incremented by the temporary level-2 SYSTIMER probe handler. */
 volatile uint32_t cp32_timer_irq_ticks;
+volatile int cp32_clock_irq_bridge_enabled;
+volatile uint32_t cp32_clock_irq_bridge_calls;
 
 FORWARD _PROTOTYPE( void common_setalarm, (int proc_nr,
         long delta_ticks, watchdog_t function) );
@@ -441,6 +443,14 @@ int irq;
   }
 
   return 1;   /* re-enable clock interrupt */
+}
+
+/* Called from the level-1 handler; disabled until scheduler handoff is safe. */
+PUBLIC void cp32_timer_irq_dispatch(void)
+{
+  cp32_clock_irq_bridge_calls++;
+  if (cp32_clock_irq_bridge_enabled)
+    (void) clock_handler(CLOCK_IRQ);
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies

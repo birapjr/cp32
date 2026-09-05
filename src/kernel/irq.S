@@ -161,17 +161,35 @@ irq_kernel:
 .size irq_kernel, .-irq_kernel
 
 /* ── Level-1 IRQ ──────────────────────────────────────────────────────── */
-/* Entered from irq_kernel for EXCCAUSE_LEVEL1_INTERRUPT (0x04). */
+/* Entered from either exception dispatcher for EXCCAUSE_LEVEL1_INTERRUPT
+ * (0x04). */
 .align 4
 .global irq_level1
 .type   irq_level1, @function
 irq_level1:
-    wsr     a0, excsave1
-    addi    a1, a1, -32
+    /* Complete call0 scratch frame: a0 is held in EXCSAVE1 and a2-a15 are
+     * saved below.  This makes a future C handoff possible, but the probe
+     * remains assembly-only until the exception-frame policy is finished. */
+    addi    a1, a1, -64
     s32i    a2, a1, 0
     s32i    a3, a1, 4
     s32i    a4, a1, 8
     s32i    a5, a1, 12
+    s32i    a6, a1, 16
+    s32i    a7, a1, 20
+    s32i    a8, a1, 24
+    s32i    a9, a1, 28
+    s32i    a10, a1, 32
+    s32i    a11, a1, 36
+    s32i    a12, a1, 40
+    s32i    a13, a1, 44
+    s32i    a14, a1, 48
+    s32i    a15, a1, 52
+    /* Track interrupt nesting for the future MINIX clock handler. */
+    movi    a2, k_reenter
+    l32i    a3, a2, 0
+    addi    a3, a3, 1
+    s32i    a3, a2, 0
     /* Acknowledge TARGET0. Periodic mode keeps the source enabled and
      * reloads the next deadline in hardware. */
     movi    a2, 0x6002306C
@@ -181,11 +199,32 @@ irq_level1:
     l32i    a3, a2, 0
     addi    a3, a3, 1
     s32i    a3, a2, 0
+    /* Call the disabled C bridge once per 64 ticks. */
+    movi    a4, 63
+    and     a3, a3, a4
+    bnez    a3, 1f
+    movi    a2, 0
+    call0   cp32_timer_irq_dispatch
+1:
+    movi    a2, k_reenter
+    l32i    a3, a2, 0
+    addi    a3, a3, -1
+    s32i    a3, a2, 0
+    l32i    a15, a1, 52
+    l32i    a14, a1, 48
+    l32i    a13, a1, 44
+    l32i    a12, a1, 40
+    l32i    a11, a1, 36
+    l32i    a10, a1, 32
+    l32i    a9, a1, 28
+    l32i    a8, a1, 24
+    l32i    a7, a1, 20
+    l32i    a6, a1, 16
     l32i    a5, a1, 12
     l32i    a4, a1, 8
     l32i    a3, a1, 4
     l32i    a2, a1, 0
-    addi    a1, a1, 32
+    addi    a1, a1, 64
     /* Level 1 arrived through the exception vector, so PS.EXCM is set.
      * Return with RFE; RFI 1 is only for a dedicated level-1 interrupt
      * vector and would re-enter the exception path on this core. */
@@ -201,6 +240,8 @@ irq_level1:
 irq_user:
     wsr     a0, excsave1
     rsr     a2, exccause
+    movi    a3, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
+    beq     a2, a3, irq_level1
     rsr     a3, excvaddr
     rsr     a4, epc1
     rsr     a5, ps

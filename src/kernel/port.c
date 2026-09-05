@@ -8,7 +8,7 @@
 phys_bytes code_base;
 phys_bytes data_base;
 int sig_procs;
-int k_reenter;
+volatile int k_reenter;
 struct proc *proc_ptr;
 unsigned lost_ticks;
 clock_t tty_timeout;

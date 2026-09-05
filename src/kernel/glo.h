@@ -41,7 +41,7 @@ EXTERN unsigned int processor;	/* 32 for esp32s3 */
  * handler — charge time to HARDWARE instead of proc_ptr.
  * Replaces the Intel-specific k_reenter variable.
  */
-EXTERN int k_reenter;           /* kernel reenter count (0 = from user/task) */
+EXTERN volatile int k_reenter;  /* kernel reenter count (0 = from user/task) */
 /* Process table.  Here to stop too many things having to include proc.h. */
 EXTERN struct proc *proc_ptr;	/* pointer to currently running process */
 EXTERN unsigned lost_ticks;	/* clock ticks counted outside the clock task */

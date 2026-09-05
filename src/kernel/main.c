@@ -16,6 +16,8 @@
 
 extern char _stack_bottom[];
 extern volatile uint32_t cp32_timer_irq_ticks;
+extern volatile uint32_t cp32_clock_irq_bridge_calls;
+extern volatile int k_reenter;
 
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
@@ -102,6 +104,10 @@ void main(void) {
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
+  usbj_print("timer probe build: CP32-IRQ-FRAME-64-REENTER-5\r\n");
+  usbj_print("timer reentry baseline: ");
+  usbj_print_u32((uint32_t) k_reenter);
+  usbj_print(" (expected 0)\r\n");
   for (;;) {
     wdt_feed_all();
     swd_disable();
@@ -115,6 +121,11 @@ void main(void) {
     }
     usbj_print(".");
     usbj_print_u32(cp32_timer_irq_ticks);
+    usbj_print("[r=");
+    usbj_print_u32((uint32_t) k_reenter);
+    usbj_print(" c=");
+    usbj_print_u32(cp32_clock_irq_bridge_calls);
+    usbj_print("]");
   if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
       uint32_t cpu_interrupt;
       usbj_print(" [target_hi=");
@@ -141,6 +152,8 @@ void main(void) {
       usbj_print(" cpu=");
       __asm__ volatile ("rsr %0, interrupt" : "=a" (cpu_interrupt));
       usbj_print_hex32(cpu_interrupt);
+      usbj_print(" reentry=");
+      usbj_print_u32((uint32_t) k_reenter);
       usbj_print("]");
     }
   }

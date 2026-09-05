@@ -443,3 +443,165 @@ periodic reload, interrupt routing, level-1 entry, and return to idle. The
 startup message was corrected to report periodic mode and the actual CPU
 interrupt level. The next remaining step is a guarded bridge into MINIX
 `clock_handler`, including a proper interrupt frame before scheduling work.
+
+Added a disabled `cp32_timer_irq_dispatch()` C bridge and call it from the
+level-1 assembly handler as an ABI smoke test. The bridge does nothing while
+`cp32_clock_irq_bridge_enabled` is zero; it must remain disabled until the
+interrupt frame and scheduler handoff are complete.
+
+Hardware ABI-smoke-test output remained stable enough to run, but the counter
+cadence changed from large regular batches to a short run of single-step
+increments (`54,55,56...`) before larger jumps resumed. No exception occurred,
+but this shows that even the disabled C call changes interrupt latency or
+pending-delivery timing. Do not enable `clock_handler` yet; measure/validate
+the ISR call boundary and timer cadence first.
+
+The per-tick C call has now been removed from the active ISR. The guarded
+`cp32_timer_irq_dispatch()` wrapper remains available for a dedicated test,
+but the normal probe again uses only assembly acknowledgement and counting.
+This keeps interrupt latency deterministic while the full exception frame is
+being designed.
+
+Hardware validation confirms the minimal path is stable again:
+
+```text
+.27.54.81.108.135.162.189.216.243.270.297.324...
+```
+
+The regular cadence indicates that the timer and assembly return path remain
+healthy. The C bridge must not be enabled per tick until a complete saved
+context and safe scheduler handoff are implemented.
+
+The level-1 probe frame has now been expanded to save and restore `a2`-`a15`
+(`a0` remains in `EXCSAVE1`). The frame is 56 bytes and preserves the complete
+register set used by a future call0 handoff. The active handler remains
+assembly-only; enabling the C bridge still requires validating exception-frame
+ownership, nested interrupts, and scheduler return semantics.
+
+Added the unique boot marker `timer probe build: CP32-IRQ-FRAME-56` immediately
+before the idle loop. Future hardware logs should contain this marker before
+accepting timer output as coming from the latest image.
+
+The 64-byte frame validation output still displayed the old marker
+`CP32-IRQ-FRAME-56`; the marker has been corrected to
+`CP32-IRQ-FRAME-64`. The timer cadence remained stable, so this was a
+diagnostic-label correction only.
+
+The hardware log confirmed the marker and stable periodic output. The frame
+size was then corrected from 56 to 64 bytes: 56 bytes preserved all listed
+registers but broke the required 16-byte stack alignment. The 64-byte frame
+keeps the same register offsets, adds padding, and restores the original stack
+alignment needed before any future C bridge test.
+
+The current level-1 frame contract is now explicit in `irq.S`: `a0` is kept in
+`EXCSAVE1`, `a2`-`a5` are saved on the interrupted stack, and `a6`-`a15` are
+not touched. This is sufficient for the assembly-only probe, but not for a C
+call or scheduler transition. The next implementation task is a complete
+call0-compatible interrupt frame, including all potentially clobbered
+registers and a defined interrupt-stack policy.
+
+Temporary direct vector routing has now been removed. Kernel and user
+exception vectors use their normal dispatchers again; both dispatchers
+recognize `EXCCAUSE=0x04` and forward only level-1 interrupts to `irq_level1`.
+Other exception causes remain terminal diagnostics. The periodic timer probe
+builds successfully and is ready for hardware revalidation.
+
+Hardware revalidation passed after restoring normal vector dispatch:
+
+```text
+TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)
+entering kernel idle                    ...
+.27.54.81.108.135.162.1
+```
+
+The counter continues advancing without an exception, confirming that the
+normal kernel/user exception dispatchers correctly preserve the working
+periodic level-1 timer path. The trailing output is only the heartbeat wrapping
+or being captured mid-stream; no timer fault is indicated.
+
+Hardware now also confirms the corrected `timer probe build: CP32-IRQ-FRAME-64`
+marker, with stable periodic output. The aligned frame and timer path remain
+healthy. Enabling the guarded `clock_handler` bridge is deferred because it
+mutates process accounting, alarms, and scheduling state before the real
+context-switch and scheduler return path exist. Those contracts are the next
+prerequisite for a controlled bridge test.
+
+The hardware debug marker now changes with each implementation step. For the
+`k_reenter` update it is:
+
+```text
+timer probe build: CP32-IRQ-FRAME-64-REENTER-1
+```
+
+Future hardware-visible changes should use a new marker suffix so stale images
+can be identified immediately.
+
+The next validation image uses marker `CP32-IRQ-FRAME-64-REENTER-2` and prints
+`timer reentry baseline`, which should be zero before entering idle. A later
+heartbeat check can confirm the counter returns to zero after each interrupt.
+
+The next diagnostic image uses marker `CP32-IRQ-FRAME-64-REENTER-3` and adds
+`reentry=` to the periodic timer status line. It should report `reentry=0`
+outside the ISR, confirming balanced increment/decrement behavior.
+
+Because the previous capture ended before the every-64-tick diagnostic ran,
+the next image uses marker `CP32-IRQ-FRAME-64-REENTER-4` and prints the
+re-entry value on every heartbeat as `[r=...]`. Expected output is `[r=0]`.
+
+The first build exposed and corrected a duplicate declaration mismatch: `main.c`
+now uses the existing `int k_reenter` declaration from `glo.h` instead of
+redeclaring it as volatile.
+
+The next scheduler prerequisite is now implemented: `irq_level1` increments
+`k_reenter` on entry and decrements it before returning. This matches the
+existing `clock_handler` convention for distinguishing kernel re-entry from a
+user/task interrupt. Scheduling and the C bridge remain disabled.
+
+The next image uses marker `CP32-IRQ-FRAME-64-BRIDGE-1` and invokes the
+disabled C bridge once every 64 timer ticks. This tests the aligned call0 ABI
+boundary with limited timing impact; MINIX `clock_handler` remains disabled.
+
+Hardware validation passed for the controlled bridge image:
+
+```text
+timer probe build: CP32-IRQ-FRAME-64-BRIDGE-1
+.28[r=0].55[r=0].82[r=0].109[r=0].136[r=0]...
+```
+
+The periodic cadence remains regular and `k_reenter` returns to zero after
+each interrupt. The disabled C bridge can be crossed safely at this limited
+test frequency; this does not yet validate enabling `clock_handler`, which
+still requires scheduler/context-switch integration.
+
+The next image uses marker `CP32-IRQ-FRAME-64-BRIDGE-2`. The guarded wrapper
+now counts its own invocations, and heartbeats print `c=...`. Since the test
+calls it once per 64 timer ticks, this count should increase while MINIX
+`clock_handler` remains disabled.
+
+Hardware validation passed for the bridge-call counter:
+
+```text
+.27[r=0 c=0].54[r=0 c=0].81[r=0 c=1].108[r=0 c=1]
+.135[r=0 c=2].162[r=0 c=2].189[r=0 c=2].216[r=0 c=3]
+```
+
+The C wrapper is invoked at the intended approximate 64-tick interval, the
+interrupt nesting counter returns to zero, and periodic delivery remains
+stable. The call0 ISR-to-C boundary is validated with the bridge disabled;
+enabling MINIX `clock_handler` remains a separate scheduler integration task.
+
+The next issue-list item is blocked on scheduler prerequisites, not timer
+hardware: `clock_handler` modifies process accounting, alarms, pending ticks,
+and may invoke `interrupt(CLOCK)` for rescheduling. Before enabling it, the
+port needs a defined exception-frame layout, safe interrupt-stack ownership,
+and a context-switch return path. The current bridge remains intentionally
+disabled; `ticks`, `r`, and `c` provide the baseline for that future test.
+
+The next image uses marker `CP32-IRQ-FRAME-64-REENTER-5` and declares
+`k_reenter` volatile in both its definition and shared declarations. This is
+required because the assembly ISR updates it asynchronously while C code reads
+it; it does not enable scheduler behavior.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-REENTER-5`: `r=0` remains
+balanced on every heartbeat, bridge calls advance at the expected interval,
+and periodic timer delivery remains stable.
