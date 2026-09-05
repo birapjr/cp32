@@ -45,8 +45,40 @@ void main(void) {
         (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
   }
 
-  while(1){}
-  // TODO: Continue kernel from here
+  status_line("checking process table", 0);
+  for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
+    if (rp->p_nr != t || (pproc_addr + NR_TASKS)[t] != rp) {
+      usbj_print("FATAL: process table mapping at ");
+      usbj_print_u32((uint32_t)(t + NR_TASKS));
+      usbj_print("\r\n");
+      for (;;) { }
+    }
+  }
+  usbj_print("process slots: ");
+  usbj_print_u32((uint32_t)(NR_TASKS + NR_PROCS));
+  usbj_print(" (mapping valid)\r\n");
+
+  status_line("checking click memory accounting", 0);
+  usbj_print("memory base clicks: ");
+  usbj_print_u32((uint32_t)mem[1].base);
+  usbj_print("\r\n");
+  usbj_print("memory size clicks: ");
+  usbj_print_u32((uint32_t)mem[1].size);
+  usbj_print("\r\n");
+  usbj_print("memory total clicks:");
+  usbj_print_u32((uint32_t)tot_mem_size);
+  usbj_print("\r\n");
+
+  /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
+   * a low-rate heartbeat so a silent hang can be distinguished from an
+   * intentional idle state while task dispatch is still being ported. */
+  status_line("entering kernel idle", 0);
+  for (;;) {
+    wdt_feed_all();
+    swd_disable();
+    delay(1000000);
+    usbj_print(".");
+  }
 }
 
 /*===========================================================================*

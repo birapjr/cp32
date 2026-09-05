@@ -28,6 +28,7 @@ extern char _vectors_start[];
 extern char _vectors_end[];
 extern char _stack_bottom[];
 extern char _stack_top[];
+extern char _heap_start[];
 
 void start() {
       /* Step 1 — strobe the Super WDT before anything else. */
@@ -83,6 +84,13 @@ void start() {
     usbj_print_u32(current_stack & 0x0Fu);
     usbj_print(" (expected 0)\r\n");
 
+    if (current_stack < (uint32_t)_stack_bottom ||
+        current_stack > (uint32_t)_stack_top ||
+        (current_stack & 0x0Fu) != 0) {
+        usbj_print("FATAL: invalid call0 stack\r\n");
+        for (;;) { }
+    }
+
 #if CP32_TEST_EXCEPTION
     status_line("triggering test exception", 0);
     *(volatile uint32_t *)0 = 0xC032FA17u;
@@ -102,8 +110,10 @@ void start() {
     status_line("setup boot parameters to kernel memory", 0);
     boot_parameters.bp_rootdev = 0;
     boot_parameters.bp_ramimagedev = 0;
-    boot_parameters.bp_ramsize = 480 * 1024;
-    boot_parameters.bp_processor = 32; /* magic number for esp32s3 */
+    /* Report the linker-defined free DRAM span, not the whole SRAM bank.
+     * The linker has already reserved .bss, heap, and stack regions. */
+    boot_parameters.bp_ramsize = (unsigned int)(_stack_bottom - _heap_start);
+    boot_parameters.bp_processor = ESP32S3_PROCESSOR_ID;
 
     processor = boot_parameters.bp_processor;
 

@@ -76,7 +76,7 @@ $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 
 # Flash to ESP32-S3
 flash: $(BUILD_DIR)/$(TARGET).bin
-	esptool --chip esp32s3 --port /dev/cu.usbmodem2101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
+	esptool --chip esp32s3 --port /dev/cu.usbmodem2101 write-flash 0x0 $(BUILD_DIR)/$(TARGET).bin
 
 # Build a diagnostic image that deliberately triggers the early exception
 # handler after vector validation. This target is for hardware testing only.

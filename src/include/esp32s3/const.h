@@ -7,6 +7,9 @@
 #ifndef CONST_H
 #define CONST_H
 
+/* MINIX boot-parameter identifier used by the CP32 ESP32-S3 port. */
+#define ESP32S3_PROCESSOR_ID 32u
+
 /* ── USB Serial/JTAG ──────────────────────────────────────────────────────────
  * The ESP32-S3 has a built-in USB Serial/JTAG controller that exposes a CDC
  * serial port over USB without any external chip. We use it as the kernel

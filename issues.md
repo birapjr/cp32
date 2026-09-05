@@ -129,19 +129,19 @@ Validate the following before using the result for process allocation:
 
 The historical MINIX word “physical” does not mean that an ESP32-S3 click can be treated like an MMU page. The port currently stores click units in process structures while the hardware uses flat mapped addresses, so this boundary needs tests.
 
-## Priority 3: execution currently provides no liveness or stack-overflow protection
+## Resolved for bring-up: execution liveness
 
-The final `while (1) {}` in `main()` masks all later failures and gives no periodic heartbeat. Add a very simple diagnostic heartbeat or watchdog-safe idle loop once the early path is being tested. Also consider a guard pattern at `_stack_bottom` and periodic checking before introducing nested interrupts and tasks.
+`main()` now enters a watchdog-safe idle loop after process-table validation.
+It feeds the watchdogs, reapplies the Super WDT disable, waits briefly, and
+prints a dot. This confirms the CPU remains alive while the scheduler is not
+yet implemented. It is not a scheduler and must be replaced by the first
+controlled timer-driven idle/task path.
 
 ## Recommended order before continuing the port
 
 1. Verify the initialized-memory sentinels on hardware.
-2. Implement and test `.data`/`.rodata` initialization, if the loader does not already do it.
-3. Add a minimal exception dump and validate vector contents.
-4. Validate call0 stack/interrupt frames with disassembly and deliberate fault tests.
-5. Replace magic boot values with named ESP32-S3 constants and correct RAM accounting.
-6. Add assertions/diagnostics around click conversion and process-table indexing.
-7. Initialize one timer interrupt and one controlled idle path before porting full scheduling/message passing.
+2. Add assertions/diagnostics around click conversion and process-table indexing.
+3. Initialize one timer interrupt and replace the temporary heartbeat loop with a controlled idle/task path before porting full scheduling/message passing.
 
 ## What the current hardware output establishes
 
@@ -169,17 +169,20 @@ main() starting
 setup initial kernel variables
 initialize memory
 cleaning proccess table
+checking process table
+process slots: 41 (mapping valid)
+checking click memory accounting
 ```
 
 The watchdog diagnostics remain stable: timer-group and RTC WDT configuration values are zero, and `RTC_SWD_CONF` is `0xC0000000`. The reported reset value `0x0000F041` is still a raw reset-state value and has not been decoded into a definitive reset cause.
 
 Before continuing into scheduling, the next session should:
 
-- verify `.data sentinel: 0xC032DA7A` and `.bss sentinel: 0x00000000` on hardware;
-- add a minimal exception dump before enabling interrupts;
-- validate vector contents at `_vectors_start` and confirm `VECBASE` alignment;
-- inspect the call0 stack frame and generated prologue/epilogue in disassembly;
-- only then continue into timer, scheduling, and message-passing work.
+- verify the temporary idle heartbeat remains alive on hardware;
+- add a stack guard pattern at `_stack_bottom`;
+- initialize one timer interrupt and validate its acknowledge/clear path;
+- replace the heartbeat with a controlled idle/task path;
+- only then continue into scheduler and message-passing work.
 
 ### Exception diagnostic status
 
@@ -211,6 +214,10 @@ halted as designed. The output label has been corrected from `EPS1` to `PS`.
 The next boot image now reports the call0 stack bounds, current stack pointer,
 and stack alignment. The pointer must be between the linker-defined stack
 bottom and top, and its low nibble must be zero.
+
+The stack check now enforces those conditions and halts with
+`FATAL: invalid call0 stack` if they fail. The current image was build-tested;
+hardware output is still needed to confirm the runtime pointer and alignment.
 
 ### Vector validation added
 
@@ -244,3 +251,10 @@ make flash
 
 After testing, rebuild the normal image with `make clean && make`. The
 exception image is intentionally not suitable for continuing boot.
+
+### Process-table and click-accounting validation added
+
+`main()` now validates every process-table slot and its reverse pointer mapping
+after initialization. It also prints the usable memory base, size, and total
+in 4 KiB clicks. Expected process output is `process slots: 41 (mapping valid)`.
+A mismatch halts before future scheduling code can use corrupt mappings.
