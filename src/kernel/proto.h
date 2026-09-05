@@ -7,6 +7,7 @@
 struct dpeth;
 struct proc;
 struct tty;
+typedef struct cp32_irq_frame cp32_irq_frame_t;
 
 /* main.c */
 _PROTOTYPE( void main, (void)						);
@@ -57,7 +58,7 @@ _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( int systimer_probe, (void)					);
 _PROTOTYPE( int systimer_route_probe, (void)			);
 _PROTOTYPE( void systimer_irq_start, (void)			);
-_PROTOTYPE( void cp32_timer_irq_dispatch, (void)		);
+_PROTOTYPE( void cp32_timer_irq_dispatch, (cp32_irq_frame_t *frame) );
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
 /* tty.c */

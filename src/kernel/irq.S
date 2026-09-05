@@ -206,7 +206,7 @@ irq_level1:
     movi    a4, 63
     and     a3, a3, a4
     bnez    a3, 1f
-    movi    a2, 0
+    mov     a2, a1
     call0   cp32_timer_irq_dispatch
 1:
     movi    a2, k_reenter

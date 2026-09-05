@@ -682,3 +682,39 @@ state, and can call `interrupt(CLOCK)` to request scheduling. Therefore the
 next implementation must first provide a real exception frame and a safe
 post-interrupt context-switch path; no runtime handler enable was made in this
 step.
+
+Added `kernel/irq_frame.h` with a C-visible 64-byte `cp32_irq_frame_t`
+representation and compile-time size check. Marker:
+`CP32-IRQ-FRAME-64-ABI-1`. It documents the assembly frame for the future C
+handoff without changing the active ISR or enabling scheduling.
+
+The next image uses marker `CP32-IRQ-FRAME-64-ABI-2`. The guarded bridge now
+receives the live ISR frame pointer (`a1`) instead of a null argument, while
+the real MINIX clock handler remains disabled. The image builds successfully.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-ABI-2`: the live frame
+pointer handoff caused no regression; periodic delivery remains stable with
+`r=0`, `e=0`, and normal bridge-call progression.
+
+The next image uses marker `CP32-IRQ-FRAME-64-ABI-3` and counts frame pointers
+received with 16-byte alignment as `f=...`. This validates the stack alignment
+at the C boundary without enabling MINIX `clock_handler`.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-ABI-3`: when the bridge
+counter reached `c=1`, the aligned-frame counter also reached `f=1`. This
+confirms the live ISR frame pointer is 16-byte aligned at the C boundary;
+`r=0` and `e=0` remain correct.
+
+At this point the bring-up frame checks are complete: non-null pointer,
+16-byte alignment, stack ownership, register preservation, and balanced
+`k_reenter` have all passed on hardware. The next code change must be the
+context-switch/return implementation required by `clock_handler`; further
+probe counters would not reduce that integration risk.
+
+The next image uses marker `CP32-IRQ-FRAME-64-ABI-4` and counts frames fully
+inside the linker-defined kernel stack as `s=...`. This validates frame
+ownership before scheduler code is allowed to consume the frame.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-ABI-4`: `c`, `f`, and `s`
+match on every bridge invocation, proving the frame is non-null, 16-byte
+aligned, and fully inside the kernel stack. `r=0` and `e=0` remain correct.

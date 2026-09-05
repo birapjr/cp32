@@ -51,6 +51,7 @@
  */
 
 #include "kernel.h"
+#include "irq_frame.h"
 #include <signal.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -89,6 +90,10 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 volatile uint32_t cp32_timer_irq_ticks;
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
+volatile uint32_t cp32_clock_irq_frame_aligned_calls;
+volatile uint32_t cp32_clock_irq_frame_stack_calls;
+extern char _stack_bottom[];
+extern char _stack_top[];
 
 FORWARD _PROTOTYPE( void common_setalarm, (int proc_nr,
         long delta_ticks, watchdog_t function) );
@@ -446,9 +451,16 @@ int irq;
 }
 
 /* Called from the level-1 handler; disabled until scheduler handoff is safe. */
-PUBLIC void cp32_timer_irq_dispatch(void)
+PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 {
   cp32_clock_irq_bridge_calls++;
+  if (frame == 0)
+    return;
+  if ((((uintptr_t) frame) & 0x0Fu) == 0)
+    cp32_clock_irq_frame_aligned_calls++;
+  if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
+      (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
+    cp32_clock_irq_frame_stack_calls++;
   if (cp32_clock_irq_bridge_enabled)
     (void) clock_handler(CLOCK_IRQ);
 }

@@ -17,6 +17,8 @@
 extern char _stack_bottom[];
 extern volatile uint32_t cp32_timer_irq_ticks;
 extern volatile uint32_t cp32_clock_irq_bridge_calls;
+extern volatile uint32_t cp32_clock_irq_frame_aligned_calls;
+extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 
@@ -105,7 +107,7 @@ void main(void) {
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
-  usbj_print("timer probe build: CP32-IRQ-FRAME-64-CONTRACT-5\r\n");
+  usbj_print("timer probe build: CP32-IRQ-FRAME-64-ABI-4\r\n");
   usbj_print("timer reentry baseline: ");
   usbj_print_u32((uint32_t) k_reenter);
   usbj_print(" (expected 0)\r\n");
@@ -132,6 +134,10 @@ void main(void) {
     usbj_print_u32((uint32_t) k_reenter);
     usbj_print(" c=");
     usbj_print_u32(cp32_clock_irq_bridge_calls);
+    usbj_print(" f=");
+    usbj_print_u32(cp32_clock_irq_frame_aligned_calls);
+    usbj_print(" s=");
+    usbj_print_u32(cp32_clock_irq_frame_stack_calls);
     usbj_print(" e=");
     usbj_print_u32((uint32_t) cp32_clock_irq_bridge_enabled);
     usbj_print("]");
