@@ -85,6 +85,9 @@ PRIVATE clock_t pending_ticks;                  /* ticks seen by low level only 
 PRIVATE int sched_ticks = SCHED_RATE;           /* counter: when 0, call scheduler  */
 PRIVATE struct proc *prev_ptr;                  /* last user process run by clock task */
 
+/* Incremented by the temporary level-2 SYSTIMER probe handler. */
+volatile uint32_t cp32_timer_irq_ticks;
+
 FORWARD _PROTOTYPE( void common_setalarm, (int proc_nr,
         long delta_ticks, watchdog_t function) );
 FORWARD _PROTOTYPE( void do_clocktick,    (void) );
@@ -465,12 +468,15 @@ PUBLIC int systimer_route_probe()
          CP32_SYSTIMER_CPU_INT ? OK : EINVAL;
 }
 
-/* Start a periodic TARGET0 interrupt for hardware bring-up. The level-2
- * handler currently only acknowledges the interrupt; it does not tick the
- * MINIX clock or invoke the scheduler yet. */
+/* Start a hardware-only periodic TARGET0 probe. The interrupt handler only
+ * acknowledges the flag and counts deliveries; MINIX clock_handler remains
+ * disconnected until this path is stable. */
 PUBLIC void systimer_irq_start()
 {
   systimer_enable_target0_periodic(SYSTIMER_TICKS_PER_CLOCK);
+  systimer_set_target0(systimer_unit0_read() + SYSTIMER_TICKS_PER_CLOCK);
+  REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
+  REG_WRITE(SYSTIMER_INT_CLR_REG, SYSTIMER_TARGET0_INT_BIT);
   REG_SET_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
   enable_irq(CP32_SYSTIMER_CPU_INT);
 }

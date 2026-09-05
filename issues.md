@@ -215,13 +215,19 @@ interrupt-matrix register at offset `0x0E4`. It maps TARGET0 to CPU interrupt
 disabled. Expected output is `TARGET0 mapped to CPU interrupt 2 (IRQ disabled)`.
 This validates the route without firing the still-incomplete ISR.
 
-The next image enables a periodic TARGET0 interrupt after the route probe.
+The next image enables a one-shot TARGET0 interrupt after the route probe.
 The level-2 assembly handler only clears `SYSTIMER_INT_CLR_REG` and returns;
 it does not enter MINIX clock or scheduler code. Expected output is
-`TARGET0 periodic IRQ enabled (level 2)` followed by a continuing heartbeat.
+`TARGET0 one-shot IRQ enabled (level 2)` followed by a continuing heartbeat.
 This is the first hardware test of interrupt delivery and `rfi 2`; if the
 device hangs or resets, disable this call and inspect the level-2 frame/save
 logic before adding clock-task behavior.
+
+The level-2 probe handler now increments `cp32_timer_irq_ticks` after clearing
+TARGET0, and the idle loop prints the counter after each heartbeat dot. The
+counter should increase steadily (approximately 60 ticks per second). This
+distinguishes a working periodic ISR from a heartbeat produced only by the
+busy-wait loop.
 
 ### Stack guard added
 
@@ -243,6 +249,49 @@ source without introducing an unhandled interrupt.
 Hardware testing confirmed the controlled null-store path works. It produced
 `EXCCAUSE: 0x0000001D`, `EXCVADDR: 0x00000000`, a valid IRAM `EPC1`, and then
 halted as designed. The output label has been corrected from `EPS1` to `PS`.
+
+The first timer-ISR test did not increment `cp32_timer_irq_ticks`; the idle
+heartbeat continued as `.0`. The idle loop now periodically reports SYSTIMER
+RAW/STATUS and the Xtensa CPU interrupt register. Use those values to
+distinguish a comparator configuration problem from an interrupt-matrix or
+CPU-vector problem before changing the ISR again.
+
+The readback showed `CONF=0x400411AA` and a valid TARGET0 low word, but RAW and
+STATUS remained zero. The diagnostic now also prints the live UNIT0 counter so
+the target can be compared directly with the running counter. If the target is
+behind the counter, the comparator load sequence or target programming order
+must be corrected next.
+
+The next diagnostic includes the read-only `REAL_TARGET0` registers, which
+represent the comparator's active value rather than the staging TARGET0
+registers. Compare `real_*` with `target_*` to determine whether
+`COMP0_LOAD_REG` synchronized the programmed target.
+
+Hardware showed `REAL_TARGET0=0` while the staged target was valid. The missing
+piece was the separate TARGET0 comparator work-enable bit in `SYSTIMER_CONF`.
+`systimer_irq_start()` now enables `SYSTIMER_TARGET0_WORK_EN` before enabling
+the interrupt. This should allow the one-shot comparator to become active.
+
+Hardware confirmed the target was behind the counter while RAW/STATUS stayed
+zero, so periodic mode was not arming the comparator. The probe now uses the
+simpler one-shot alarm mode with an absolute target. Once one-shot delivery is
+confirmed, periodic reload behavior can be implemented separately.
+
+The follow-up configuration-order change still produced zero RAW/STATUS and
+zero CPU interrupt state. The heartbeat diagnostic now also reports TARGET0
+HI/LO and TARGET0 CONF readback, allowing the next correction to distinguish a
+bad target load from an incorrect periodic-mode bitfield.
+
+The diagnostic output showed `RAW=0`, `STATUS=0`, and CPU `INTERRUPT=0`, so
+TARGET0 was never reaching the interrupt matrix. The cause was that the probe
+started UNIT0 but left TARGET0 without an initial absolute compare value before
+switching to periodic mode. `systimer_irq_start()` now programs the first
+target to `current + SYSTIMER_TICKS_PER_CLOCK` and clears stale status before
+enabling TARGET0 and CPU interrupt 2.
+
+The follow-up test still showed zero RAW/STATUS, so the setup order was also
+corrected: periodic mode is selected first, then the initial absolute target
+is written and synchronized, followed by status clear and interrupt enable.
 
 The next boot image now reports the call0 stack bounds, current stack pointer,
 and stack alignment. The pointer must be between the linker-defined stack
@@ -291,3 +340,106 @@ exception image is intentionally not suitable for continuing boot.
 after initialization. It also prints the usable memory base, size, and total
 in 4 KiB clicks. Expected process output is `process slots: 41 (mapping valid)`.
 A mismatch halts before future scheduling code can use corrupt mappings.
+
+### Level-1 SYSTIMER interrupt dispatch fixed
+
+The first hardware test with TARGET0 enabled produced:
+
+```text
+EXCCAUSE: 0x00000004
+EPC1:     0x40374D41
+```
+
+The timer was firing, but CPU interrupt line 2 was incorrectly assumed to be
+Xtensa level 2. The ESP32-S3 toolchain configuration identifies CPU interrupt
+2 as level 1. Level-1 interrupts enter through the kernel-exception vector,
+not the level-2 vector at offset `0x180`; the old path treated the timer IRQ
+as a fatal exception and returned with the wrong interrupt level.
+
+The first follow-up still produced `EXCCAUSE=0x04`, proving that the
+previous cause constant was wrong for this Xtensa configuration. Here,
+`EXCCAUSE=0x04` is the level-1 interrupt cause. `irq.S` now recognizes
+`EXCCAUSE_LEVEL1_INTERRUPT` (`0x04`) in `irq_kernel`,
+dispatches to `irq_level1`, acknowledges TARGET0, increments the probe tick
+counter, and returns with `rfi 1`. Other kernel exceptions retain the existing
+terminal diagnostic path. The image builds successfully.
+
+Next hardware validation:
+
+- the one-shot probe should return to `delay()` without an exception;
+- the idle output should show the tick counter increasing;
+- if it hangs or faults, capture the new exception report and confirm whether
+  the level-1 handler itself needs a dedicated interrupt stack/register frame.
+
+The next image additionally masks CPU interrupt 2 at handler entry and saves
+the extra registers required by that operation. This is a diagnostic guard
+against immediate level-1 re-entry while TARGET0 is being acknowledged; it is
+not the final interrupt masking policy.
+
+The next revision also masks the SYSTIMER TARGET0 source itself as the first
+handler action, before clearing the pending flag and updating diagnostics.
+This distinguishes a continuously asserted peripheral source from a broken
+level-1 return path.
+
+Hardware still reported `EXCCAUSE=0x04`, so the level-1 entry was recognized
+but did not return correctly. Because level 1 uses the kernel-exception vector,
+its entry has `PS.EXCM` set and must use `rfe`; `rfi 1` is inappropriate here.
+The handler now restores `a0` and returns with `rfe`. This is the next hardware
+validation point.
+
+The subsequent test still reached the fatal report, so the shared dispatch
+branch is now removed temporarily: `_vec_kernel` directly enters
+`irq_level1`, which explicitly saves `a0`. This is a controlled bring-up
+change, not a finished exception design; synchronous kernel exceptions are
+temporarily routed through the timer probe until the hardware return path is
+validated.
+
+The linked image confirms the vector is a direct jump to `irq_level1`, so a
+continuing `EXCCAUSE=0x04` report is recursive entry during the handler or
+return, not failure of the `irq_kernel` cause branch. The level-1 exit now also
+executes `rsync` before `rfe`. If this still fails, the next step is to replace
+the hand-built handler with a minimal vector-safe frame implementation and
+capture interrupt-enable/pending registers before returning.
+
+The confirmed flash test still produced the fatal report. The boot context is
+therefore reaching the user-exception vector at offset `0x340`; `irq_user` was
+still treating the level-1 interrupt cause as fatal. The bring-up vectors now
+route both `0x300` and `0x340` directly to `irq_level1`. Proper privilege-aware
+level-1 dispatch must replace this temporary routing before user processes are
+introduced.
+
+The timer remains a bring-up probe only. It is not yet connected to MINIX's
+`clock_handler`, and the level-1 assembly frame still needs hardening before
+general interrupt-driven kernel code is enabled.
+
+Hardware validation then succeeded:
+
+```text
+entering kernel idle                    ...
+.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.
+```
+
+This proves CPU interrupt 2 reaches the level-1 handler and returns to idle
+without an exception. The repeated `1` is expected because the current probe
+masks TARGET0 in the handler: it delivers one interrupt, then leaves the
+counter unchanged. Interrupt entry/return is validated. Remaining timer work
+is periodic reload/acknowledgement and integration with MINIX `clock_handler`.
+
+The next probe changes TARGET0 to hardware periodic mode. The handler no
+longer masks CPU interrupt 2 or the SYSTIMER source; it only acknowledges the
+flag and increments the diagnostic counter. This tests hardware periodic
+reload independently of MINIX clock accounting. If stable, the following
+step is to replace the counter with a minimal `clock_handler` bridge.
+
+Hardware validation succeeded:
+
+```text
+TARGET0 periodic IRQ enabled ...
+.27.54.81.108.135.162.189.216.243.270...
+```
+
+The counter advances repeatedly without an exception, confirming SYSTIMER
+periodic reload, interrupt routing, level-1 entry, and return to idle. The
+startup message was corrected to report periodic mode and the actual CPU
+interrupt level. The next remaining step is a guarded bridge into MINIX
+`clock_handler`, including a proper interrupt frame before scheduling work.

@@ -66,11 +66,16 @@ _vec_debug:     j   irq_debug
 _vec_nmi:       j   irq_nmi
 
 /* ── Software exception vectors ───────────────────────────────────────── */
-.org 0x300                      /* Kernel exception (syscall, misalign...)  */
-_vec_kernel:    j   irq_kernel
+.org 0x300                      /* Kernel exception / level-1 IRQ           */
+/* Bring-up: CPU interrupt 2 is level 1 and shares this vector.  Route it
+ * directly while the timer probe is active; restore irq_kernel dispatch once
+ * the interrupt return path is validated. */
+_vec_kernel:    j   irq_level1
 
-.org 0x340                      /* User exception                           */
-_vec_user:      j   irq_user
+.org 0x340                      /* User exception / level-1 IRQ              */
+/* The current boot context can also take CPU interrupt 2 through the user
+ * exception vector. Keep the timer probe on the same handler in bring-up. */
+_vec_user:      j   irq_level1
 
 .org 0x3C0                      /* Double exception — never rfi from here   */
 _vec_double:    j   irq_double

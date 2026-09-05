@@ -46,6 +46,8 @@
 #define SYSTIMER_INT_RAW_REG        (SYSTIMER_BASE + 0x068)
 #define SYSTIMER_INT_CLR_REG        (SYSTIMER_BASE + 0x06C)
 #define SYSTIMER_INT_ST_REG         (SYSTIMER_BASE + 0x070)
+#define SYSTIMER_REAL_TARGET0_LO_REG (SYSTIMER_BASE + 0x074)
+#define SYSTIMER_REAL_TARGET0_HI_REG (SYSTIMER_BASE + 0x078)
 
 /*===========================================================================*
  * SYSTIMER_CONF_REG bits
@@ -53,6 +55,7 @@
 #define SYSTIMER_CLK_EN             (1 << 31)
 #define SYSTIMER_TIMER_UNIT0_WORK_EN (1 << 30)
 #define SYSTIMER_TIMER_UNIT1_WORK_EN (1 << 29)
+#define SYSTIMER_TARGET0_WORK_EN     (1 << 24)
 
 /*===========================================================================*
  * SYSTIMER_TARGET_CONF_REG bits (TARGET0/1/2 share same layout)

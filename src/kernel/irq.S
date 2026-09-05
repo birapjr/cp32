@@ -66,9 +66,15 @@ irq_level2:
     /* Minimal SYSTIMER probe handler: acknowledge TARGET0 only. */
     addi    a1, a1, -16
     s32i    a2, a1, 0
+    s32i    a3, a1, 4
     movi    a2, 0x6002306C
     movi    a3, 1
     s32i    a3, a2, 0
+    movi    a2, cp32_timer_irq_ticks
+    l32i    a3, a2, 0
+    addi    a3, a3, 1
+    s32i    a3, a2, 0
+    l32i    a3, a1, 4
     l32i    a2, a1, 0
     addi    a1, a1, 16
     HANDLER_EXIT  2
@@ -142,6 +148,10 @@ irq_nmi:
 irq_kernel:
     wsr     a0, excsave1        /* save a0; excsave1 is the level-1 scratch */
     rsr     a2, exccause        /* arg0: exception cause                    */
+    /* CPU interrupt line 2 is Xtensa level 1 on ESP32-S3.  Level-1
+     * interrupts share this kernel-exception vector. */
+    movi    a3, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
+    beq     a2, a3, irq_level1
     rsr     a3, excvaddr        /* arg1: faulting address                   */
     rsr     a4, epc1            /* arg2: saved program counter              */
     rsr     a5, ps              /* arg3: current processor status             */
@@ -149,6 +159,40 @@ irq_kernel:
     addi    a1, a1, -16
     call0   exception_dump       /* terminal: does not return                */
 .size irq_kernel, .-irq_kernel
+
+/* ── Level-1 IRQ ──────────────────────────────────────────────────────── */
+/* Entered from irq_kernel for EXCCAUSE_LEVEL1_INTERRUPT (0x04). */
+.align 4
+.global irq_level1
+.type   irq_level1, @function
+irq_level1:
+    wsr     a0, excsave1
+    addi    a1, a1, -32
+    s32i    a2, a1, 0
+    s32i    a3, a1, 4
+    s32i    a4, a1, 8
+    s32i    a5, a1, 12
+    /* Acknowledge TARGET0. Periodic mode keeps the source enabled and
+     * reloads the next deadline in hardware. */
+    movi    a2, 0x6002306C
+    movi    a3, 1
+    s32i    a3, a2, 0
+    movi    a2, cp32_timer_irq_ticks
+    l32i    a3, a2, 0
+    addi    a3, a3, 1
+    s32i    a3, a2, 0
+    l32i    a5, a1, 12
+    l32i    a4, a1, 8
+    l32i    a3, a1, 4
+    l32i    a2, a1, 0
+    addi    a1, a1, 32
+    /* Level 1 arrived through the exception vector, so PS.EXCM is set.
+     * Return with RFE; RFI 1 is only for a dedicated level-1 interrupt
+     * vector and would re-enter the exception path on this core. */
+    rsr     a0, excsave1
+    rsync
+    rfe
+.size irq_level1, .-irq_level1
 
 /* ── User exception ───────────────────────────────────────────────────── */
 .align 4

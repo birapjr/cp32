@@ -12,8 +12,10 @@
 
 #include "kernel.h"
 #include "proc.h"
+#include "esp32s3/systimer.h"
 
 extern char _stack_bottom[];
+extern volatile uint32_t cp32_timer_irq_ticks;
 
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
@@ -94,7 +96,7 @@ void main(void) {
   usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
   status_line("starting systimer interrupt probe", 0);
   systimer_irq_start();
-  usbj_print("TARGET0 periodic IRQ enabled (level 2)\r\n");
+  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
 
   /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
    * a low-rate heartbeat so a silent hang can be distinguished from an
@@ -112,6 +114,35 @@ void main(void) {
       for (;;) { }
     }
     usbj_print(".");
+    usbj_print_u32(cp32_timer_irq_ticks);
+  if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
+      uint32_t cpu_interrupt;
+      usbj_print(" [target_hi=");
+      usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_HI_REG));
+      usbj_print(" lo=");
+      usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_LO_REG));
+      usbj_print(" conf=");
+      usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_CONF_REG));
+      {
+        uint64_t counter = systimer_unit0_read();
+        usbj_print(" now_hi=");
+        usbj_print_hex32((uint32_t)(counter >> 32));
+      usbj_print(" now_lo=");
+        usbj_print_hex32((uint32_t)counter);
+      }
+      usbj_print(" real_hi=");
+      usbj_print_hex32(REG_READ(SYSTIMER_REAL_TARGET0_HI_REG));
+      usbj_print(" real_lo=");
+      usbj_print_hex32(REG_READ(SYSTIMER_REAL_TARGET0_LO_REG));
+      usbj_print(" raw=");
+      usbj_print_hex32(REG_READ(SYSTIMER_INT_RAW_REG));
+      usbj_print(" st=");
+      usbj_print_hex32(REG_READ(SYSTIMER_INT_ST_REG));
+      usbj_print(" cpu=");
+      __asm__ volatile ("rsr %0, interrupt" : "=a" (cpu_interrupt));
+      usbj_print_hex32(cpu_interrupt);
+      usbj_print("]");
+    }
   }
 }
 
