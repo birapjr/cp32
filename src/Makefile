@@ -78,6 +78,12 @@ $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 flash: $(BUILD_DIR)/$(TARGET).bin
 	esptool --chip esp32s3 --port /dev/cu.usbmodem2101 write_flash 0x0 $(BUILD_DIR)/$(TARGET).bin
 
+# Build a diagnostic image that deliberately triggers the early exception
+# handler after vector validation. This target is for hardware testing only.
+test-exception:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_TEST_EXCEPTION=1" all
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)

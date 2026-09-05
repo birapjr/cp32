@@ -10,8 +10,9 @@
 #*====================================*
 
 # CRITICAL: this section must match the linker script .startup section name.
-# It runs from flash initially — its job is to copy everything to IRAM/DRAM
-# before jumping into fast memory.
+# The ESP32-S3 image loader places the IRAM segment at its linked VMA before
+# entering CP32.  Startup therefore initializes CPU state and .bss only;
+# it must not copy from the linker LMAs as ordinary CPU data addresses.
 .section .startup.text, "ax"    # Executable code, a - Allocatable, x - Executable
 .global CP32
 CP32:                           # this is the entry point for the CP32 kernel
@@ -67,7 +68,7 @@ bss_done:
     rsync
 
     # ----------------------------------------------------------------
-    # STEP 4- Prepare environmnet for the Kernel
+    # STEP 5- Prepare environmnet for the Kernel
     # ----------------------------------------------------------------
     call0   start
 

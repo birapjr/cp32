@@ -124,19 +124,23 @@ irq_nmi:
 
 /* ── Kernel exception ─────────────────────────────────────────────────── */
 /*
- * Handles: syscall (EXCCAUSE=1), unaligned access (EXCCAUSE=9),
- * illegal instruction (EXCCAUSE=0), load/store prohibited (EXCCAUSE=29).
- * EXCVADDR holds the faulting address for load/store causes.
- * rfe returns to the instruction AFTER the one that caused the exception.
+ * Handles early kernel exceptions by reporting the saved exception state.
+ * EXCVADDR holds the faulting address for load/store causes. The handler is
+ * terminal during bring-up; it does not attempt to resume with rfe because
+ * no process exception policy or complete saved register frame exists yet.
  */
 .align 4
 .global irq_kernel
 .type   irq_kernel, @function
 irq_kernel:
     wsr     a0, excsave1        /* save a0; excsave1 is the level-1 scratch */
-    /* TODO: read EXCCAUSE, EXCVADDR, dispatch to C handler                 */
-    rsr     a0, excsave1
-    rfe                         /* return to EPC1 (past faulting instr)     */
+    rsr     a2, exccause        /* arg0: exception cause                    */
+    rsr     a3, excvaddr        /* arg1: faulting address                   */
+    rsr     a4, epc1            /* arg2: saved program counter              */
+    rsr     a5, ps              /* arg3: current processor status             */
+    movi    a1, _stack_top
+    addi    a1, a1, -16
+    call0   exception_dump       /* terminal: does not return                */
 .size irq_kernel, .-irq_kernel
 
 /* ── User exception ───────────────────────────────────────────────────── */
@@ -145,9 +149,13 @@ irq_kernel:
 .type   irq_user, @function
 irq_user:
     wsr     a0, excsave1
-    /* TODO: dispatch */
-    rsr     a0, excsave1
-    rfe
+    rsr     a2, exccause
+    rsr     a3, excvaddr
+    rsr     a4, epc1
+    rsr     a5, ps
+    movi    a1, _stack_top
+    addi    a1, a1, -16
+    call0   exception_dump
 .size irq_user, .-irq_user
 
 /* ── Double exception ─────────────────────────────────────────────────── */
