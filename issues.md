@@ -207,6 +207,39 @@ system halted
 The label should be interpreted as the processor-status diagnostic; the
 current implementation passes `PS`, not a saved `EPS1` register.
 
+### SYSTIMER interrupt route probe added
+
+The boot path now writes and reads back the ESP32-S3 CORE0 SYSTIMER TARGET0
+interrupt-matrix register at offset `0x0E4`. It maps TARGET0 to CPU interrupt
+2, but leaves both the peripheral TARGET0 interrupt and CPU interrupt line
+disabled. Expected output is `TARGET0 mapped to CPU interrupt 2 (IRQ disabled)`.
+This validates the route without firing the still-incomplete ISR.
+
+The next image enables a periodic TARGET0 interrupt after the route probe.
+The level-2 assembly handler only clears `SYSTIMER_INT_CLR_REG` and returns;
+it does not enter MINIX clock or scheduler code. Expected output is
+`TARGET0 periodic IRQ enabled (level 2)` followed by a continuing heartbeat.
+This is the first hardware test of interrupt delivery and `rfi 2`; if the
+device hangs or resets, disable this call and inspect the level-2 frame/save
+logic before adding clock-task behavior.
+
+### Stack guard added
+
+`main()` now writes four guard words at `_stack_bottom` and checks them during
+the temporary idle loop. Expected output includes `installing stack guard`,
+followed by continuing heartbeat dots. If any word changes, the kernel prints
+`FATAL: stack guard corrupted` and halts. This guard is only for the current
+single-stack bring-up; each future task will need its own stack bounds and
+guard policy.
+
+### SYSTIMER probe added
+
+The boot path now starts the ESP32-S3 SYSTIMER UNIT0 counter and verifies that
+two reads advance. TARGET0 interrupts remain explicitly disabled because the
+ESP32-S3 interrupt-matrix route is not yet implemented. Expected output is
+`systimer UNIT0 advancing (TARGET0 IRQ disabled)`. This validates the clock
+source without introducing an unhandled interrupt.
+
 Hardware testing confirmed the controlled null-store path works. It produced
 `EXCCAUSE: 0x0000001D`, `EXCVADDR: 0x00000000`, a valid IRAM `EPC1`, and then
 halted as designed. The output label has been corrected from `EPS1` to `PS`.

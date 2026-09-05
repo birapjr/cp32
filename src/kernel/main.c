@@ -13,6 +13,8 @@
 #include "kernel.h"
 #include "proc.h"
 
+extern char _stack_bottom[];
+
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
 void main(void) {
@@ -69,6 +71,31 @@ void main(void) {
   usbj_print_u32((uint32_t)tot_mem_size);
   usbj_print("\r\n");
 
+  /* Reserve the first 16 bytes below the downward-growing stack as a guard.
+   * It is checked in the temporary idle loop until task stacks exist. */
+  volatile uint32_t *stack_guard = (volatile uint32_t *)_stack_bottom;
+  stack_guard[0] = CP32_STACK_GUARD_WORD;
+  stack_guard[1] = CP32_STACK_GUARD_WORD;
+  stack_guard[2] = CP32_STACK_GUARD_WORD;
+  stack_guard[3] = CP32_STACK_GUARD_WORD;
+  status_line("installing stack guard", 0);
+
+  status_line("checking systimer", 0);
+  if (systimer_probe() != OK) {
+    usbj_print("FATAL: systimer counter is not advancing\r\n");
+    for (;;) { }
+  }
+  usbj_print("systimer UNIT0 advancing (TARGET0 IRQ disabled)\r\n");
+  status_line("checking systimer interrupt route", 0);
+  if (systimer_route_probe() != OK) {
+    usbj_print("FATAL: systimer interrupt route rejected\r\n");
+    for (;;) { }
+  }
+  usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
+  status_line("starting systimer interrupt probe", 0);
+  systimer_irq_start();
+  usbj_print("TARGET0 periodic IRQ enabled (level 2)\r\n");
+
   /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
@@ -77,6 +104,13 @@ void main(void) {
     wdt_feed_all();
     swd_disable();
     delay(1000000);
+    if (stack_guard[0] != CP32_STACK_GUARD_WORD ||
+        stack_guard[1] != CP32_STACK_GUARD_WORD ||
+        stack_guard[2] != CP32_STACK_GUARD_WORD ||
+        stack_guard[3] != CP32_STACK_GUARD_WORD) {
+      usbj_print("\r\nFATAL: stack guard corrupted\r\n");
+      for (;;) { }
+    }
     usbj_print(".");
   }
 }

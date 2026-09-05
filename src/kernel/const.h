@@ -1,5 +1,8 @@
 /* General constants used by the kernel. */
 
+/* Temporary guard for the downward-growing early kernel stack. */
+#define CP32_STACK_GUARD_WORD 0xC0325A7Au
+
 #if (CHIP == INTEL)
 
 #define K_STACK_BYTES   1024	/* how many bytes for the kernel stack */

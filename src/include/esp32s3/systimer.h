@@ -9,6 +9,11 @@
  *===========================================================================*/
 #define SYSTIMER_BASE           0x60023000UL
 
+/* CORE0 interrupt-matrix register for SYSTIMER TARGET0. */
+#define INTERRUPT_CORE0_BASE                         0x600C2000UL
+#define INTERRUPT_CORE0_SYSTIMER_TARGET0_INT_MAP_REG (INTERRUPT_CORE0_BASE + 0x0E4)
+#define CP32_SYSTIMER_CPU_INT                        2u
+
 /*===========================================================================*
  * Raw register offsets (TRM Table 11-2)
  *===========================================================================*/

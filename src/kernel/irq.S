@@ -63,7 +63,14 @@ _vec_unhandled:
 .type   irq_level2, @function
 irq_level2:
     HANDLER_ENTRY 2
-    /* TODO: read INTERRUPT register, dispatch to device handler */
+    /* Minimal SYSTIMER probe handler: acknowledge TARGET0 only. */
+    addi    a1, a1, -16
+    s32i    a2, a1, 0
+    movi    a2, 0x6002306C
+    movi    a3, 1
+    s32i    a3, a2, 0
+    l32i    a2, a1, 0
+    addi    a1, a1, 16
     HANDLER_EXIT  2
 .size irq_level2, .-irq_level2
 

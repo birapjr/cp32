@@ -440,6 +440,41 @@ int irq;
   return 1;   /* re-enable clock interrupt */
 }
 
+/* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies
+ * that the free-running counter advances, but deliberately leaves TARGET0
+ * interrupts disabled until the interrupt-matrix route is implemented. */
+PUBLIC int systimer_probe()
+{
+  uint64_t first, second;
+
+  REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_CLK_EN |
+              SYSTIMER_TIMER_UNIT0_WORK_EN);
+  REG_CLR_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
+  first = systimer_unit0_read();
+  delay(1000);
+  second = systimer_unit0_read();
+  return second > first ? OK : EINVAL;
+}
+
+/* Verify the route without enabling either the peripheral or CPU interrupt. */
+PUBLIC int systimer_route_probe()
+{
+  REG_WRITE(INTERRUPT_CORE0_SYSTIMER_TARGET0_INT_MAP_REG,
+            CP32_SYSTIMER_CPU_INT);
+  return REG_READ(INTERRUPT_CORE0_SYSTIMER_TARGET0_INT_MAP_REG) ==
+         CP32_SYSTIMER_CPU_INT ? OK : EINVAL;
+}
+
+/* Start a periodic TARGET0 interrupt for hardware bring-up. The level-2
+ * handler currently only acknowledges the interrupt; it does not tick the
+ * MINIX clock or invoke the scheduler yet. */
+PUBLIC void systimer_irq_start()
+{
+  systimer_enable_target0_periodic(SYSTIMER_TICKS_PER_CLOCK);
+  REG_SET_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
+  enable_irq(CP32_SYSTIMER_CPU_INT);
+}
+
 
 /*===========================================================================*
  *                              init_clock                                    *

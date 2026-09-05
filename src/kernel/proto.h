@@ -54,6 +54,9 @@ _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 _PROTOTYPE( void clock_task, (void)					);
 _PROTOTYPE( void clock_stop, (void)					);
 _PROTOTYPE( clock_t get_uptime, (void)					);
+_PROTOTYPE( int systimer_probe, (void)					);
+_PROTOTYPE( int systimer_route_probe, (void)			);
+_PROTOTYPE( void systimer_irq_start, (void)			);
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
 /* tty.c */
