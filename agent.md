@@ -11,9 +11,10 @@ The repository is currently kernel-focused. The long-term goal described by the 
 - `src/Makefile` — standalone cross-compilation, linking, image generation, flashing, and ELF inspection targets.
 - `src/kernel/` — kernel C and Xtensa assembly sources.
   - `start.c` — early C startup and kernel environment handling.
-  - `main.c` — kernel entry point; currently initializes memory/process-table state and then stops in an infinite loop.
+  - `main.c` — kernel entry point; validates startup/process/memory state, starts the SYSTIMER probe, and runs a diagnostic idle loop.
   - `mpx32.S`, `vectors.S`, `irq.S`, `klib32.S` — reset/startup, exception/vector, interrupt, and low-level assembly support.
   - `proc.c` — MINIX process scheduling and message-passing framework; many core routines are still stubs.
+  - `irq_const.h`, `irq_frame.h` — assembly-safe interrupt-frame constants and the C-visible 64-byte frame contract.
   - `clock.c` — MINIX clock task adapted to the ESP32-S3 SYSTIMER.
   - `tty.c` — largely MINIX-style TTY/line-discipline implementation.
   - `serial.c` — USB Serial/JTAG diagnostic console.
@@ -48,25 +49,31 @@ The expected toolchain is `xtensa-esp32s3-elf-gcc` and related binutils. Image g
 
 - This is freestanding code: no hosted libc, startup files, or operating-system services are available. Use the local implementations in `src/kernel/klib.c` and the project headers instead of assuming a normal libc.
 - The build uses `-mabi=call0`, `-ffreestanding`, `-nostdlib`, `-nostartfiles`, `-O0`, and `-mlongcalls`. Assembly must preserve the calling convention and match the C-visible stack/register assumptions.
-- The linker entry point is `CP32`. The startup path copies load images from flash into IRAM/DRAM, zeros `.bss`, establishes the stack/vector base, disables or handles watchdog state, and enters C code.
-- The linker deliberately places vectors and all kernel `.text` in IRAM, with flash as their load address. `.data` and `.rodata` execute/access from DRAM after startup copying. A fixed 128 KiB heap and 32 KiB downward-growing stack are reserved in DRAM.
+- The linker entry point is `CP32`. The ESP image loader places the linked IRAM/DRAM runtime segments at their VMAs before `CP32`; `mpx32.S` zeros `.bss`, establishes the stack/vector base, and enters C. Do not add software LMA copy loops without changing and revalidating the image format.
+- The linker places vectors and kernel `.text` in IRAM and `.data`/`.rodata` in DRAM. A fixed 128 KiB heap and 32 KiB downward-growing stack are reserved in DRAM.
 - Peripheral access is direct memory-mapped I/O through `volatile` register macros. Do not use ESP-IDF APIs unless the project is explicitly migrated to that runtime.
 - The USB Serial/JTAG endpoint is the current diagnostic console. Keep early diagnostics simple and safe before interrupts, scheduling, or normal TTY services are operational.
-- The ESP32-S3 SYSTIMER is the intended clock source: UNIT0 is treated as a 16 MHz counter and the MINIX clock rate is 60 Hz. There is no PC interrupt controller or PIT to port.
+- The ESP32-S3 SYSTIMER is the intended clock source: UNIT0 is treated as a 16 MHz counter and TARGET0 runs periodically at the 60 Hz MINIX rate. TARGET0 maps to CPU interrupt 2, an Xtensa level-1 interrupt on this core; it enters through the kernel/user exception dispatchers and returns with `rfe`.
 - MINIX structures and APIs use historical K&R declarations and compatibility macros. Preserve existing ABI/layout expectations when changing headers or `struct proc`, `message`, TTY, and stack-frame definitions.
 
 ## Current WIP boundaries
 
 Do not describe the kernel as boot-complete or a usable MINIX system. Known incomplete areas include:
 
-- `main()` does not yet continue into task initialization/scheduling.
-- `proc.c` process dispatch, system-call handling, send/receive, ready-queue operations, and context switching are incomplete or placeholders.
-- `irq.S` still has TODOs for interrupt/exception decoding and dispatch.
+- `main()` still stops in a diagnostic idle loop rather than task initialization/scheduling.
+- `proc.c` has isolated `pick_proc()`, `ready()`, and `unready()` implementations, but `sched()`, process initialization, system calls, send/receive, and context switching remain incomplete.
+- `irq.S` has a validated level-1 SYSTIMER probe frame, but general interrupt dispatch, nested-context policy, and scheduler return are incomplete.
 - `port.c` `_send()` and `_receive()` are temporary stubs returning `OK`.
 - Device-specific Cardputer input/display, storage, user-process loading, shell, filesystem, and applications are not present in this tree.
 - Clock and TTY code is adapted from MINIX but requires validation against the actual ESP32-S3 interrupt and Cardputer device model.
 
 When implementing features, prefer making one low-level path testable on real hardware and preserving diagnostic output before attempting broad MINIX subsystem integration.
+
+Current hardware markers and diagnostics are tracked in `issues.md`. The
+latest validated work uses the `CP32-IRQ-FRAME-*` marker family. For every
+hardware-visible change, update the marker and keep `r`, `c`, `f`, `s`, and `e`
+interpretable: re-entry, bridge calls, aligned frames, in-stack frames, and
+clock-handler gate respectively.
 
 ## Coding guidance for future changes
 
