@@ -1,5 +1,7 @@
 /* General constants used by the kernel. */
 
+#include "irq_const.h"
+
 /* Temporary guard for the downward-growing early kernel stack. */
 #define CP32_STACK_GUARD_WORD 0xC0325A7Au
 

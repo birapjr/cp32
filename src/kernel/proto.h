@@ -57,6 +57,7 @@ _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( int systimer_probe, (void)					);
 _PROTOTYPE( int systimer_route_probe, (void)			);
 _PROTOTYPE( void systimer_irq_start, (void)			);
+_PROTOTYPE( void cp32_timer_irq_dispatch, (void)		);
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
 /* tty.c */

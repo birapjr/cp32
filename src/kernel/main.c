@@ -17,6 +17,7 @@
 extern char _stack_bottom[];
 extern volatile uint32_t cp32_timer_irq_ticks;
 extern volatile uint32_t cp32_clock_irq_bridge_calls;
+extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 
 /* ── main ─────────────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ void main(void) {
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
-  usbj_print("timer probe build: CP32-IRQ-FRAME-64-REENTER-5\r\n");
+  usbj_print("timer probe build: CP32-IRQ-FRAME-64-CONTRACT-5\r\n");
   usbj_print("timer reentry baseline: ");
   usbj_print_u32((uint32_t) k_reenter);
   usbj_print(" (expected 0)\r\n");
@@ -112,6 +113,12 @@ void main(void) {
     wdt_feed_all();
     swd_disable();
     delay(1000000);
+    if (k_reenter != 0) {
+      usbj_print("\r\nFATAL: unbalanced timer reentry: ");
+      usbj_print_u32((uint32_t) k_reenter);
+      usbj_print("\r\n");
+      for (;;) { }
+    }
     if (stack_guard[0] != CP32_STACK_GUARD_WORD ||
         stack_guard[1] != CP32_STACK_GUARD_WORD ||
         stack_guard[2] != CP32_STACK_GUARD_WORD ||
@@ -125,6 +132,8 @@ void main(void) {
     usbj_print_u32((uint32_t) k_reenter);
     usbj_print(" c=");
     usbj_print_u32(cp32_clock_irq_bridge_calls);
+    usbj_print(" e=");
+    usbj_print_u32((uint32_t) cp32_clock_irq_bridge_enabled);
     usbj_print("]");
   if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
       uint32_t cpu_interrupt;

@@ -573,10 +573,71 @@ each interrupt. The disabled C bridge can be crossed safely at this limited
 test frequency; this does not yet validate enabling `clock_handler`, which
 still requires scheduler/context-switch integration.
 
+Named the frame size as `CP32_IRQ_FRAME_BYTES` (`64`) in `kernel/const.h` and
+added marker `CP32-IRQ-FRAME-64-CONTRACT-1`. The assembly still uses a literal
+stack adjustment; replacing it with the shared constant is deferred until the
+assembly include contract is standardized.
+
+An attempted assembly include of `kernel/const.h` produced legacy macro
+redefinition warnings because that header contains C/architecture-specific
+definitions. The include was removed; the named C constant remains, while the
+assembly keeps its validated literal until a dedicated assembly-safe constants
+header is introduced.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-CONTRACT-2`: the marker is
+present, periodic delivery remains stable, `r=0`, `e=0`, and `c` advances as
+expected. The assembly-safe constants header remains a future cleanup item.
+
+Added `kernel/irq_const.h`, an assembly-safe header containing only
+`CP32_IRQ_FRAME_BYTES`. `irq.S` now uses that constant instead of literal
+frame-size adjustments, with marker `CP32-IRQ-FRAME-64-CONTRACT-3`; the full
+C-oriented `const.h` remains excluded from assembly.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-CONTRACT-3`: the marker is
+present, timer output remains stable, `r=0`, `e=0`, and `c` advances normally.
+
+The frame-size definition is now single-source: `const.h` includes the
+assembly-safe `irq_const.h`, and the duplicate C definition was removed.
+Marker: `CP32-IRQ-FRAME-64-CONTRACT-4`.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-CONTRACT-4`: the unified
+constant header caused no regression; timer output remains stable, `r=0`,
+`e=0`, and `c` advances normally.
+
+The next image uses marker `CP32-IRQ-FRAME-64-CONTRACT-5`. All saved-register
+offsets are now named in `irq_const.h` and consumed by `irq.S`; the frame size
+and layout remain unchanged.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-CONTRACT-1`: the marker is
+present, periodic output remains stable, `r=0` confirms balanced re-entry,
+`e=0` confirms the real clock handler is still gated, and `c` advances as
+expected.
+
 The next image uses marker `CP32-IRQ-FRAME-64-BRIDGE-2`. The guarded wrapper
 now counts its own invocations, and heartbeats print `c=...`. Since the test
 calls it once per 64 timer ticks, this count should increase while MINIX
 `clock_handler` remains disabled.
+
+The guarded bridge is now declared in `proto.h`, making the future ISR-to-C
+interface explicit. Marker: `CP32-IRQ-FRAME-64-BRIDGE-3`. Runtime bridge and
+scheduler behavior remain unchanged.
+
+The next image uses marker `CP32-IRQ-FRAME-64-REENTER-6` and converts the
+re-entry observation into a fail-fast invariant: after each idle delay,
+`k_reenter` must equal zero or the kernel reports an unbalanced timer frame
+and halts. This still does not enable scheduler behavior.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-REENTER-6`: no re-entry
+failure occurred, `r=0` remained balanced, and bridge calls continued at the
+expected interval. The fail-fast invariant is now validated.
+
+The next diagnostic image uses marker `CP32-IRQ-FRAME-64-BRIDGE-4` and prints
+the bridge gate as `e=...` on each heartbeat. It must remain `e=0` while the
+real MINIX `clock_handler` is deferred pending scheduler/context-switch work.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-BRIDGE-3`: periodic output
+remains regular, `r=0` after each heartbeat, and `c` advances approximately
+once per 64 ticks. The explicit prototype change introduced no regression.
 
 Hardware validation passed for the bridge-call counter:
 
@@ -605,3 +666,19 @@ it; it does not enable scheduler behavior.
 Hardware validation passed for `CP32-IRQ-FRAME-64-REENTER-5`: `r=0` remains
 balanced on every heartbeat, bridge calls advance at the expected interval,
 and periodic timer delivery remains stable.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-BRIDGE-4`: `e=0` remained
+constant, `r=0` stayed balanced, and `c` advanced at the expected interval.
+This is the final safe checkpoint before scheduler integration; the real clock
+handler must remain disabled until context-switch return semantics are defined.
+
+Hardware validation passed for `CP32-IRQ-FRAME-64-CONTRACT-5`: the named
+register offsets introduced no regression; timer output remains stable with
+`r=0`, `e=0`, and normal bridge-call progression.
+
+Dependency review confirms `clock_handler` is not a simple counter callback:
+it updates `proc_ptr`/`bill_ptr` accounting, pending ticks, alarms, quantum
+state, and can call `interrupt(CLOCK)` to request scheduling. Therefore the
+next implementation must first provide a real exception frame and a safe
+post-interrupt context-switch path; no runtime handler enable was made in this
+step.
