@@ -1,126 +1,72 @@
-## Plan Update – Step 1 Completed
 
-- Added a minimal `schedule()` stub in `src/kernel/proc.c` that prints a clear debug message.
-- Updated `src/kernel/main.c` to call `schedule()` each idle‑loop tick.
-- Adjusted debug message format for clarity.
-- Verified build, flash, and console output now show:
-  ```
-  timer probe build: CP32-IRQ-FRAME-64-SCHED-2
-  last change: SCHED-2 (Scheduled called)
-  ```
-- Hardware validation matches plan expectations.
+## Project identity
 
----
+CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the M5Stack Cardputer Adv, built around the Espressif ESP32-S3FN8 (Xtensa LX7, dual core). The kernel is based on the MINIX 2.0 architecture and source style, adapted incrementally for the ESP32-S3 rather than running on a PC BIOS, 8259 PIC, or 8253 PIT.
 
+The repository is currently kernel-focused. The long-term goal described by the project is a kernel, shell, and applications, but the current tree does not yet contain those user-space components.
 
-This plan documents the incremental steps to evolve the CP32 kernel from a diagnostic boot‑loop to a minimal working scheduler, ensuring that each change is verified on actual Cardputer hardware.  Each step contains:
+## Reference
 
-* **Goal** – What feature will be added or fixed.
-* **Change** – Where the change occurs in the codebase.
-* **Test on Hardware** – How to run the build, flash and verify success.
-* **Debug Log** – A `usbj_print(" … \r\n");` message to emit on the serial console, matching the format used in the existing diagnostics.
+Use the folder minix-2.0.0 as port reference and copy code from the refence folder. When copy not possible port the code to ESP32-S3. Keep the as close as possible folder and file structure.
 
-All steps follow the rules in `agent.md`: smallest testable change, build with `src/Makefile` and validate output.
+## AI Code Agent rules to follow
 
----
+Before modifying kernel/assembly code:
 
-## 1. Add a One‑Shot Scheduler Hook
-**Goal** – After the diagnostic idle loop in `main.c`, invoke a simple `schedule()` stub that will run once and return.
-
-**Change** – Add a call to `schedule()` after the idle loop, and implement a minimal stub in `proc.c` that logs a message.
-
-**Test on Hardware** –
-1. `make clean && make` in `src/`.
-2. `make flash`.
-3. Observe USB serial console; expect the message from `schedule()`.
-
-**Debug Log** – In `proc.c` add:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-1\r\n");
-```
-In `main.c` after idle loop:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-2\r\n");
-schedule();
-``` 
-
----
-
-## 2. Implement Basic Task Structure
-**Goal** – Define a `struct proc` entry for a dummy task that sleeps for a few ticks then prints.
-
-**Change** – In `proc.c` create an array of one `struct proc` with `state = TASK_READY`. Add logic in `pick_proc()` to return this task.
-
-**Test on Hardware** – Build and flash; the console should show the diagnostic + the dummy task message.
-
-**Debug Log** – Inside task entry point:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-3\r\n");
-```
-
----
-
-## 3. Wire Timer Interrupt to Scheduler
-**Goal** – Make the SYSTIMER interrupt (`TARGET0`) invoke the scheduler instead of entering `rfe`.
-
-**Change** – In `irq.S`, replace the existing probe frame to call a new C function `sched_tick()`; in `clk.c` implement `sched_tick()` to call `schedule()`.
-
-**Test on Hardware** – Rebuild, flash; every ~16 ms the console should output the tick log followed by the scheduler debug logs.
-
-**Debug Log** – In `clk.c`:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-TICK-1\r\n");
-```
-
----
-
-## 4. Implement Context Switch Skeleton
-**Goal** – Add minimal `switch_to()` that saves/restores registers and updates `current` index.
-
-**Change** – In `proc.c` add `switch_to(struct proc *next)` that updates a global `current_proc` pointer. Adjust `schedule()` to call `switch_to()`.
-
-**Test on Hardware** – Build and flash; verify sequential logs: tick → schedule → task message → tick → …
-
-**Debug Log** – In `switch_to()`:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-SWITCH-1\r\n");
-```
-
----
-
-## 5. Finalise IPC Stubs
-**Goal** – Provide working `send()` and `receive()` stubs that simply return OK.
-
-**Change** – In `proc.c` implement `int send(...) { return OK; }` and `int receive(...) { return OK; }` with debug prints.
-
-**Test on Hardware** – Compile and flash; ensure no crashes and see prints for send/receive invocations.
-
-**Debug Log** – In each stub:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-IPC-1\r\n");
-```
-
----
-
-## 6. Clean Up and Documentation
-**Goal** – Update `issues.md` markers, tidy comments, and ensure the Makefile remains unchanged.
-
-**Change** – Append markers like `CP32-IRQ-FRAME-64-FINAL` and describe the current status.
-
-**Test on Hardware** – No additional test; confirm previous steps still pass.
-
-**Debug Log** – Final marker:
-```c
-usbj_print("timer probe build: CP32-IRQ-FRAME-64-FINAL\r\n");
-```
-
----
-
-**General Testing Procedure** – For every change:
-1. Modify the code.
-2. `make clean && make` in `src/`.
-3. `make flash`.
-4. Open the serial console at 115200 baud, e.g., `screen /dev/cu.usbmodem2101 115200`.
-5. Verify the expected `usbj_print` messages appear in order.
+1. Identify the MINIX v2 original behavior. Use folder minix-2.0.0 as reference.
+2. Identify the ESP32-S3 architectural difference.
+3. Identify the CP32 invariant being preserved.
+4. Make the smallest testable change.
+5. Build with the existing Makefile.
+6. Inspect ELF sections/symbols when relevant.
+7. Never assume hardware behavior without documentation or a
+   hardware validation result.
+8. Never replace bare-metal code with ESP-IDF unless explicitly requested.
+9. Update issues.md with hardware validation results.
+10. Update plan.md with tasks in progress, so next sessions can pick-up where was stopped
+10. Update plan.md with all completed task and validated on hardware.
+11. General Testing Procedure – For every change:
+11.1. Modify the code.
+11.2. `make clean && make` in `src/`.
+11.3. fix compilation errors
+11.4. jump back to 11.2. and repeat
 
 This incremental plan keeps each change small, build‑test‑validate cycles, and provides clear console output to aid human and agent debugging.
+
+## Task 1 - review corrent code with refence minix source
+- [x] 1. check what was implemented and found critical derivations that could break the port in the future
+- [x] 2. write the plan for the fixes to the issues foound above Task 1.1 as new tasks in this files
+
+---
+
+## Task 2 - Fix Critical Derivations (Post-Review) - in progress
+
+The following tasks address critical architectural gaps identified during the review against MINIX 2.0.0.
+
+### 2.1 Process Table Initialization
+**Goal**: Ensure every process has a valid initial state.
+**Change**: In `main.c`, implement the initialization loop to set `p_reg` (PC, SP) and `p_map` for all tasks and processes based on the MINIX reference.
+**Verification**: Build and verify that `proc_ptr` points to a valid register frame.
+- [x] Implemented initialization loop for `p_reg` and `p_map`.
+- [x] Fixed Null Pointer crash by initializing `pproc_addr` and ready queues (`rdy_head`/`rdy_tail`) before use.
+- [x] Verified stable boot and scheduling on hardware.
+
+### 2.2 Restore Round-Robin Scheduling
+**Goal**: Implement fair multi-tasking.
+**Change**: In `proc.c`, update `sched()` to rotate the `USER_Q` (move current process to tail) before calling `pick_proc()`.
+**Verification**: Flash and verify multiple user processes are interleaved.
+
+### 2.3 Implement Interrupt Held Queue
+**Goal**: Prevent race conditions during critical sections.
+**Change**: In `proc.c`, implement `p_int_held` and `held_head/tail` logic in `interrupt()` and implement the `unhold()` function.
+**Verification**: Stress test with high-frequency interrupts during context switches.
+
+### 2.4 Refactor Clock-Scheduler Path
+**Goal**: Align with MINIX high-level scheduling architecture.
+**Change**: Modify `clock.c` and `irq.S` so the ISR calls `interrupt(CLOCK)` instead of `schedule()` directly. Let `do_clocktick` manage the quantum.
+**Verification**: Verify that `lock_sched()` is called only when the quantum expires.
+
+### 2.5 Structural Alignment of `struct proc`
+**Goal**: Support future MM and Signal features.
+**Change**: Audit `proc.h` and add missing state variables (e.g., signal pending counts, shadow pointers) found in the MINIX 2.0.0 reference.
+**Verification**: Compilation check with all kernel modules.

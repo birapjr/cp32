@@ -462,7 +462,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
     cp32_clock_irq_frame_stack_calls++;
   
-  usbj_print("[TICK] Timer Interrupt -> Scheduling\r\n");
   schedule();
 }
 

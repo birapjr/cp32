@@ -13,6 +13,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include "esp32s3/systimer.h"
+#include <minix/com.h>
 extern void schedule(void);
 
 extern char _stack_bottom[];
@@ -40,28 +41,63 @@ void main(void) {
   struct memory *memp;
   struct tasktab *ttp;
 
-  /* Clear the process table.
-   * Set up mappings for proc_addr() and proc_number() macros.
-   */
+  /* Clear the process table and set up mappings. */
   status_line("cleaning proccess table", 0);
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
-	rp->p_flags = P_SLOT_FREE;
-	rp->p_nr = t;		/* proc number from ptr */
-        (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
+    rp->p_flags = P_SLOT_FREE;
+    rp->p_nr = t;
+    (pproc_addr + NR_TASKS)[t] = rp;
   }
 
-  status_line("checking process table", 0);
-  for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
-    if (rp->p_nr != t || (pproc_addr + NR_TASKS)[t] != rp) {
-      usbj_print("FATAL: process table mapping at ");
-      usbj_print_u32((uint32_t)(t + NR_TASKS));
-      usbj_print("\r\n");
-      for (;;) { }
-    }
+  status_line("init ready queues", 0);
+  for (t = 0; t < NQ; t++) {
+    rdy_head[t] = NIL_PROC;
+    rdy_tail[t] = NIL_PROC;
   }
-  usbj_print("process slots: ");
-  usbj_print_u32((uint32_t)(NR_TASKS + NR_PROCS));
-  usbj_print(" (mapping valid)\r\n");
+
+  /* Set up proc table entries for tasks and servers. */
+  status_line("initializing proc table", 0);
+  
+  // Use the existing ktsb declaration from line 39
+  ktsb = (reg_t)_stack_bottom + 0x4000; // Offset from bottom to avoid overlap
+
+  for (t = -NR_TASKS; t <= LOW_USER; ++t) {
+    rp = proc_addr(t);
+    
+    // 1. Assign Name (simplified since tasktab might not be fully ported)
+    
+    // 2. Initialize Registers
+    rp->p_reg.pc = 0x40000000; // Dummy entry point
+    rp->p_reg.psw = istaskp(rp) ? 0x100 : 0x0; // Simplified PSW
+    
+    if (t < 0) {
+      // Kernel Task: Assign stack from internal DRAM
+      rp->p_reg.sp = ktsb + 4096; // Give each task 4KB
+      ktsb += 4096;
+    } else {
+      // Server: Assign stack using a fixed offset from bottom for now 
+      // since _stack_top might be unavailable or improperly defined
+      rp->p_reg.sp = (reg_t)_stack_bottom + 0x10000 + (t * 4096) + 4096;
+    }
+
+    // 3. Initialize Memory Maps (Simplified for ESP32-S3 flat memory)
+    rp->p_map[T].mem_phys = 0; 
+    rp->p_map[T].mem_len = 0;
+    rp->p_map[D].mem_phys = 0;
+    rp->p_map[D].mem_len = 0;
+    rp->p_map[S].mem_phys = (rp->p_reg.sp >> CLICK_SHIFT);
+    rp->p_map[S].mem_len = 4; // 4 clicks = 16KB
+
+    // 4. Set Status
+    if (!isidlehardware(t)) {
+      lock_ready(rp);
+    }
+    rp->p_flags = 0; // Runnable
+  }
+  
+  bill_ptr = proc_addr(IDLE);
+  lock_pick_proc();
+
 
   status_line("checking click memory accounting", 0);
   usbj_print("memory base clicks: ");

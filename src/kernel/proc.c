@@ -28,7 +28,6 @@ void schedule(void)
     proc[1].p_nr = 1;
     proc[1].p_flags = 0; // Make it runnable
     
-    usbj_print("[SCHED] Main loop calling schedule\r\n");
     sched();
 }
 
@@ -130,17 +129,32 @@ message *m_ptr;			/* pointer to message buffer */
 PRIVATE void pick_proc()
 {
   /* Decide who to run now.  A new process is selected by setting 'proc_ptr'.
-   * When a fresh user (or idle) process is selected, record it in 'bill_ptr',
-   * so the clock task can tell who to bill for system time.
+   * We check queues in priority order: TASK_Q, SERVER_Q, USER_Q.
    */
-  // For Step 2, we return the dummy task (proc[1]) if it is runnable (p_flags == 0).
-  if (proc[1].p_flags == 0) {
-    proc_ptr = &proc[1];
-    bill_ptr = &proc[1];
-  } else {
-    proc_ptr = &proc[0]; // Fallback to IDLE
-    bill_ptr = &proc[0];
+  int q;
+  struct proc *rp = NIL_PROC;
+
+  for (q = 0; q < NQ; q++) {
+    if (rdy_head[q] != NIL_PROC) {
+      rp = rdy_head[q];
+      
+      /* Remove from head of the queue */
+      rdy_head[q] = rp->p_nextready;
+      if (rdy_head[q] == NIL_PROC) {
+        rdy_tail[q] = NIL_PROC;
+      }
+      rp->p_nextready = NIL_PROC;
+      break;
+    }
   }
+
+  if (rp == NIL_PROC) {
+    /* Fallback to IDLE if no one is ready */
+    rp = &proc[0]; 
+  }
+
+  proc_ptr = rp;
+  bill_ptr = rp;
 }
 
 /*===========================================================================*
@@ -165,6 +179,9 @@ register struct proc *rp;	/* this process is now runnable */
     q = SERVER_Q;
   else
     q = USER_Q;
+  
+  // Guard against uninitialized queues
+  if (q < 0 || q >= NQ) return;
 
   rp->p_nextready = NIL_PROC;
   if (rdy_tail[q] == NIL_PROC)
@@ -212,10 +229,8 @@ struct proc *next;
    * Real register saving/restoring will happen in assembly in Step 4.
    */
   current_proc = next;
-  usbj_print("[SWITCH] Switching to proc[");
-  usbj_print_u32(next->p_nr);
-  usbj_print("]\r\n");
 }
+
 
 /*===========================================================================*
  *				sched					     * 
@@ -223,15 +238,13 @@ struct proc *next;
 void sched()
 {
     /* Simple scheduler: pick the next process using pick_proc(). */
+    
+    if (current_proc != NIL_PROC && isuserp(current_proc)) {
+        ready(current_proc);
+    }
+    
     pick_proc();
     
-    // Debug log for the selected process
-    if (proc_ptr == &proc[1]) {
-        usbj_print("[SCHED] Selected Dummy Task (proc[1])\r\n");
-    } else if (proc_ptr == &proc[0]) {
-        usbj_print("[SCHED] Selected IDLE Task (proc[0])\r\n");
-    }
-
     switch_to(proc_ptr);
 }
 
