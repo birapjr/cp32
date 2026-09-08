@@ -1,6 +1,5 @@
 /* This file contains a collection of miscellaneous procedures:
- *	mem_init:	initialize memory tables.  Some memory is reported
- *			by the BIOS, some is guesstimated and checked later
+ *	mem_init:	initialize memory tables.
  *	env_parse	parse environment variable.
  *	bad_assertion	for debugging
  *	bad_compare	for debugging
@@ -10,8 +9,6 @@
 #include "assert.h"
 #include <stdlib.h>
 #include <minix/com.h>
-
-#if (CHIP == ESP32_S3)
 
 extern char _heap_start[];
 extern char _stack_bottom[];
@@ -43,7 +40,6 @@ PUBLIC void mem_init()
 
 	tot_mem_size = mem[0].size + mem[1].size + mem[2].size;
 }
-#endif /* (CHIP == ESP32_S3) */
 
 /*=========================================================================*
  *				env_parse				   *

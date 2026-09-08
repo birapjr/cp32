@@ -23,7 +23,7 @@ extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 
 /* ── main ─────────────────────────────────────────────────────────────────────
- * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
+ * Kernel entry point — called by the STEP 6 - call0   main - in mpx32.S. */
 void main(void) {
   status_line("main() starting", 0);
 
