@@ -45,6 +45,7 @@ void start() {
     wdt_disable_all();
     wdt_feed_all();
     print_diagnostics();
+    status_line("\r\n => CP32 OS kernel booting", 2);
 
     status_line("checking initialized memory", 0);
     usbj_print(".data sentinel: ");
@@ -105,7 +106,9 @@ void start() {
     wdt_feed_all();
     swd_disable(); /* extra SWD latch — cheap insurance */
 
-    status_line("\r\nCP32 OS kernel booting", 2);
+    /* Interpret memory sizes. */
+    status_line("initialize memory", 0);
+    mem_init();
 
     status_line("setup boot parameters to kernel memory", 0);
     boot_parameters.bp_rootdev = 0;

@@ -39,11 +39,6 @@ void main(void) {
   struct memory *memp;
   struct tasktab *ttp;
 
-  /* Interpret memory sizes. */
-  status_line("initialize memory", 0);
-  mem_init();
-
-
   /* Clear the process table.
    * Set up mappings for proc_addr() and proc_number() macros.
    */

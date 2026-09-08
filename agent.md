@@ -6,6 +6,22 @@ CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the 
 
 The repository is currently kernel-focused. The long-term goal described by the project is a kernel, shell, and applications, but the current tree does not yet contain those user-space components.
 
+## AI Code Agent rules to follow
+
+Before modifying kernel/assembly code:
+
+1. Identify the MINIX v2 original behavior.
+2. Identify the ESP32-S3 architectural difference.
+3. Identify the CP32 invariant being preserved.
+4. Make the smallest testable change.
+5. Build with the existing Makefile.
+6. Inspect ELF sections/symbols when relevant.
+7. Never assume hardware behavior without documentation or a
+   hardware validation result.
+8. Never replace bare-metal code with ESP-IDF unless explicitly requested.
+9. Update issues.md with hardware validation results.
+10. Do not combine unrelated subsystem changes.
+
 ## Repository layout
 
 - `src/Makefile` — standalone cross-compilation, linking, image generation, flashing, and ELF inspection targets.
