@@ -15,6 +15,7 @@
 #include "esp32s3/systimer.h"
 #include <minix/com.h>
 extern void schedule(void);
+extern char last_change_msg[64];
 
 extern char _stack_bottom[];
 extern volatile uint32_t cp32_timer_irq_ticks;
@@ -28,8 +29,10 @@ extern volatile int k_reenter;
  * Kernel entry point — called by the STEP 6 - call0   main - in mpx32.S. */
 void main(void) {
   status_line("main() starting", 0);
+  
+  /* Initialize debugging string */
+  for(int i=0; i<64; i++) last_change_msg[i] = 0;
 
-  status_line("setup initial kernel variables", 0);
   register struct proc *rp;
   register int t;
   int sizeindex;
@@ -144,6 +147,7 @@ void main(void) {
   usbj_print("timer reentry baseline: ");
   usbj_print_u32((uint32_t) k_reenter);
   usbj_print(" (expected 0)\r\n");
+  usbj_print("Periodic interrupt and reentry validation starting...\r\n");
   for (;;) {
     wdt_feed_all();
     swd_disable();

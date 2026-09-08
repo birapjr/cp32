@@ -56,6 +56,8 @@ struct proc *bill_ptr;
 struct proc *current_proc = NIL_PROC;
 struct proc *rdy_head[NQ];
 struct proc *rdy_tail[NQ];
+struct proc *held_head = NIL_PROC;
+struct proc *held_tail = NIL_PROC;
 
 /*===========================================================================*
  *				interrupt				     * 
@@ -63,7 +65,29 @@ struct proc *rdy_tail[NQ];
 PUBLIC void interrupt(task)
 int task;			/* number of task to be started */
 {
-/* An interrupt has occurred.  Schedule the task that handles it. */
+  if (switching && task >= 0) {
+    struct proc *rp = &proc[task];
+    if (rp->p_int_held == 0) {
+      rp->p_int_held = 1;
+      rp->p_nextheld = NIL_PROC;
+      usbj_print("[DEBUG] Interrupt held! task=");
+      usbj_print_u32(task);
+      usbj_print("\r\n");
+      if (held_head == NIL_PROC) {
+        held_head = rp;
+        held_tail = rp;
+      } else {
+        held_tail->p_nextheld = rp;
+        held_tail = rp;
+      }
+    }
+  } else {
+    usbj_print("[DEBUG] Interrupt normal! task=");
+    usbj_print_u32(task);
+    usbj_print("\r\n");
+  }
+
+  /* An interrupt has occurred.  Schedule the task that handles it. */
   int q;
   struct proc *rp = NIL_PROC;
 
@@ -237,8 +261,10 @@ struct proc *next;
  *===========================================================================*/
 void sched()
 {
-    /* Simple scheduler: pick the next process using pick_proc(). */
-    
+    /* Round-robin scheduling: 
+     * If the current process is a user process, move it to the end of its queue 
+     * so it doesn't hog the CPU if others in the same queue are ready.
+     */
     if (current_proc != NIL_PROC && isuserp(current_proc)) {
         ready(current_proc);
     }
@@ -320,9 +346,15 @@ PUBLIC void lock_sched()
  *==========================================================================*/
 PUBLIC void unhold()
 {
-/* Flush any held-up interrupts.  k_reenter must be 0.  held_head must not
- * be NIL_PROC.  Interrupts must be disabled.  They will be enabled but will
- * be disabled when this returns.
- */
-// to be implemented
+  struct proc *rp;
+  while (held_head != NIL_PROC) {
+    rp = held_head;
+    held_head = rp->p_nextheld;
+    if (held_head == NIL_PROC)
+      held_tail = NIL_PROC;
+    
+    rp->p_int_held = 0;
+    interrupt(rp->p_nr);
+  }
 }
+

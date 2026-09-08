@@ -44,6 +44,7 @@ EXTERN unsigned int processor;	/* 32 for esp32s3 */
 EXTERN volatile int k_reenter;  /* kernel reenter count (0 = from user/task) */
 /* Process table.  Here to stop too many things having to include proc.h. */
 EXTERN struct proc *proc_ptr;	/* pointer to currently running process */
+EXTERN char last_change_msg[64];	/* last change message for debugging */
 EXTERN unsigned lost_ticks;	/* clock ticks counted outside the clock task */
 EXTERN clock_t tty_timeout;	/* time to wake up the TTY task */
 

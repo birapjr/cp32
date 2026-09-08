@@ -55,11 +55,16 @@ The following tasks address critical architectural gaps identified during the re
 **Goal**: Implement fair multi-tasking.
 **Change**: In `proc.c`, update `sched()` to rotate the `USER_Q` (move current process to tail) before calling `pick_proc()`.
 **Verification**: Flash and verify multiple user processes are interleaved.
+- [x] Implemented round-robin rotation in `sched()` (moves current user process to tail of its queue).
+- [x] Verified stable boot and scheduling on hardware.
 
 ### 2.3 Implement Interrupt Held Queue
 **Goal**: Prevent race conditions during critical sections.
 **Change**: In `proc.c`, implement `p_int_held` and `held_head/tail` logic in `interrupt()` and implement the `unhold()` function.
 **Verification**: Stress test with high-frequency interrupts during context switches.
+- [x] Implemented `interrupt(task)` to hold interrupts during `switching`.
+- [x] Implemented `unhold()` to re-trigger held interrupts.
+- [ ] Stress test with high-frequency interrupts during context switches.
 
 ### 2.4 Refactor Clock-Scheduler Path
 **Goal**: Align with MINIX high-level scheduling architecture.
