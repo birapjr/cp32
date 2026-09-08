@@ -30,21 +30,6 @@ FORWARD _PROTOTYPE( void sched, (void) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
 
-#if (CHIP == M68000)
-FORWARD _PROTOTYPE( void cp_mess, (int src, struct proc *src_p, message *src_m,
-		struct proc *dst_p, message *dst_m) );
-#endif
-
-#if (CHIP == INTEL)
-#define CopyMess(s,sp,sm,dp,dm) \
-	cp_mess(s, (sp)->p_map[D].mem_phys, (vir_bytes)sm, (dp)->p_map[D].mem_phys, (vir_bytes)dm)
-#endif
-
-#if (CHIP == M68000)
-#define CopyMess(s,sp,sm,dp,dm) \
-	cp_mess(s,sp,sm,dp,dm)
-#endif
-
 /* Process table storage for the CP32 port.  The historical MINIX headers
  * keep these as EXTERN declarations, so we provide the actual definitions
  * here in the kernel translation unit that owns process management.
