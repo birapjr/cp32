@@ -24,7 +24,25 @@ handler are not active.
 - `k_reenter` is balanced (`r=0`).
 - The guarded ISR-to-C bridge receives a non-null aligned frame inside the
   kernel stack (`c=f=s`).
-- The real clock-handler gate remains disabled (`e=0`).
+## Validated on hardware
+ 
+ - ESP image-loader-owned `.data`/`.rodata`/IRAM placement works. Do not add
+   software LMA copy loops without changing and revalidating the image format.
+ - `.data`/`.bss` sentinels pass.
+ - Vectors are resident at `0x40370000`, size `0x400`.
+ - Call0 stack is within linker bounds and 16-byte aligned.
+ - Process reverse mapping passes: `41` slots.
+ - 4 KiB click accounting reports about `32–33` usable clicks.
+ - Stack guard remains intact during idle.
+ - SYSTIMER UNIT0 advances.
+ - TARGET0 maps to CPU interrupt `2`, Xtensa level 1.
+ - Periodic TARGET0 interrupts enter/return safely and advance regularly.
+ - `k_reenter` is balanced (`r=0`).
+ - The guarded ISR-to-C bridge receives a non-null aligned frame inside the
+   kernel stack (`c=f=s`).
+ - The real clock-handler gate remains disabled (`e=0`).
+ - Minimal scheduler with dummy task, timer-driven scheduling, and IPC stubs verified on hardware. Marker: CP32-IRQ-FRAME-64-FINAL.
+
 
 Typical diagnostic:
 

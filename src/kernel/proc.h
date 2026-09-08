@@ -93,6 +93,9 @@ struct proc {
 #define proc_vir2phys(p, vir) \
 			  (((phys_bytes)(p)->p_map[D].mem_phys << CLICK_SHIFT) \
 							+ (vir_bytes) (vir))
+
+void schedule(void);
+
 #if (SHADOWING == 1)
 #define isshadowp(p)      ((p)->p_shadow != 0)
 #endif

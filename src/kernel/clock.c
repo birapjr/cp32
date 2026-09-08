@@ -461,8 +461,9 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
       (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
     cp32_clock_irq_frame_stack_calls++;
-  if (cp32_clock_irq_bridge_enabled)
-    (void) clock_handler(CLOCK_IRQ);
+  
+  usbj_print("[TICK] Timer Interrupt -> Scheduling\r\n");
+  schedule();
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies

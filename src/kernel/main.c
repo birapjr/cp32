@@ -13,6 +13,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include "esp32s3/systimer.h"
+extern void schedule(void);
 
 extern char _stack_bottom[];
 extern volatile uint32_t cp32_timer_irq_ticks;
@@ -102,7 +103,8 @@ void main(void) {
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
-  usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-3\r\n");
+  usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-2\r\n");
+  schedule();
   usbj_print("timer reentry baseline: ");
   usbj_print_u32((uint32_t) k_reenter);
   usbj_print(" (expected 0)\r\n");
@@ -150,7 +152,9 @@ void main(void) {
         usbj_print_hex32((uint32_t)(counter >> 32));
       usbj_print(" now_lo=");
         usbj_print_hex32((uint32_t)counter);
-      }
+}
+
+
       usbj_print(" real_hi=");
       usbj_print_hex32(REG_READ(SYSTIMER_REAL_TARGET0_HI_REG));
       usbj_print(" real_lo=");

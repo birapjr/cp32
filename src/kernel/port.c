@@ -14,15 +14,3 @@ unsigned lost_ticks;
 clock_t tty_timeout;
 tty_t tty_table[NR_CONS + NR_RS_LINES + NR_PTYS];
 tty_t *tty_timelist;
-
-int _send(int dest, message *m_ptr)
-{
-  (void) dest; (void) m_ptr;
-  return OK;
-}
-
-int _receive(int src, message *m_ptr)
-{
-  (void) src; (void) m_ptr;
-  return OK;
-}

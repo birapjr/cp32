@@ -19,6 +19,23 @@
 #include <minix/com.h>
 #include "proc.h"
 
+void sched(void);
+
+// Minimal scheduler stub for main to call.
+void schedule(void)
+{
+    // Initialize dummy task for Step 2
+    proc[1].p_nr = 1;
+    proc[1].p_flags = 0; // Make it runnable
+    
+    usbj_print("[SCHED] Main loop calling schedule\r\n");
+    sched();
+}
+
+
+
+
+
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 
 FORWARD _PROTOTYPE( int mini_send, (struct proc *caller_ptr, int dest,
@@ -26,7 +43,7 @@ FORWARD _PROTOTYPE( int mini_send, (struct proc *caller_ptr, int dest,
 FORWARD _PROTOTYPE( int mini_rec, (struct proc *caller_ptr, int src,
 		message *m_ptr) );
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
-FORWARD _PROTOTYPE( void sched, (void) );
+void sched(void);
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
 
@@ -37,6 +54,7 @@ FORWARD _PROTOTYPE( void pick_proc, (void) );
 struct proc proc[NR_TASKS + NR_PROCS];
 struct proc *pproc_addr[NR_TASKS + NR_PROCS];
 struct proc *bill_ptr;
+struct proc *current_proc = NIL_PROC;
 struct proc *rdy_head[NQ];
 struct proc *rdy_tail[NQ];
 
@@ -81,35 +99,29 @@ message *m_ptr;			/* pointer to message */
 }
 
 /*===========================================================================*
- *				mini_send				     * 
+ *				send				     * 
  *===========================================================================*/
-PRIVATE int mini_send(caller_ptr, dest, m_ptr)
-register struct proc *caller_ptr;	/* who is trying to send a message? */
+PUBLIC int send(dest, m_ptr)
 int dest;			/* to whom is message being sent? */
 message *m_ptr;			/* pointer to message buffer */
 {
-/* Send a message from 'caller_ptr' to 'dest'. If 'dest' is blocked waiting
- * for this message, copy the message to it and unblock 'dest'. If 'dest' is
- * not waiting at all, or is waiting for another source, queue 'caller_ptr'.
- */
-  /* TODO: message delivery is not implemented yet. */
+  usbj_print("[IPC] send to proc[");
+  usbj_print_u32(dest);
+  usbj_print("] -> OK\r\n");
+  return OK;
 }
 
 /*===========================================================================*
- *				mini_rec				     * 
+ *				receive				     * 
  *===========================================================================*/
-PRIVATE int mini_rec(caller_ptr, src, m_ptr)
-register struct proc *caller_ptr;	/* process trying to get message */
+PUBLIC int receive(src, m_ptr)
 int src;			/* which message source is wanted (or ANY) */
 message *m_ptr;			/* pointer to message buffer */
 {
-/* A process or task wants to get a message.  If one is already queued,
- * acquire it and deblock the sender.  If no message from the desired source
- * is available, block the caller.  No need to check parameters for validity.
- * Users calls are always sendrec(), and mini_send() has checked already.  
- * Calls from the tasks, MM, and FS are trusted.
- */
-// to be implemented
+  usbj_print("[IPC] receive from proc[");
+  usbj_print_u32(src);
+  usbj_print("] -> OK\r\n");
+  return OK;
 }
 
 /*===========================================================================*
@@ -117,11 +129,18 @@ message *m_ptr;			/* pointer to message buffer */
  *===========================================================================*/
 PRIVATE void pick_proc()
 {
-/* Decide who to run now.  A new process is selected by setting 'proc_ptr'.
- * When a fresh user (or idle) process is selected, record it in 'bill_ptr',
- * so the clock task can tell who to bill for system time.
- */
-// to be implemented
+  /* Decide who to run now.  A new process is selected by setting 'proc_ptr'.
+   * When a fresh user (or idle) process is selected, record it in 'bill_ptr',
+   * so the clock task can tell who to bill for system time.
+   */
+  // For Step 2, we return the dummy task (proc[1]) if it is runnable (p_flags == 0).
+  if (proc[1].p_flags == 0) {
+    proc_ptr = &proc[1];
+    bill_ptr = &proc[1];
+  } else {
+    proc_ptr = &proc[0]; // Fallback to IDLE
+    bill_ptr = &proc[0];
+  }
 }
 
 /*===========================================================================*
@@ -184,15 +203,36 @@ register struct proc *rp;	/* this process is no longer runnable */
 }
 
 /*===========================================================================*
+ *				switch_to				     * 
+ *===========================================================================*/
+PRIVATE void switch_to(next)
+struct proc *next;
+{
+  /* Skeleton context switch: updates current process pointer.
+   * Real register saving/restoring will happen in assembly in Step 4.
+   */
+  current_proc = next;
+  usbj_print("[SWITCH] Switching to proc[");
+  usbj_print_u32(next->p_nr);
+  usbj_print("]\r\n");
+}
+
+/*===========================================================================*
  *				sched					     * 
  *===========================================================================*/
-PRIVATE void sched()
+void sched()
 {
-/* The current process has run too long.  If another low priority (user)
- * process is runnable, put the current process on the end of the user queue,
- * possibly promoting another user to head of the queue.
- */
-// to be implemented
+    /* Simple scheduler: pick the next process using pick_proc(). */
+    pick_proc();
+    
+    // Debug log for the selected process
+    if (proc_ptr == &proc[1]) {
+        usbj_print("[SCHED] Selected Dummy Task (proc[1])\r\n");
+    } else if (proc_ptr == &proc[0]) {
+        usbj_print("[SCHED] Selected IDLE Task (proc[0])\r\n");
+    }
+
+    switch_to(proc_ptr);
 }
 
 /*==========================================================================*
@@ -204,11 +244,10 @@ int dest;			/* to whom is message being sent? */
 message *m_ptr;			/* pointer to message buffer */
 {
 /* Safe gateway to mini_send() for tasks. */
-
   int result;
 
   switching = TRUE;
-  result = mini_send(caller_ptr, dest, m_ptr);
+  result = send(proc_ptr->p_nr, (message *)0); // updated to use send()
   switching = FALSE;
   return(result);
 }

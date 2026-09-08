@@ -202,10 +202,7 @@ irq_level1:
     l32i    a3, a2, 0
     addi    a3, a3, 1
     s32i    a3, a2, 0
-    /* Call the disabled C bridge once per 64 ticks. */
-    movi    a4, 63
-    and     a3, a3, a4
-    bnez    a3, 1f
+    /* Call the scheduler directly from the timer interrupt. */
     mov     a2, a1
     call0   cp32_timer_irq_dispatch
 1:
