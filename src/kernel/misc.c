@@ -16,9 +16,6 @@
 extern char _heap_start[];
 extern char _stack_bottom[];
 
-#define CLICK_SHIFT 12
-#define CLICK_SIZE   (1u << CLICK_SHIFT)
-
 struct memory mem[3];
 phys_clicks tot_mem_size;
 

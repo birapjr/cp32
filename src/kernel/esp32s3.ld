@@ -1,8 +1,9 @@
 /* ============================================================
    CP32 Kernel — M5Stack Cardputer Adv (ESP32-S3FN8)
    Everything in internal SRAM for maximum speed.
-   Code has LMA in flash so esptool can write it,
-   startup copies it to IRAM before jumping to main.
+   Code has flash load metadata so esptool can build the image.
+   The ESP32-S3 image loader places runtime segments at their VMAs before
+   entering CP32; startup does not perform software relocation.
    ============================================================ */
 
 MEMORY {
@@ -20,8 +21,9 @@ SECTIONS {
 
     /* --------------------------------------------------
        VECTOR TABLE — first in IRAM, 1 KB aligned
-       VMA = IRAM (fast), LMA = flash (esptool writes it)
-       startup copies flash → IRAM, then sets VECBASE
+       VMA = IRAM (fast), LMA = flash image data for esptool.
+       The ESP32-S3 image loader loads this segment at its VMA before CP32.
+       Startup only sets VECBASE.
     -------------------------------------------------- */
     .vectors : ALIGN(1024) {
         _vectors_start = .;
@@ -33,7 +35,8 @@ SECTIONS {
 
     /* --------------------------------------------------
        STARTUP — entry point, must run from IRAM
-       Copies IRAM image and .data, zeroes .bss
+       Runtime sections are already loaded at their VMAs by the image loader.
+       Startup zeroes .bss.
        Literal pool before code (L32R reach rule)
     -------------------------------------------------- */
     .startup : ALIGN(4) {
@@ -53,16 +56,16 @@ SECTIONS {
         _text_end = .;
     } > iram AT > irom
 
-    /* Mark end of IRAM image (used by startup copy loop) */
+    /* End of the runtime IRAM image (useful for image/size inspection). */
     _iram_end = .;
 
-    /* LMA symbols for startup copy routine */
-    _iram_lma = LOADADDR(.vectors);   /* where flash image starts */
-    _iram_vma = ORIGIN(iram);         /* where to copy it to      */
+    /* Image metadata symbols. These are not CPU copy-source addresses. */
+    _iram_lma = LOADADDR(.vectors);   /* image payload location */
+    _iram_vma = ORIGIN(iram);         /* runtime load address   */
 
     /* --------------------------------------------------
-       INITIALIZED DATA — VMA in DRAM, LMA in flash
-       startup copies _data_lma → _data_start.._data_end
+       INITIALIZED DATA — VMA in DRAM, LMA metadata for the image builder.
+       The image loader places this section at its DRAM VMA.
     -------------------------------------------------- */
     .data : ALIGN(4) {
         _data_start = .;
@@ -75,11 +78,12 @@ SECTIONS {
     _data_lma = LOADADDR(.data);
 
     /* --------------------------------------------------
-       READ-ONLY DATA — kept in DRAM for speed
+       READ-ONLY DATA — kept in DRAM for speed. The image loader places it
+       at its DRAM VMA together with .data.
        (avoids flash D-cache latency on kernel strings
        and lookup tables — costs DRAM, worth it here)
-       Also needs LMA so esptool writes it to flash;
-       startup copies it just like .data
+       The LMA is retained for esptool image generation; no startup copy is
+       performed by CP32.
     -------------------------------------------------- */
     .rodata : ALIGN(4) {
         _rodata_start = .;

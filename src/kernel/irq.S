@@ -12,13 +12,20 @@
  * Replace them one at a time as real functionality is needed.
  *
  * Register ownership on interrupt entry (Xtensa LX7):
- *   a0       — saved automatically into EPC[N] (PC) and EPS[N] (PS)
  *   a0..a15  — caller's registers, NOT saved by hardware
+ *   EPC[N]   — saved PC for the interrupted context
+ *   EPS[N]   — saved PS for the interrupted context
  *   EXCCAUSE — reason code for exceptions
  *   EXCVADDR — faulting address (for load/store exceptions)
  *   excsave1 — scratch register saved by hardware for level-1
  *   excsaveN — scratch for level N
+ *
+ * Our C-visible process frame mirrors what the kernel can observe directly:
+ * the saved a0 scratch plus the saved processor status bits.
  */
+
+#include "irq_const.h"
+
 
 .section .text, "ax"
 
@@ -59,7 +66,20 @@ _vec_unhandled:
 .type   irq_level2, @function
 irq_level2:
     HANDLER_ENTRY 2
-    /* TODO: read INTERRUPT register, dispatch to device handler */
+    /* Minimal SYSTIMER probe handler: acknowledge TARGET0 only. */
+    addi    a1, a1, -16
+    s32i    a2, a1, 0
+    s32i    a3, a1, 4
+    movi    a2, 0x6002306C
+    movi    a3, 1
+    s32i    a3, a2, 0
+    movi    a2, cp32_timer_irq_ticks
+    l32i    a3, a2, 0
+    addi    a3, a3, 1
+    s32i    a3, a2, 0
+    l32i    a3, a1, 4
+    l32i    a2, a1, 0
+    addi    a1, a1, 16
     HANDLER_EXIT  2
 .size irq_level2, .-irq_level2
 
@@ -120,20 +140,101 @@ irq_nmi:
 
 /* ── Kernel exception ─────────────────────────────────────────────────── */
 /*
- * Handles: syscall (EXCCAUSE=1), unaligned access (EXCCAUSE=9),
- * illegal instruction (EXCCAUSE=0), load/store prohibited (EXCCAUSE=29).
- * EXCVADDR holds the faulting address for load/store causes.
- * rfe returns to the instruction AFTER the one that caused the exception.
+ * Handles early kernel exceptions by reporting the saved exception state.
+ * EXCVADDR holds the faulting address for load/store causes. The handler is
+ * terminal during bring-up; it does not attempt to resume with rfe because
+ * no process exception policy or complete saved register frame exists yet.
  */
 .align 4
 .global irq_kernel
 .type   irq_kernel, @function
 irq_kernel:
     wsr     a0, excsave1        /* save a0; excsave1 is the level-1 scratch */
-    /* TODO: read EXCCAUSE, EXCVADDR, dispatch to C handler                 */
-    rsr     a0, excsave1
-    rfe                         /* return to EPC1 (past faulting instr)     */
+    rsr     a2, exccause        /* arg0: exception cause                    */
+    /* CPU interrupt line 2 is Xtensa level 1 on ESP32-S3.  Level-1
+     * interrupts share this kernel-exception vector. */
+    movi    a3, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
+    beq     a2, a3, irq_level1
+    rsr     a3, excvaddr        /* arg1: faulting address                   */
+    rsr     a4, epc1            /* arg2: saved program counter              */
+    rsr     a5, ps              /* arg3: current processor status             */
+    movi    a1, _stack_top
+    addi    a1, a1, -16
+    call0   exception_dump       /* terminal: does not return                */
 .size irq_kernel, .-irq_kernel
+
+/* ── Level-1 IRQ ──────────────────────────────────────────────────────── */
+/* Entered from either exception dispatcher for EXCCAUSE_LEVEL1_INTERRUPT
+ * (0x04). */
+.align 4
+.global irq_level1
+.type   irq_level1, @function
+irq_level1:
+    /* Complete call0 scratch frame: a0 is held in EXCSAVE1 and a2-a15 are
+     * saved below.  This makes a future C handoff possible, but the probe
+     * remains assembly-only until the exception-frame policy is finished. */
+    addi    a1, a1, -CP32_IRQ_FRAME_BYTES
+    s32i    a2, a1, CP32_IRQ_A2_OFFSET
+    s32i    a3, a1, CP32_IRQ_A3_OFFSET
+    s32i    a4, a1, CP32_IRQ_A4_OFFSET
+    s32i    a5, a1, CP32_IRQ_A5_OFFSET
+    s32i    a6, a1, CP32_IRQ_A6_OFFSET
+    s32i    a7, a1, CP32_IRQ_A7_OFFSET
+    s32i    a8, a1, CP32_IRQ_A8_OFFSET
+    s32i    a9, a1, CP32_IRQ_A9_OFFSET
+    s32i    a10, a1, CP32_IRQ_A10_OFFSET
+    s32i    a11, a1, CP32_IRQ_A11_OFFSET
+    s32i    a12, a1, CP32_IRQ_A12_OFFSET
+    s32i    a13, a1, CP32_IRQ_A13_OFFSET
+    s32i    a14, a1, CP32_IRQ_A14_OFFSET
+    s32i    a15, a1, CP32_IRQ_A15_OFFSET
+    /* Track interrupt nesting for the future MINIX clock handler. */
+    movi    a2, k_reenter
+    l32i    a3, a2, 0
+    addi    a3, a3, 1
+    s32i    a3, a2, 0
+    /* Acknowledge TARGET0. Periodic mode keeps the source enabled and
+     * reloads the next deadline in hardware. */
+    movi    a2, 0x6002306C
+    movi    a3, 1
+    s32i    a3, a2, 0
+    movi    a2, cp32_timer_irq_ticks
+    l32i    a3, a2, 0
+    addi    a3, a3, 1
+    s32i    a3, a2, 0
+    /* Call the disabled C bridge once per 64 ticks. */
+    movi    a4, 63
+    and     a3, a3, a4
+    bnez    a3, 1f
+    mov     a2, a1
+    call0   cp32_timer_irq_dispatch
+1:
+    movi    a2, k_reenter
+    l32i    a3, a2, 0
+    addi    a3, a3, -1
+    s32i    a3, a2, 0
+    l32i    a15, a1, CP32_IRQ_A15_OFFSET
+    l32i    a14, a1, CP32_IRQ_A14_OFFSET
+    l32i    a13, a1, CP32_IRQ_A13_OFFSET
+    l32i    a12, a1, CP32_IRQ_A12_OFFSET
+    l32i    a11, a1, CP32_IRQ_A11_OFFSET
+    l32i    a10, a1, CP32_IRQ_A10_OFFSET
+    l32i    a9, a1, CP32_IRQ_A9_OFFSET
+    l32i    a8, a1, CP32_IRQ_A8_OFFSET
+    l32i    a7, a1, CP32_IRQ_A7_OFFSET
+    l32i    a6, a1, CP32_IRQ_A6_OFFSET
+    l32i    a5, a1, CP32_IRQ_A5_OFFSET
+    l32i    a4, a1, CP32_IRQ_A4_OFFSET
+    l32i    a3, a1, CP32_IRQ_A3_OFFSET
+    l32i    a2, a1, CP32_IRQ_A2_OFFSET
+    addi    a1, a1, CP32_IRQ_FRAME_BYTES
+    /* Level 1 arrived through the exception vector, so PS.EXCM is set.
+     * Return with RFE; RFI 1 is only for a dedicated level-1 interrupt
+     * vector and would re-enter the exception path on this core. */
+    rsr     a0, excsave1
+    rsync
+    rfe
+.size irq_level1, .-irq_level1
 
 /* ── User exception ───────────────────────────────────────────────────── */
 .align 4
@@ -141,9 +242,15 @@ irq_kernel:
 .type   irq_user, @function
 irq_user:
     wsr     a0, excsave1
-    /* TODO: dispatch */
-    rsr     a0, excsave1
-    rfe
+    rsr     a2, exccause
+    movi    a3, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
+    beq     a2, a3, irq_level1
+    rsr     a3, excvaddr
+    rsr     a4, epc1
+    rsr     a5, ps
+    movi    a1, _stack_top
+    addi    a1, a1, -16
+    call0   exception_dump
 .size irq_user, .-irq_user
 
 /* ── Double exception ─────────────────────────────────────────────────── */

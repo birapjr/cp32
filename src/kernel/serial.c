@@ -1,7 +1,5 @@
 /* function to log/write to serial */
-#include <stdint.h>
-#include <esp32s3/const.h>
-#include "klib.h"
+#include "kernel.h"
 
 static void usbj_putc(char c) {
     volatile uint32_t t = 200000;
@@ -115,4 +113,24 @@ void startup_usb_conn(void) {
 
         delay(100000); /* ~5.8 ms per chunk, 20 chunks = ~116 ms total */
     }
+}
+
+/**
+ * Print kernel startup stage to serial connection
+ */
+void status_line(const char *msg, int width) {
+    int widthF = width + BASE_PRINT_WIDTH;
+    printk("%-*s...\r\n", widthF, msg);
+}
+
+/* Terminal exception reporter. The interrupted context cannot safely be
+ * resumed until a real exception frame and process policy exist. */
+void exception_dump(uint32_t cause, uint32_t address, uint32_t epc, uint32_t ps) {
+    usbj_print("\r\n!! CP32 EXCEPTION !!\r\n");
+    usbj_print("EXCCAUSE: "); usbj_print_hex32(cause); usbj_print("\r\n");
+    usbj_print("EXCVADDR: "); usbj_print_hex32(address); usbj_print("\r\n");
+    usbj_print("EPC1:     "); usbj_print_hex32(epc); usbj_print("\r\n");
+    usbj_print("PS:       "); usbj_print_hex32(ps); usbj_print("\r\n");
+    usbj_print("system halted\r\n");
+    for (;;) { }
 }

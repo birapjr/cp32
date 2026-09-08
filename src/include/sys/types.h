@@ -1,60 +1,24 @@
-/* The <sys/types.h> header contains important data type definitions.
- * It is considered good programming practice to use these definitions, 
- * instead of the underlying base type.  By convention, all type names end 
- * with _t.
- */
-
 #ifndef _TYPES_H
 #define _TYPES_H
 
-/* _ANSI is somehow used to determine whether or not the compiler is a
- * 16 bit compiler
+/* Let the toolchain provide the current libc/POSIX type definitions.
+ * The local kernel headers should not shadow standard types like size_t,
+ * time_t, clock_t, ssize_t, sigset_t, or off_t on ESP-IDF.
  */
-#ifndef _ANSI
-#include <ansi.h>
-#endif
+#include_next <sys/types.h>
 
-/* The type size_t holds all results of the sizeof operator.  At first glance,
- * it seems obvious that it should be an unsigned int, but this is not always 
- * the case. For example, MINIX-ST (68000) has 32-bit pointers and 16-bit
- * integers. When one asks for the size of a 70K struct or array, the result 
- * requires 17 bits to express, so size_t must be a long type.  The type 
- * ssize_t is the signed version of size_t.
+/* ESP-IDF / Xtensa libc does not always expose sigset_t through the same
+ * include path this legacy kernel code expects, so provide a guarded fallback.
  */
-#ifndef _SIZE_T
-#define _SIZE_T
-typedef unsigned int size_t;
-#endif
-
-#ifndef _SSIZE_T
-#define _SSIZE_T
-typedef int ssize_t;
-#endif
-
-#ifndef _TIME_T
-#define _TIME_T
-typedef long time_t;		   /* time in sec since 1 Jan 1970 0000 GMT */
-#endif
-
-#ifndef _CLOCK_T
-#define _CLOCK_T
-typedef long clock_t;		   /* unit for system accounting */
-#endif
-
 #ifndef _SIGSET_T
 #define _SIGSET_T
 typedef unsigned long sigset_t;
 #endif
 
-/* Types used in disk, inode, etc. data structures. */
-typedef short          dev_t;	   /* holds (major|minor) device pair */
-typedef char           gid_t;	   /* group id */
-typedef unsigned short ino_t; 	   /* i-node number */
-typedef unsigned short mode_t;	   /* file type and permissions bits */
-typedef char         nlink_t;	   /* number of links to a file */
-typedef unsigned long  off_t;	   /* offset within a file */
-typedef int            pid_t;	   /* process id (must be signed) */
-typedef short          uid_t;	   /* user id */
+/* Types used in disk, inode, etc. data structures.
+ * Use the toolchain's POSIX types (dev_t, gid_t, ino_t, mode_t, nlink_t,
+ * pid_t, uid_t, off_t) and keep only MINIX-specific aliases here.
+ */
 typedef unsigned long zone_t;	   /* zone number */
 typedef unsigned long block_t;	   /* block number */
 typedef unsigned long  bit_t;	   /* bit number in a bit map */

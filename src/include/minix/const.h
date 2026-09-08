@@ -51,8 +51,7 @@
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))
 
 /* Number of tasks. */
-#define NR_TASKS	(9 + ENABLE_WINI + ENABLE_SCSI + ENABLE_CDROM \
-			+ ENABLE_NETWORKING + 2 * ENABLE_AUDIO)
+#define NR_TASKS	9
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)
@@ -63,6 +62,12 @@
 #if (CHIP == SPARC) || (CHIP == M68000)
 #define CLICK_SIZE	4096	/* unit in which memory is alocated */
 #define CLICK_SHIFT	  12	/* 2log of CLICK_SIZE */
+#endif
+
+#if (CHIP == ESP32_S3)
+/* The ESP32-S3 port uses 4 KiB pages/clicks for process mappings. */
+#define CLICK_SIZE	4096
+#define CLICK_SHIFT	  12
 #endif
 
 #define click_to_round_k(n) \

@@ -10,8 +10,9 @@
 #*====================================*
 
 # CRITICAL: this section must match the linker script .startup section name.
-# It runs from flash initially — its job is to copy everything to IRAM/DRAM
-# before jumping into fast memory.
+# The ESP32-S3 image loader places the IRAM segment at its linked VMA before
+# entering CP32.  Startup therefore initializes CPU state and .bss only;
+# it must not copy from the linker LMAs as ordinary CPU data addresses.
 .section .startup.text, "ax"    # Executable code, a - Allocatable, x - Executable
 .global CP32
 CP32:                           # this is the entry point for the CP32 kernel
@@ -67,7 +68,7 @@ bss_done:
     rsync
 
     # ----------------------------------------------------------------
-    # STEP 4- Prepare environmnet for the Kernel
+    # STEP 5- Prepare environmnet for the Kernel
     # ----------------------------------------------------------------
     call0   start
 
@@ -78,3 +79,32 @@ bss_done:
 
 halt:
     j       halt                # this should be never executed
+
+#===========================================================================
+#        lock
+#===========================================================================
+# void lock(void).
+# Disable CPU interrupts by clearing PS.INTLEVEL to maximum (level 15).
+    .section .text
+    .align  4
+    .global lock
+    .type   lock, @function
+lock:
+    rsil    a2, 15          /* read PS, then set INTLEVEL=15 (disable all interrupts) */
+    ret
+    .size   lock, . - lock
+
+
+#===========================================================================
+#        unlock
+#===========================================================================
+# void unlock(void).
+# Enable CPU interrupts by setting PS.INTLEVEL to 0.
+    .section .text
+    .align  4
+    .global unlock
+    .type   unlock, @function
+unlock:
+    rsil    a2, 0           /* read PS, then set INTLEVEL=0 (enable all interrupts) */
+    ret
+    .size   unlock, . - unlock

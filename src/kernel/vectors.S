@@ -66,10 +66,10 @@ _vec_debug:     j   irq_debug
 _vec_nmi:       j   irq_nmi
 
 /* ── Software exception vectors ───────────────────────────────────────── */
-.org 0x300                      /* Kernel exception (syscall, misalign...)  */
+.org 0x300                      /* Kernel exception / level-1 IRQ           */
 _vec_kernel:    j   irq_kernel
 
-.org 0x340                      /* User exception                           */
+.org 0x340                      /* User exception / level-1 IRQ              */
 _vec_user:      j   irq_user
 
 .org 0x3C0                      /* Double exception — never rfi from here   */

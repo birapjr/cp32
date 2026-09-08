@@ -56,3 +56,6 @@ dkms.conf
 
 # build folder
 src/build/*
+
+# minix v2 source
+minix-2.0.0/*
