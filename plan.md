@@ -160,4 +160,19 @@ The following tasks address critical architectural gaps identified during the re
 - [x] **Analyze fault disassembly**: `0x40375A9E` is `delay()`'s `s32i` through the call0 frame pointer `a15`, not `printk`.
 - [x] **Fix IRQ call0 boundary**: Removed diagnostic C calls from the raw level-1 handler and preserved the interrupted SP before allocating the IRQ frame.
 - [x] **Fix `a15` validation**: The restore path now compares the restored frame pointer against zero instead of comparing it with `a0`.
-- [ ] **Hardware validation**: Flash the rebuilt image and verify repeated timer interrupts with no exception.
+- [x] **Hardware validation**: Hardware run completed 27 periodic IRQs with `r=0 c=27 f=27 s=27 e=0`; no exception or stalled counter.
+
+## Next task: 3.1 — complete MINIX IPC send/receive
+
+- [x] Port the core MINIX queue behavior: process-number mapping, deadlock
+      detection, immediate delivery, sender queueing, and receiver queueing.
+- [x] Correct the bring-up test to pass MINIX process numbers (`p_nr`) rather
+      than raw `proc[]` indexes.
+- [x] Fix blocking order so a runnable process is removed from its ready queue
+      before its `SENDING` or `RECEIVING` flag is set.
+- [x] Propagate `mem_copy` failures instead of reporting successful delivery.
+- [ ] Add a deterministic two-process send/receive test that verifies delivery,
+      unblocking, and message contents.
+- [ ] Keep the timer IRQ frame marker active while validating IPC.
+- [ ] Hardware validation: confirm the corrected test reports delivery and
+      cleared sender/receiver flags.

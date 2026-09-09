@@ -8,7 +8,8 @@
  */
 PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
 {
-    struct proc *rp = &proc[proc_nr];
+    /* proc_nr is a MINIX process number, not a raw proc[] index. */
+    struct proc *rp = proc_addr(proc_nr);
     int i;
 
     for (i = 0; i < NR_SEGS; i++) {
@@ -66,5 +67,4 @@ PUBLIC void mm_task()
         // We'll implement the message loop once IPC is operational.
     }
 }
-
 

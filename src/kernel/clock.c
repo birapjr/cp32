@@ -453,7 +453,6 @@ int irq;
 /* Called from the level-1 handler; disabled until scheduler handoff is safe. */
 PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 {
-  usbj_print("[IRQ] dispatch\r\n");
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
@@ -462,6 +461,13 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
       (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
     cp32_clock_irq_frame_stack_calls++;
+
+  if ((cp32_timer_irq_ticks & 0x0Fu) == 0) {
+    usbj_print("[IRQ "); usbj_print_u32(cp32_timer_irq_ticks);
+    usbj_print(" r="); usbj_print_u32((uint32_t) k_reenter);
+    usbj_print(" f="); usbj_print_u32(cp32_clock_irq_frame_stack_calls);
+    usbj_print("]\r\n");
+  }
   
   /* Call the Minix clock handler instead of the raw schedule() stub */
   clock_handler(0); 

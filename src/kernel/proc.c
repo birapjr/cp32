@@ -119,21 +119,27 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   struct proc *dest_ptr, *next_ptr;
+  int result;
 
   if (dest < 0 || dest >= NR_TASKS + NR_PROCS) return E_BAD_DEST;
-  dest_ptr = &proc[dest];
+  dest_ptr = proc_addr(dest);
   if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
 
-  usbj_print("[IPC] mini_send: proc[");
-  usbj_print_u32(caller_ptr->p_nr);
-  usbj_print("] -> proc[");
-  usbj_print_u32(dest);
-  usbj_print("]\r\n");
+  /* Reject a send cycle before blocking the caller. */
+  if (dest_ptr->p_flags & SENDING) {
+    next_ptr = proc_addr(dest_ptr->p_sendto);
+    while (next_ptr != NIL_PROC && (next_ptr->p_flags & SENDING)) {
+      if (next_ptr == caller_ptr) return ELOCKED;
+      next_ptr = proc_addr(next_ptr->p_sendto);
+    }
+  }
 
   if ((dest_ptr->p_flags & (RECEIVING | SENDING)) == RECEIVING &&
       (dest_ptr->p_getfrom == ANY || dest_ptr->p_getfrom == caller_ptr->p_nr)) {
     
-    mem_copy(caller_ptr->p_nr, (vir_bytes)m_ptr, dest, (vir_bytes)dest_ptr->p_messbuf, MESS_SIZE);
+    result = mem_copy(caller_ptr->p_nr, (vir_bytes)m_ptr, dest,
+                      (vir_bytes)dest_ptr->p_messbuf, MESS_SIZE);
+    if (result != OK) return result;
     
     dest_ptr->p_flags &= ~RECEIVING;
     if (dest_ptr->p_flags == 0) ready(dest_ptr);
@@ -142,10 +148,9 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     return OK;
   } else {
     caller_ptr->p_messbuf = m_ptr;
+    if (caller_ptr->p_flags == 0) unready(caller_ptr);
     caller_ptr->p_flags |= SENDING;
     caller_ptr->p_sendto = dest;
-
-    if (caller_ptr->p_flags == 0) unready(caller_ptr);
     
     if (dest_ptr->p_callerq == NIL_PROC) {
       dest_ptr->p_callerq = caller_ptr;
@@ -158,7 +163,11 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     }
     caller_ptr->p_sendlink = NIL_PROC;
     
-    usbj_print("[IPC] mini_send: caller blocked\r\n");
+    usbj_print("[IPC B]");
+    usbj_print_u32((uint32_t)caller_ptr->p_nr);
+    usbj_print("->");
+    usbj_print_u32((uint32_t)dest);
+    usbj_print("\r\n");
     return OK;
   }
 }
@@ -171,19 +180,14 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
   struct proc *sender_ptr;
   struct proc *previous_ptr;
 
-  usbj_print("[IPC] mini_rec: proc[");
-  usbj_print_u32(caller_ptr->p_nr);
-  usbj_print("] src=");
-  usbj_print_u32(src);
-  usbj_print("\r\n");
-
   if (!(caller_ptr->p_flags & SENDING)) {
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
       if (src == ANY || src == sender_ptr->p_nr) {
         
-        mem_copy(sender_ptr->p_nr, (vir_bytes)sender_ptr->p_messbuf, 
-                 caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE);
+        if (mem_copy(sender_ptr->p_nr, (vir_bytes)sender_ptr->p_messbuf,
+                     caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE) != OK)
+          return EFAULT;
 
         if (sender_ptr == caller_ptr->p_callerq)
           caller_ptr->p_callerq = sender_ptr->p_sendlink;
@@ -193,9 +197,6 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
         sender_ptr->p_flags &= ~SENDING;
         if (sender_ptr->p_flags == 0) ready(sender_ptr);
         
-        usbj_print("[IPC] mini_rec: delivered from proc[");
-        usbj_print_u32(sender_ptr->p_nr);
-        usbj_print("]\r\n");
         return OK;
       }
     }
@@ -203,11 +204,9 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 
   caller_ptr->p_getfrom = src;
   caller_ptr->p_messbuf = m_ptr;
+  if (caller_ptr->p_flags == 0) unready(caller_ptr);
   caller_ptr->p_flags |= RECEIVING;
   
-  if (caller_ptr->p_flags == 0) unready(caller_ptr);
-  
-  usbj_print("[IPC] mini_rec: caller blocked\r\n");
   return OK;
 }
  

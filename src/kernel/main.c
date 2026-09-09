@@ -45,23 +45,19 @@ void test_ipc_mm(void) {
     memset(&m1, 0, sizeof(message));
     strcpy((char*)&m1, "Hello IPC!");
     
-    usbj_print("[TEST] Attempting mini_send from p1 to p2...\r\n");
+    usbj_print("[TEST] IPC send/receive: ");
     
     extern int mini_send(struct proc *caller, int dest, message *m);
     extern int mini_rec(struct proc *caller, int src, message *m);
 
-    int res = mini_send(p1, 2, &m1);
-    usbj_print("[TEST] mini_send result: ");
+    int res = mini_send(p1, p2->p_nr, &m1);
     usbj_print_u32((uint32_t)res);
-    usbj_print("\r\n");
-
-    usbj_print("[TEST] Attempting mini_rec for p2...\r\n");
-    res = mini_rec(p2, 1, &m2);
-    usbj_print("[TEST] mini_rec result: ");
+    res = mini_rec(p2, p1->p_nr, &m2);
+    usbj_print("/");
     usbj_print_u32((uint32_t)res);
-    usbj_print("\r\n");
-
-    usbj_print("[TEST] IPC Validation Complete\r\n\r\n");
+    usbj_print(" (send/receive, flags=");
+    usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
+    usbj_print(")\r\n\r\n");
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────────

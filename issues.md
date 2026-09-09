@@ -113,4 +113,18 @@ unexpected `e=1`.
 - **Symptom**: The system crashes with a LoadStore alignment or null pointer exception (`EXCCAUSE: 0x1D`, `EXCVADDR: 0x00000000`) shortly after the first periodic interrupt returns.
 - **Location**: `EPC1: 0x40375A9E` is the `s32i` in `delay()`, storing through the call0 frame pointer `a15`; it is not in `printk`.
 - **Cause**: The raw level-1 handler called `usbj_print_u32` before establishing a call0 frame and again immediately before `rfi`, corrupting interrupted call0 state. It also saved the post-allocation temporary frame address as the interrupted `a1`.
-- **Current State**: Removed both unsafe debug calls, preserve the pre-frame SP, and corrected the `a15 == 0` fallback. Rebuilt successfully; hardware validation remains pending.
+- **Current State**: Removed both unsafe debug calls, preserve the pre-frame SP, and corrected the `a15 == 0` fallback. Hardware validation passed: 27 periodic IRQs completed with `r=0 c=27 f=27 s=27 e=0`.
+
+## IPC bring-up status
+- The hardware run reached the IPC/MM validation and exercised `mini_send`
+  and `mini_rec` without an exception.
+- This is not yet full MINIX IPC validation: both calls currently exercise the
+  blocking stubs/partial queue path, and the diagnostic process numbers show
+  unsigned representations of negative task numbers. Task 3.1 is next.
+- Task 3.1 core fixes are now implemented: MINIX process-number lookup,
+  deadlock-cycle rejection, correct ready-queue removal, and `mem_copy` error
+  propagation. The rebuilt image passes compilation; hardware IPC validation
+  and message-content verification remain pending.
+- The IPC diagnostic now uses `p_nr` consistently and emits one compact
+  `[IPC B]sender->destination` marker when a sender blocks. Future changes
+  should retain similarly small progress markers while bring-up is active.
