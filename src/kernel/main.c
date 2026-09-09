@@ -59,6 +59,12 @@ void test_ipc_mm(void) {
     usbj_print(", text=");
     usbj_print((char *)&m2);
     usbj_print(") [IPC V5][MM V5]\r\n\r\n");
+
+    /* Exercise the dispatcher validation without changing process state. */
+    usbj_print("[TEST] syscall invalid-function: ");
+    res = sys_call(0, p2->p_nr, &m1);
+    usbj_print_u32((uint32_t)res);
+    usbj_print(" [SYS V6]\r\n\r\n");
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────────

@@ -94,23 +94,28 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
   struct proc *rp = proc_ptr;
   int result;
 
-  usbj_print("[SYS] sys_call: func=");
-  usbj_print_u32(function);
-  usbj_print(" src_dest=");
-  usbj_print_u32(src_dest);
-  usbj_print("\r\n");
+  if (rp == NIL_PROC || m_ptr == (message *)0) return EINVAL;
+  if (function != SEND && function != RECEIVE && function != BOTH)
+    return EBADCALL;
 
   if (function & SEND) {
     result = mini_send(rp, src_dest, m_ptr);
-    if (!(function & RECEIVE)) return result;
+    if (function == SEND) goto report;
+    if (result != OK) goto report;
   }
 
   if (function & RECEIVE) {
     result = mini_rec(rp, src_dest, m_ptr);
-    return result;
+    goto report;
   }
 
-  return EBADCALL;
+report:
+  usbj_print("[SYS V6 f=");
+  usbj_print_u32((uint32_t)function);
+  usbj_print(" r=");
+  usbj_print_u32((uint32_t)result);
+  usbj_print("]\r\n");
+  return result;
 }
  
 /*===========================================================================*

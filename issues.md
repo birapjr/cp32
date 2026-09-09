@@ -130,3 +130,6 @@ unexpected `e=1`.
   should retain similarly small progress markers while bring-up is active.
 - Hardware validation passed: `send=0`, `receive=0`, `flags=0`, text
   `Hello IPC!`, and `mem_copy len=36`. Task 3.1 is complete; Task 3.2 is next.
+- Task 3.2 hardware validation passed: invalid syscall returned `EBADCALL`
+  (`-102`), printed as `4294967194`; timer IRQ progress remained stable through
+  160 ticks. Task 3.3 is next.

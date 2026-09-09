@@ -201,7 +201,22 @@ The following tasks address critical architectural gaps identified during the re
 
 ## Next task: 3.2 — syscall trap dispatch
 
-- [ ] Audit the current `sys_call` entry against MINIX SEND/RECEIVE/BOTH
+- [x] Audit and constrain `sys_call` to MINIX SEND/RECEIVE/BOTH function codes;
+      reject invalid functions and null dispatcher inputs.
+- [x] Add compact `[SYS V6]` result diagnostics and an invalid-function test.
+- [ ] Connect the dispatcher to the Xtensa user trap entry when the user frame
       semantics and connect it to the Xtensa trap entry when the user frame is
       available.
+
+### Task 3.2 hardware result
+
+- [x] Hardware validation passed: invalid syscall returned `EBADCALL` (`-102`,
+      displayed as `4294967194`), with IPC/MM and timer diagnostics still clean.
+
+## Next task: 3.3 — Xtensa process context switching
+
+- [ ] Define the C/assembly process-frame offsets as one shared contract.
+- [ ] Save and restore the interrupted PC, PS, SP, and registers without
+      corrupting the call0 frame pointer.
+- [ ] Add a compact `[CTX V7]` marker around the first controlled switch.
 - [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.
