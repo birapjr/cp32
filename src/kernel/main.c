@@ -201,6 +201,7 @@ void main(void) {
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
     cp32_clock_irq_bridge_enabled = 0;
     usbj_print("[IMG V9] timer bridge gated during main validation\r\n");
+    usbj_print("[CTX V12] live a1/a15 restore gate=0\r\n");
     systimer_irq_start();
     usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 

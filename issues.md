@@ -148,3 +148,6 @@ unexpected `e=1`.
 - V11 hardware validation passed: `a1` matched `sp` (`1070284736`), with valid
   PC/PS and `a15`; IPC/MM and timer diagnostics remained clean through 192
   IRQs. Next is the gated live `a1`/`a15` restore experiment.
+- V12 hardware validation passed: `gate=0`, `a1==sp`, `a15ok=1`, valid PC/PS,
+  IPC/MM and syscall checks, and clean timer progress through 256 IRQs. V13
+  will be the first guarded live restore experiment.

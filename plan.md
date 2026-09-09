@@ -269,4 +269,17 @@ The following tasks address critical architectural gaps identified during the re
       clean through 192 IRQs.
 - [ ] Implement the first gated live restore of only `a1`/`a15`; retain the
       existing full IRQ restore as the default fallback and add `[CTX V12]`.
+- [x] Add the explicit disabled V12 restore gate and `[CTX V12]` marker;
+      normal IRQ restoration is unchanged while the gate remains zero.
+- [ ] Hardware-validate the V12 gate marker before enabling the experiment.
+- [x] Hardware validation passed for the disabled V12 gate: `[CTX V11 ...
+      gate=0]` and `[CTX V12]` startup markers appeared; IPC/MM, syscall, and
+      timer checks remained clean through 144 IRQs.
+- [x] Correct the context-line version label to `[CTX V12]` so all V12
+      diagnostics identify the same image stage.
+- [x] Hardware validation passed for V12: `gate=0`, `a1==sp`, `a15ok=1`, valid
+      PC/PS, IPC/MM and syscall checks passed, and timer progress remained
+      clean through 256 IRQs.
+- [ ] V13: enable only the guarded `a1`/`a15` restore for one controlled
+      return, with an immediate fallback gate and versioned diagnostics.
 - [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.

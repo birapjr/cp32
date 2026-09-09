@@ -9,6 +9,8 @@ phys_bytes code_base;
 phys_bytes data_base;
 int sig_procs;
 volatile int k_reenter;
+/* V12 live context restore experiment; deliberately disabled during bring-up. */
+volatile int cp32_context_restore_gate;
 struct proc *proc_ptr;
 unsigned lost_ticks;
 clock_t tty_timeout;
@@ -23,4 +25,3 @@ int _send(int dest, message *m) {
 int _receive(int src, message *m) {
     return receive(src, m);
 }
-
