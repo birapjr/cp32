@@ -121,7 +121,7 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
   struct proc *dest_ptr, *next_ptr;
   int result;
 
-  if (dest < 0 || dest >= NR_TASKS + NR_PROCS) return E_BAD_DEST;
+  if (!isokprocn(dest)) return E_BAD_DEST;
   dest_ptr = proc_addr(dest);
   if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
 

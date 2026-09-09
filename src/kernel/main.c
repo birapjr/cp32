@@ -32,18 +32,17 @@ void test_ipc_mm(void) {
     struct proc *p1 = &proc[1];
     struct proc *p2 = &proc[2];
 
-    // Setup dummy memory maps for testing
-    p1->p_map[D].mem_vir = 0x1000;
-    p1->p_map[D].mem_phys = 0x3FCB0000 >> CLICK_SHIFT;
-    p1->p_map[D].mem_len = 0x100;
-    
-    p2->p_map[D].mem_vir = 0x2000;
-    p2->p_map[D].mem_phys = 0x3FCC0000 >> CLICK_SHIFT;
-    p2->p_map[D].mem_len = 0x100;
-
     message m1, m2;
     memset(&m1, 0, sizeof(message));
     strcpy((char*)&m1, "Hello IPC!");
+
+    /* Map the actual kernel test buffers so mem_copy can validate them. */
+    p1->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m1 & ~(CLICK_SIZE - 1);
+    p1->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m1) >> CLICK_SHIFT;
+    p1->p_map[D].mem_len = (sizeof(m1) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+    p2->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m2 & ~(CLICK_SIZE - 1);
+    p2->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m2) >> CLICK_SHIFT;
+    p2->p_map[D].mem_len = (sizeof(m2) + CLICK_SIZE - 1) >> CLICK_SHIFT;
     
     usbj_print("[TEST] IPC send/receive: ");
     
@@ -57,7 +56,9 @@ void test_ipc_mm(void) {
     usbj_print_u32((uint32_t)res);
     usbj_print(" (send/receive, flags=");
     usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
-    usbj_print(")\r\n\r\n");
+    usbj_print(", text=");
+    usbj_print((char *)&m2);
+    usbj_print(") [IPC V5][MM V5]\r\n\r\n");
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────────
@@ -189,9 +190,10 @@ void main(void) {
     status_line("starting systimer interrupt probe", 0);
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
     systimer_irq_start();
-    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
+    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
    
+   usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
    test_ipc_mm();
 
    /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit

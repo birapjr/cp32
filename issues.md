@@ -128,3 +128,5 @@ unexpected `e=1`.
 - The IPC diagnostic now uses `p_nr` consistently and emits one compact
   `[IPC B]sender->destination` marker when a sender blocks. Future changes
   should retain similarly small progress markers while bring-up is active.
+- Hardware validation passed: `send=0`, `receive=0`, `flags=0`, text
+  `Hello IPC!`, and `mem_copy len=36`. Task 3.1 is complete; Task 3.2 is next.

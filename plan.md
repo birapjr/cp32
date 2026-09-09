@@ -168,6 +168,21 @@ The following tasks address critical architectural gaps identified during the re
       detection, immediate delivery, sender queueing, and receiver queueing.
 - [x] Correct the bring-up test to pass MINIX process numbers (`p_nr`) rather
       than raw `proc[]` indexes.
+- [x] Correct the IPC test memory maps to cover the actual message buffers;
+      the previous fake mappings caused the observed `EFAULT` result.
+- [x] Correct the test segment virtual base to the actual buffer address;
+      `mem_vir=0` still rejected real stack pointers during `numap()`.
+- [x] Correct `numap()` click-to-byte bounds conversion and page-align the
+      test segment bases so IPC buffer offsets translate correctly.
+- [x] Add `[BOOT V3]` stage markers around timer enable and IPC/MM validation
+      to distinguish the flashed image and detect early-output loss.
+- [x] Bump boot and IPC/MM diagnostics to `[BOOT V4]`, `[IPC V4]`, and
+      `[MM V4]` for unambiguous hardware image tracking.
+- [x] Fix `mini_send()` to accept valid negative MINIX task numbers using
+      `isokprocn()` instead of rejecting every task destination.
+- [x] Bump the IPC/MM validation marker to V5 for this fix.
+- [x] Add compact `[MM E]` translation diagnostics for the remaining IPC
+      bounds failure; use the next hardware result to complete Task 3.1.
 - [x] Fix blocking order so a runnable process is removed from its ready queue
       before its `SENDING` or `RECEIVING` flag is set.
 - [x] Propagate `mem_copy` failures instead of reporting successful delivery.
@@ -176,3 +191,17 @@ The following tasks address critical architectural gaps identified during the re
 - [ ] Keep the timer IRQ frame marker active while validating IPC.
 - [ ] Hardware validation: confirm the corrected test reports delivery and
       cleared sender/receiver flags.
+
+### Task 3.1 hardware result
+
+- [x] Hardware IPC/MM validation passed: `send=0`, `receive=0`, `flags=0`,
+      message text `Hello IPC!`, and `mem_copy len=36`.
+- [x] Hardware timer regression remained clean during the same run; no
+      exception was reported through 176 IRQs.
+
+## Next task: 3.2 — syscall trap dispatch
+
+- [ ] Audit the current `sys_call` entry against MINIX SEND/RECEIVE/BOTH
+      semantics and connect it to the Xtensa trap entry when the user frame is
+      available.
+- [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.
