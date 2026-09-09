@@ -304,7 +304,7 @@ PRIVATE void switch_to(struct proc *next)
 {
     if (next == NIL_PROC) return;
     current_proc = next;
-    usbj_print("[CTX V12 p=");
+    usbj_print("[CTX V16 p=");
     usbj_print_u32((uint32_t)next->p_nr);
     usbj_print(" sp=");
     usbj_print_u32((uint32_t)cp32_context_probe_sp(next));
@@ -322,6 +322,8 @@ PRIVATE void switch_to(struct proc *next)
     usbj_print_u32((cp32_context_probe_sp(next) & 0x0F) == 0);
     usbj_print(" gate=");
     usbj_print_u32((uint32_t)cp32_context_restore_gate);
+    usbj_print(" rel=");
+    usbj_print_u32(next->p_reg.a[1] == next->p_reg.sp);
     usbj_print("]\r\n");
 }
 

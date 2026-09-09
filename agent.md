@@ -93,11 +93,71 @@ Do not describe the kernel as boot-complete or a usable MINIX system. Known inco
 
 When implementing features, prefer making one low-level path testable on real hardware and preserving diagnostic output before attempting broad MINIX subsystem integration.
 
+## Current project status
+
+The current hardware-validated path reaches `main()`, initializes the process
+table and ready queues, starts the ESP32-S3 SYSTIMER probe, validates IPC/MM,
+checks syscall rejection, and enters the diagnostic idle loop. Timer IRQ
+delivery is stable with the IRQ frame and re-entry counters returning to their
+expected values and no exception observed in the latest runs.
+
+Validated bring-up areas:
+
+- `.data`/`.bss`, vectors, call0 stack alignment, stack guard, and click
+  accounting.
+- SYSTIMER UNIT0 progress and TARGET0 routing to CPU interrupt 2.
+- IPC message delivery with `Hello IPC!`, `flags=0`, and `mem_copy len=36`.
+- Syscall invalid-function rejection with `EBADCALL` (`-102`).
+- Context-frame PC/SP/PS inspection, `a1 == sp`, `a15ok=1`, and the gated
+  V14/V15/V16 restore experiments without timer exceptions.
+
+Current gates and limitations:
+
+- The timer-to-clock/scheduler bridge is gated during early validation so the
+  first IRQ cannot switch away from `main()` prematurely.
+- The V16 context gate is enabled, but the complete proven register restore is
+  retained as the fallback; a production scheduler handoff is not complete.
+- `switch_to()` remains a diagnostic C boundary, not a complete process
+  context switch. The next task is a real scheduler handoff preserving every
+  required call0 register.
+- User trap entry, normal syscall entry from user mode, process execution,
+  clock accounting, and the full MINIX task lifecycle remain unfinished.
+
+Do not describe CP32 as boot-complete or as a usable MINIX system. The latest
+hardware result is documented in `plan.md` and `issues.md`; future changes
+must update both files and add a new versioned marker when diagnostics change.
+
 Current hardware markers and diagnostics are tracked in `issues.md`. The
 latest validated work uses the `CP32-IRQ-FRAME-*` marker family. For every
 hardware-visible change, update the marker and keep `r`, `c`, `f`, `s`, and `e`
 interpretable: re-entry, bridge calls, aligned frames, in-stack frames, and
 clock-handler gate respectively.
+
+## Bring-up debug and marker strategy
+
+Serial diagnostics are deliberately compact because timer IRQs can interleave
+with output. Every hardware-visible diagnostic change gets a monotonically
+increasing version marker so the flashed image can be identified immediately.
+Use the marker families consistently:
+
+- `[IMG Vn]` identifies the image and major boot-stage transitions. Keep one
+  image marker before IRQ enable and one immediately before the stage being
+  tested.
+- `[BOOT Vn]` identifies timer/boot sequencing changes.
+- `[IPC Vn]` and `[MM Vn]` identify IPC delivery and memory-translation checks.
+- `[SYS Vn]` identifies syscall-dispatch checks.
+- `[CTX Vn]` identifies process-frame and context-switch checks. Include only
+  small, actionable fields such as `p`, `sp`, `a15ok`, `ps`, `pc`, `a1`,
+  `spok`, `gate`, and relationship checks such as `rel`.
+- `[IRQ n r=... f=...]` is rate-limited (currently every 16 ticks). Preserve
+  the compact counters and do not print once per interrupt.
+
+When changing a diagnostic, bump its version rather than reusing an old one.
+Record the marker and hardware result in both `plan.md` and `issues.md`.
+Validation results must distinguish build-only status from hardware status;
+never mark a hardware check complete without a serial-console result. Use
+unsigned hexadecimal/decimal values consistently with the existing console
+helpers, and keep error markers short, for example `[MM E ...]`.
 
 ## Coding guidance for future changes
 

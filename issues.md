@@ -151,3 +151,17 @@ unexpected `e=1`.
 - V12 hardware validation passed: `gate=0`, `a1==sp`, `a15ok=1`, valid PC/PS,
   IPC/MM and syscall checks, and clean timer progress through 256 IRQs. V13
   will be the first guarded live restore experiment.
+- Post-split restore validation passed: V12 stayed at `gate=0`, IPC/MM and
+  syscall checks passed, and timer progress reached 434 IRQs with no exception.
+- V13 hardware validation passed with `gate=1`: no exception through 320 IRQs;
+  IPC/MM and syscall checks remained valid. The gate currently preserves the
+  complete restore behavior; a distinct reduced restore path is still needed.
+- V14 hardware validation passed: the gated assembly branch ran through 163
+  IRQs without exception, with `a1==sp`, `a15ok=1`, and all existing IPC/MM,
+  syscall, and timer checks valid. The next step is reducing the live branch.
+- V15 hardware validation passed: reduced live `a15` restore with `gate=1`
+  remained stable through 136 IRQs; `a1==sp`, `a15ok=1`, IPC/MM, syscall, PC,
+  and PS checks remained valid. V16 is next.
+- V16 hardware validation passed: `rel=1` confirmed `a1==sp`; `a15ok=1`, IPC/MM,
+  syscall, and timer diagnostics remained stable through 240 IRQs. Further
+  register reduction is unsafe; the next work is real scheduler handoff.

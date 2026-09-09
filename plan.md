@@ -280,6 +280,44 @@ The following tasks address critical architectural gaps identified during the re
 - [x] Hardware validation passed for V12: `gate=0`, `a1==sp`, `a15ok=1`, valid
       PC/PS, IPC/MM and syscall checks passed, and timer progress remained
       clean through 256 IRQs.
-- [ ] V13: enable only the guarded `a1`/`a15` restore for one controlled
+- [x] V13: enable the guarded `a1`/`a15` restore for one controlled
       return, with an immediate fallback gate and versioned diagnostics.
+- [ ] Hardware-validate V13 with `gate=1`; revert immediately if any exception,
+      stack corruption, or timer regression appears.
+- [x] Hardware validation passed: V13 `gate=1` ran through 320 IRQs with no
+      exception; IPC/MM, syscall, PC/SP/PS, and `a15` checks remained valid.
+- [ ] Wire the gate into a genuinely distinct reduced `a1`/`a15` restore path;
+      current V13 intentionally preserves the complete safe restore behavior.
+- [x] Wire the gate into distinct assembly fallback/live labels and bump the
+      marker to `[CTX V14]`; both paths retain identical proven loads pending
+      hardware validation.
+- [ ] Hardware-validate V14 before reducing the live path further.
+- [x] Hardware validation passed: V14 `gate=1` selected the new assembly live
+      branch with no exception through 163 IRQs; `a1==sp`, `a15ok=1`, IPC/MM,
+      syscall, and timer checks remained valid.
+- [ ] Reduce the V14 live branch to the minimum safe frame-pointer restore,
+      retain fallback recovery, and bump diagnostics to `[CTX V15]`.
+- [x] Reduce the live V15 branch to restore only `a15`; `a1` is restored from
+      the dedicated SP field immediately afterward, while fallback retains
+      both loads.
+- [ ] Hardware-validate V15 with gate enabled.
+- [x] Hardware validation passed: V15 reduced live `a15` restore with `gate=1`
+      ran through 136 IRQs without exception; `a1==sp`, `a15ok=1`, IPC/MM,
+      syscall, PC, and PS checks remained valid.
+- [ ] V16: isolate the next nonessential register restore while preserving the
+      fallback path and add a versioned diagnostic marker.
+- [x] V16 audit: no remaining general register is nonessential for a correct
+      call0 return; added `a1==sp` integrity reporting as `rel=1` and retained
+      the full fallback restore.
+- [ ] Hardware-validate V16 register integrity before any further reduction.
+- [x] Hardware validation passed: V16 reported `rel=1`, `a1==sp`, `a15ok=1`,
+      and stable IPC/MM, syscall, and timer diagnostics through 240 IRQs.
+- [ ] Next architectural task: connect validated process frames to a real
+      scheduler handoff without dropping required call0 registers.
+- [x] Split the IRQ restore sequence into general-register and dedicated
+      `a1`/`a15` stages, preserving the default behavior while creating the
+      controlled V13 insertion point.
+- [x] Hardware validation passed after the split: V12 marker remained at
+      `gate=0`, IPC/MM and syscall checks passed, and timer diagnostics reached
+      434 IRQs without an exception.
 - [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.

@@ -24,6 +24,7 @@ extern volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
+extern volatile int cp32_context_restore_gate;
 
 /* Simple test for IPC and MM */
 void test_ipc_mm(void) {
@@ -201,7 +202,8 @@ void main(void) {
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
     cp32_clock_irq_bridge_enabled = 0;
     usbj_print("[IMG V9] timer bridge gated during main validation\r\n");
-    usbj_print("[CTX V12] live a1/a15 restore gate=0\r\n");
+    cp32_context_restore_gate = 1;
+    usbj_print("[CTX V16] register integrity gate=1\r\n");
     systimer_irq_start();
     usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 

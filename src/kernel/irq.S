@@ -277,7 +277,7 @@ irq_level1:
     movi    a15, proc_ptr
     l32i    a15, a15, 0
     
-    /* Restore a14..a2 using a15 as constant base pointer */
+    /* Restore general registers first, using a15 as the frame base. */
     l32i    a14, a15, 56
     l32i    a13, a15, 52
     l32i    a12, a15, 48
@@ -291,10 +291,20 @@ irq_level1:
     l32i    a4, a15, 16
     l32i    a3, a15, 12
     l32i    a2, a15, 8
+    /* V15 gate: select the reduced live frame-pointer stage or fallback. */
+    movi    a3, cp32_context_restore_gate
+    l32i    a3, a3, 0
+    beqz    a3, 1f
+    j       2f
+1:
+    /* Fallback stage: retain the complete validated restore. */
     l32i    a1, a15, 4
-    
-    /* Restore a15 last */
     l32i    a15, a15, 60
+    j       3f
+2:
+    /* Live stage: a1 is reloaded from the dedicated SP field below. */
+    l32i    a15, a15, 60
+3:
     
     /* Restore a0 from p_reg using a temporary register to avoid destroying a15 if needed, 
      * but since we already restored a15, we must reload proc_ptr. */
