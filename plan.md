@@ -312,6 +312,10 @@ The following tasks address critical architectural gaps identified during the re
 - [ ] Hardware-validate V16 register integrity before any further reduction.
 - [x] Hardware validation passed: V16 reported `rel=1`, `a1==sp`, `a15ok=1`,
       and stable IPC/MM, syscall, and timer diagnostics through 240 IRQs.
+- [x] Hardware validation extended: `[CTX V16 ... gate=1 rel=1]` appeared;
+      IPC/MM and invalid-syscall checks passed, and timer diagnostics remained
+      clean through 368 IRQs with `c=f=s` and `e=0`. The sampled `r=1` values
+      occur while the level-1 handler is active and return to `r=0` afterward.
 - [ ] Next architectural task: connect validated process frames to a real
       scheduler handoff without dropping required call0 registers.
 - [x] Split the IRQ restore sequence into general-register and dedicated
@@ -349,8 +353,18 @@ still not a usable MINIX system.
 This is the immediate missing step. Do not enable the normal clock handler or
 claim process execution until all of these are complete.
 
-- [ ] Define one authoritative `struct stackframe_s` contract shared by C,
-      `irq.S`, `mpx32.S`, and `proc.h`; assert every offset and total size.
+- [x] Define the temporary level-1 IRQ-frame contract in `irq_frame.h` and
+      `irq_const.h`: 80 bytes, saved a0/a1/a2-a15 offsets, and compile-time
+      size/offset checks. This is distinct from the 76-byte process frame;
+      no scheduler handoff behavior changed.
+- [x] Define and assert the 76-byte Xtensa process-frame contract in
+      `proc.h`: `a[0]..a[15]`, `pc`, `psw`, and `sp` offsets are compile-time
+      checked against the constants consumed by `irq.S` and `mpx32.S`.
+- [ ] Consolidate the C and assembly declarations so the process-frame
+      offsets are generated from one authoritative definition.
+- [x] Consolidated process-frame size and offsets in `irq_const.h`; `proc.h`
+      now imports and asserts the shared constants used by the assembly
+      probes and restore path.
 - [ ] Add a dedicated saved-frame field for the interrupted PC, PS, SP, `a0`,
       `a1`, `a15`, and all registers required by the call0 ABI. Do not use a
       magic DRAM address as a frame pointer.
@@ -359,6 +373,131 @@ claim process execution until all of these are complete.
 - [ ] Implement a gated assembly `switch_to(old, new)` that saves the current
       frame and restores the selected process without returning through the
       diagnostic C boundary.
+- [x] Added an independent `cp32_context_handoff_gate`; the timer dispatch
+      cannot invoke scheduler handoff unless this gate is explicitly enabled,
+      and the existing validated clock bridge remains separately controlled.
+- [x] Enable the handoff gate for the first isolated hardware experiment;
+      clock-handler bridge remained disabled and the image marker was `[CTX V18]`.
+- [x] Reverted the handoff gate for V19 after hardware showed `a1 != sp`
+      (`rel=0`) and changing saved stack/frame values after the first target
+      switch. The validated IRQ-only path is restored.
+- [x] Corrected the context marker to `[CTX V19]` and removed the remaining
+      per-selection `[SCHED]` diagnostic output.
+- [x] Corrected `irq.S` to save `p_reg.sp` from the interrupted `a1` captured
+      in the IRQ frame rather than from the temporary IRQ-frame address.
+- [ ] Hardware-validate V20 on the safe IRQ-only path before re-enabling the
+      handoff gate.
+- [x] Safe-path V20 hardware validation passed through 208 IRQs with
+      `a1==sp`, `rel=1`, `a15ok=1`, and `c=f=s`; enabled only the handoff gate
+      for V21 while keeping the clock bridge disabled.
+- [ ] Hardware-validate V21 for persistent `a1==sp`, stable IRQ progress, and
+      independent task resumption; disable the gate on any regression.
+- [x] V21 hardware validation partially passed: live handoff remained stable
+      through 112 IRQs with `rel=1`, `a15ok=1`, and uninterrupted timer
+      progress. The scheduler repeatedly selected process 2, so fair queue
+      rotation and independent task execution remain unvalidated.
+- [ ] Fix scheduler selection/queue rotation so the handoff experiment can
+      demonstrate more than one runnable process without corrupting frames.
+- [x] Fixed scheduler requeueing to include runnable tasks and servers, not
+      only user processes; otherwise the task queue was consumed once and
+      process 2 monopolized subsequent handoffs. Versioned as `[CTX V22]`.
+- [ ] Hardware-validate V22 queue rotation and frame integrity.
+- [x] V22 hardware validation passed through 96 IRQs: runnable entries
+      rotated across processes/tasks (`p=2,1,0,-2,-3,-4,-5` and back),
+      `rel=1` and `a15ok=1` remained stable, and no exception occurred.
+- [ ] Add dedicated task counters/PCs to prove independent resumption;
+      current targets still use bring-up frames and diagnostic code.
+- [x] Added distinct counter loops and entry PCs for processes 1 and 2;
+      versioned as `[CTX V23]` while retaining the handoff and clock gates.
+- [ ] Hardware-validate V23 counters and alternating task PCs.
+- [x] V23 hardware validation passed through 160 IRQs: runnable frames
+      rotated across the set, `rel=1` and `a15ok=1` remained stable, and
+      processes 1 and 2 resumed at distinct PCs (`pc` values differed) with
+      no exception.
+- [ ] Add compact counter values to the diagnostic marker to prove both
+      dedicated loops continue making progress after preemption.
+- [x] Added V24 compact `t=` counter output for processes 1 and 2; other
+      process context lines remain unchanged.
+- [ ] Hardware-validate increasing counters for both dedicated loops.
+- [x] V24 hardware validation passed through 176 IRQs: process 1 counter
+      advanced from `37` to `615` and process 2 from `0` to `579` while
+      frames rotated and `rel=1`/`a15ok=1` remained valid.
+- [ ] Add a bounded two-task-only stress run before enabling the normal clock
+      lifecycle.
+- [x] Added a two-task stress setup that completes IPC before IRQ enable,
+      clears all ready queues, and seeds only processes 1 and 2; marker is
+      `[CTX V25]`.
+- [ ] Hardware-validate two-task-only rotation and counters.
+- [x] V25 stress result failed: process 2 advanced its counter, but process 1
+      remained at `t=0`; stack-frame accounting also diverged (`f` and `s`),
+      so the handoff gate was disabled again for V26.
+- [ ] Fix per-process task-stack initialization and saved-frame ownership
+      before attempting another live handoff.
+- [x] Added V27 pre-IRQ stack ownership diagnostics for process 1/2 SP values
+      and their separation; handoff remains disabled.
+- [ ] Hardware-validate V27 stack diagnostics before the next handoff attempt.
+- [x] V27 hardware validation passed: process 1/2 stacks were distinct and
+      separated by exactly `4096` bytes; the handoff-disabled IRQ path stayed
+      clean through 256 IRQs with `c=f=s`.
+- [ ] Investigate live saved-frame ownership; initial process-stack overlap is
+      ruled out by V27.
+- [x] Found and fixed the first-handoff ownership bug: `schedule()` was
+      selecting process 1 while `main()` was still executing, causing the
+      first IRQ to overwrite process 1's entry frame. V28 leaves the current
+      idle frame selected and lets the first gated IRQ choose process 1.
+- [ ] Hardware-validate V28 task counters and frame integrity.
+- [x] V28 handoff hardware result: first selection of process 1 was correct,
+      but process 2 then monopolized the two-task queue (`t=111` to `2516`)
+      while process 1 stayed at `t=0`; `rel=1` and `f=1` remained stable.
+      Disabled handoff again for V29.
+- [ ] Diagnose ready-queue flags/link ownership after the first process switch.
+- [x] V29 diagnosis found process 1 restored with `ps=0`; explicitly set the
+      two stress tasks to `ps=0x100` and enabled the isolated handoff for V30.
+- [ ] Hardware-validate V30 task rotation and both counters.
+- [x] V30 found the explicit `ps=0x100` assignment was overwritten by the
+      later generic PS initialization; moved the stress-task override after
+      that assignment and versioned the retry as V31.
+- [ ] Hardware-validate V31 task 1/task 2 progress.
+- [x] V31 result: process 1 showed `ps=256` but remained at `t=0`, while
+      process 2 advanced to `t=2941`; frame integrity stayed valid. Disabled
+      handoff for V32; PS value alone is not the cause.
+- [ ] Add process-1 execution/queue-state diagnostics before another handoff.
+- [x] Made the two-task harness explicitly own the live frame with idle before
+      enabling handoff, clearing stale `current_proc`/`proc_ptr` state; retry
+      is versioned as V33.
+- [ ] Hardware-validate V33 task 1/task 2 progress.
+- [x] V33 confirmed stable frame restoration but process 1 remained at `t=0`;
+      aligned both stress entries to initial `ps=0` for V34.
+- [ ] Hardware-validate V34 process-1 progress and two-task rotation.
+- [x] Added a rate-limited V35 queue-state trace around `sched()` to report
+      current process, flags, and ready-link state; handoff remains enabled.
+- [ ] Hardware-validate V35 queue-state trace and identify process-1 loss.
+- [x] V35 queue trace showed clean alternation of `cur=1` and `cur=2` with
+      `fl=0`; process 1 was not lost. Its later context lines were hidden by
+      the global diagnostic rate limiter. Removed the temporary queue trace
+      and versioned the cleaner handoff image as V36.
+- [ ] Hardware-validate V36 with direct counter observations.
+- [x] Hardware-validate V37 with direct `t1`/`t2` counter summaries at the
+      existing 16-IRQ diagnostic cadence; both counters advanced through
+      IRQ 272 with `rel=1`, `f=1`, and no exception.
+- [ ] Reduce the remaining rate-limited `[CTX V37]` lines now that independent
+      task progress is proven, then begin the next scheduler-lifecycle step.
+- [x] Hardware-validate V38's quieter context sampler; retain the V37 counter
+      summary as the primary task-progress diagnostic. Both counters advanced
+      through IRQ 256 with `rel=1`, `f=1`, and no exception.
+- [ ] Begin the next scheduler-lifecycle step: replace the diagnostic stress
+      loops with one real MINIX-style kernel task and validate its lifecycle.
+- [x] Reduced V18 handoff diagnostics: removed per-switch scheduler lines,
+      rate-limited context reports, and made the idle banner one-shot.
+- [ ] Hardware-validate V17; revert the gate immediately on exception, stack
+      corruption, stalled IRQs, or queue inconsistency.
+- [ ] V17 partial hardware result: the IRQ path selected successive saved
+      frames (`p=-5,-4,-3,-2,-1,0,1,2`) and returned to each target's
+      diagnostic idle loop without an immediate exception. The trace ended
+      before periodic IRQ counters resumed, so timer progress and queue
+      integrity are not yet validated.
+- [ ] Fix scheduler handoff test isolation: use dedicated task PCs/counters
+      and prevent repeated ready-queue insertion before declaring V17 passed.
 - [ ] Run two deterministic kernel tasks with separate stacks and counters;
       prove they alternate, resume at the correct PC, preserve registers, and
       never corrupt the IRQ frame.

@@ -241,8 +241,10 @@ irq_level1:
     rsr     a3, ps
     s32i    a3, a2, 68          /* p_reg.psw */
     
-    /* Save SP */
-    mov     a3, a1
+    /* Save the interrupted process SP, not the temporary IRQ-frame SP.
+     * The original a1 was captured at frame offset +4 before allocation;
+     * using the temporary frame address here breaks a1==sp after handoff. */
+    l32i    a3, a1, 4
     s32i    a3, a2, 72           /* p_reg.sp */
 
     

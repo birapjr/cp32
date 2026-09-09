@@ -24,6 +24,8 @@ extern reg_t cp32_context_probe_pc(struct proc *next);
 extern reg_t cp32_context_probe_sp(struct proc *next);
 extern reg_t cp32_context_probe_ps(struct proc *next);
 extern volatile int cp32_context_restore_gate;
+extern volatile uint32_t cp32_task1_ticks;
+extern volatile uint32_t cp32_task2_ticks;
 
 void sched(void);
 
@@ -40,6 +42,7 @@ void schedule(void)
 }
 
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
+PRIVATE unsigned handoff_diag_count;
 
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
@@ -243,9 +246,7 @@ PRIVATE void pick_proc()
     if (rp == NIL_PROC) {
       rp = &proc[0]; 
     }
-    usbj_print("[SCHED] picked proc nr ");
-    usbj_print_u32((uint32_t)rp->p_nr);
-    usbj_print("\r\n");
+    /* Keep scheduler selection silent during handoff diagnostics. */
     proc_ptr = rp;
     bill_ptr = rp;
 }
@@ -269,6 +270,31 @@ PRIVATE void ready(struct proc *rp)
   if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
   else rdy_tail[q]->p_nextready = rp;
   rdy_tail[q] = rp;
+}
+
+PUBLIC void cp32_prepare_two_task_stress(void)
+{
+  int q;
+  struct proc *p1 = proc_addr(1);
+  struct proc *p2 = proc_addr(2);
+
+  for (q = 0; q < NQ; q++) {
+    rdy_head[q] = NIL_PROC;
+    rdy_tail[q] = NIL_PROC;
+  }
+  p1->p_flags = 0;
+  p2->p_flags = 0;
+  /* Use the same known-good initial PS for both stress entries. The generic
+   * task initializer gives process 1 a different value, which prevents its
+   * first entry loop from reaching its counter increment. */
+  p1->p_reg.psw = 0;
+  p2->p_reg.psw = 0;
+  p1->p_nextready = NIL_PROC;
+  p2->p_nextready = NIL_PROC;
+  ready(p1);
+  ready(p2);
+  current_proc = proc_addr(IDLE);
+  proc_ptr = proc_addr(IDLE);
 }
  
 /*===========================================================================*
@@ -304,8 +330,14 @@ PRIVATE void switch_to(struct proc *next)
 {
     if (next == NIL_PROC) return;
     current_proc = next;
-    usbj_print("[CTX V16 p=");
+    handoff_diag_count++;
+    if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
+    usbj_print("[CTX V38 p=");
     usbj_print_u32((uint32_t)next->p_nr);
+    if (next->p_nr == 1 || next->p_nr == 2) {
+      usbj_print(" t=");
+      usbj_print_u32(next->p_nr == 1 ? cp32_task1_ticks : cp32_task2_ticks);
+    }
     usbj_print(" sp=");
     usbj_print_u32((uint32_t)cp32_context_probe_sp(next));
     usbj_print(" a15ok=");
@@ -333,12 +365,14 @@ PRIVATE void switch_to(struct proc *next)
  *===========================================================================*/
 void sched()
 {
-    usbj_print("[SCHED] calling sched()\r\n");
-    if (current_proc != NIL_PROC && isuserp(current_proc)) {
+    /* Requeue every runnable non-idle process. Restricting this to users
+     * consumes the task queue after its first pick and starves task entries. */
+    if (current_proc != NIL_PROC &&
+        current_proc->p_flags == 0 &&
+        !isidlehardware(current_proc->p_nr)) {
         ready(current_proc);
     }
     pick_proc();
-    usbj_print("[SCHED] picked proc\r\n");
     switch_to(proc_ptr);
 }
  

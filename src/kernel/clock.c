@@ -56,6 +56,11 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
+
+extern volatile uint32_t cp32_task1_ticks;
+extern volatile uint32_t cp32_task2_ticks;
+
+extern void sched(void);
 #include "esp32s3/systimer.h"
 
 /* Constant definitions. */
@@ -466,6 +471,8 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print("[IRQ "); usbj_print_u32(cp32_timer_irq_ticks);
     usbj_print(" r="); usbj_print_u32((uint32_t) k_reenter);
     usbj_print(" f="); usbj_print_u32(cp32_clock_irq_frame_stack_calls);
+    usbj_print(" t1="); usbj_print_u32(cp32_task1_ticks);
+    usbj_print(" t2="); usbj_print_u32(cp32_task2_ticks);
     usbj_print("]\r\n");
   }
   
@@ -473,6 +480,12 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * explicitly enabled by the bring-up sequence. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
+
+  /* The process handoff is deliberately a second gate.  This keeps the
+   * validated clock/IRQ bridge testable without selecting another process. */
+  extern volatile int cp32_context_handoff_gate;
+  if (cp32_context_handoff_gate)
+    sched();
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies

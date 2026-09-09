@@ -11,6 +11,8 @@ int sig_procs;
 volatile int k_reenter;
 /* V12 live context restore experiment; deliberately disabled during bring-up. */
 volatile int cp32_context_restore_gate;
+/* Separate gate for the first live scheduler handoff experiment. */
+volatile int cp32_context_handoff_gate;
 struct proc *proc_ptr;
 unsigned lost_ticks;
 clock_t tty_timeout;

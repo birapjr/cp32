@@ -103,6 +103,106 @@ make clean && make
 make flash
 ```
 
+## 2026-09-09 build validation
+
+- The temporary level-1 IRQ-frame contract was corrected to match the
+  assembly's 80-byte allocation: saved `a0`, interrupted `a1`, `a2-a15`, and
+  reserved padding. Compile-time size and `a15` offset checks now protect the
+  C/assembly boundary.
+- `make clean && make`, `make headers`, `make segments`, and `make nm` passed.
+- ELF placement remained unchanged: vectors at `0x40370000`, executable
+  segment in IRAM, and data/bss/heap/stack in DRAM.
+- Hardware validation is pending. The clock-to-scheduler bridge remains
+  disabled; no claim about live context switching is made from this build.
+- The process-frame contract now has compile-time checks for all assembly-used
+  offsets: `a[0]`, `a[1]`, `a[15]`, `pc`, `psw`, and `sp` in the 76-byte frame.
+- Added a separate disabled `cp32_context_handoff_gate` for the future live
+  scheduler experiment; the normal validated image does not invoke `sched()`
+  from the timer IRQ.
+- The next image enables only `cp32_context_handoff_gate` and identifies itself
+  with `[CTX V17]`; `clock_handler` remains disabled. Hardware validation is
+  required before treating this as a working process handoff.
+- V17 partial hardware result: the IRQ path selected multiple saved frames and
+  returned to each target's diagnostic idle loop without an immediate fault.
+  The trace stopped before the periodic IRQ counters resumed; timer progress,
+  queue integrity, and true task resumption remain unvalidated. All targets
+  currently use the same diagnostic idle PC, so this is not yet proof of
+  independent task execution.
+- V18 reduces diagnostic volume without changing handoff behavior: scheduler
+  lines are suppressed, context lines are rate-limited, and idle entry prints
+  once. Hardware validation of the quieter image is pending.
+- V18 handoff hardware validation failed: after initial frame selection,
+  `[CTX V18]` reported `rel=0` with `a1` offset from `sp`, `ps=16`, changing
+  stack values, and `f=2`. This indicates the live handoff is saving/restoring
+  the temporary IRQ frame as a process stack rather than preserving the
+  interrupted process SP. The handoff gate is disabled again in V19; do not
+  re-enable it until the save/restore boundary is corrected.
+- V20 fixes the identified save-side bug: `p_reg.sp` now receives the
+  interrupted `a1` from the IRQ frame, not the temporary frame pointer. The
+  handoff remains disabled pending safe-path hardware validation.
+- V20 safe-path hardware validation passed through 208 IRQs. V21 enables only
+  the handoff gate; the clock bridge remains disabled. Hardware validation is
+  required before declaring process switching functional.
+- V21 partial hardware validation passed: live handoff held `rel=1` and
+  `a15==sp` through 112 IRQs with ongoing timer progress and no exception.
+  The scheduler repeatedly selected process 2; fair rotation and independent
+  task execution are still not proven.
+- V22 requeues every runnable non-idle task/server as well as user processes,
+  correcting the starvation identified in V21. Handoff remains enabled and
+  hardware validation is pending.
+- V22 hardware validation passed through 96 IRQs: process/task selection
+  rotated across multiple entries, `rel=1` and `a15ok=1` stayed valid, and no
+  exception occurred. Independent task counters and normal clock lifecycle
+  remain unvalidated.
+- V23 adds separate counter loops and PCs for processes 1 and 2. Hardware
+  validation is pending; the clock bridge remains disabled.
+- V23 hardware validation passed through 160 IRQs: process/task frames rotated,
+  `rel=1` and `a15ok=1` stayed valid, and processes 1 and 2 showed distinct
+  resumed PCs without an exception. Counter values are not yet emitted, so
+  loop progress still needs direct confirmation.
+- V24 adds compact `t=` values to `[CTX V24]` for processes 1 and 2 so the
+  dedicated loop counters can be verified directly on hardware.
+- V24 hardware validation passed through 176 IRQs: task 1 advanced `t=37`
+  to `615`, task 2 advanced `t=0` to `579`, and live frame integrity stayed
+  valid with `rel=1` and no exception.
+- V25 isolates the handoff experiment to processes 1 and 2 after IPC
+  validation and before IRQ enable. Hardware validation is pending.
+- V25 hardware validation failed: process 2 advanced from `t=74` to `2097`,
+  while process 1 stayed at `t=0`; frame/stack counters also diverged. V26
+  disables handoff again. The next investigation is per-process stack and
+  saved-frame ownership.
+- V27 adds pre-IRQ process 1/2 stack-pointer and separation diagnostics while
+  keeping handoff disabled.
+- V27 hardware validation passed: `p1=1070325744`, `p2=1070329840`,
+  separation `4096`; safe IRQ validation remained clean through 256 IRQs.
+  Initial stack overlap is ruled out; live saved-frame ownership remains the
+  handoff issue.
+- V28 fixes the identified ownership sequence: handoff starts with the current
+  idle/main frame selected, and the explicit `schedule()` call is skipped so
+  process 1 is not overwritten before its first execution.
+- V28 hardware validation narrowed the remaining bug: process 1 was selected
+  first but never advanced, while process 2 monopolized later selections;
+  frame integrity stayed valid. V29 disables handoff pending ready-queue flag
+  diagnostics.
+- V30 explicitly initializes process 1/2 stress frames with `ps=0x100` after
+  V29 showed process 1 being restored with `ps=0`. Handoff is re-enabled for
+  the controlled test; hardware validation is pending.
+- V31 moves the stress PS override after the generic initializer; V30 showed
+  the earlier override was immediately overwritten.
+- V31 hardware validation still showed process 1 stalled at `t=0` while
+  process 2 advanced to `t=2941`, despite `ps=256` and valid frames. V32
+  disables handoff pending process-1 execution/queue diagnostics.
+- V33 resets `current_proc` and `proc_ptr` to idle after the two-task queue is
+  prepared, preventing stale bootstrap ownership during the first handoff.
+  Hardware validation is pending.
+- V34 aligns process 1/2 initial PS to `0`, matching the process-2 state that
+  successfully executes. Hardware validation is pending.
+- V35 adds a bounded `[Q V1]` scheduler trace for current flags and ready-link
+  ownership to diagnose why process 1 disappears after its first selection.
+- V35 hardware trace showed `cur=1`/`cur=2` alternation with both flags clear;
+  process 1 was selected but its later context reports were rate-limited. V36
+  removes the temporary queue trace.
+
 For every hardware test, record the marker and `r/c/f/s/e`. A regression is
 an exception, stalled counter, nonzero `r` after idle, `c/f/s` mismatch, or
 unexpected `e=1`.
@@ -165,3 +265,22 @@ unexpected `e=1`.
 - V16 hardware validation passed: `rel=1` confirmed `a1==sp`; `a15ok=1`, IPC/MM,
   syscall, and timer diagnostics remained stable through 240 IRQs. Further
   register reduction is unsafe; the next work is real scheduler handoff.
+- V16 extended hardware run passed: `[CTX V16 ... gate=1 rel=1]` appeared;
+  IPC/MM and invalid-syscall checks passed, and timer diagnostics remained
+  clean through 368 IRQs with `c=f=s` and `e=0`. The transient `r=1` samples
+  occurred inside the level-1 handler and returned to `r=0` after return.
+- V36 hardware validation kept the live handoff stable through the supplied
+  run, with `rel=1`, valid `a15`, and no exception. The V35 queue trace showed
+  process 1/process 2 selection alternation, but rate-limited context lines
+  did not independently prove both loop counters advanced.
+- V37 adds `t1`/`t2` to the existing 16-IRQ summary while retaining reduced
+  context output. Hardware validation passed through IRQ 272: `t1` advanced
+  from `292` to `5005`, `t2` from `253` to `4766`, with `rel=1`, `f=1`, and
+  no exception. The context trace still repeatedly samples process 2, so it
+  is not useful as a fairness measure now that the independent counters prove
+  both loops execute.
+- V38 reduces context sampling from every 8th switch to every 32nd switch;
+  the first switch remains visible and the V37 counter summary is unchanged.
+  Hardware validation passed through IRQ 256: `t1=4711`, `t2=4611`,
+  `rel=1`, `f=1`, and no exception. The next work is scheduler lifecycle,
+  not further IRQ-frame diagnostics.

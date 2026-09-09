@@ -9,6 +9,7 @@
  */
 
 #if (CHIP == ESP32_S3)
+#include "irq_const.h"
 /* Xtensa LX7 does not have the Intel-style segment/register frame.  Keep
  * only the process state that the ESP32-S3 kernel actually saves/restores:
  * the scratch return register, frame pointer, program counter, stack pointer,
@@ -23,7 +24,19 @@ struct stackframe_s {           /* proc_ptr points here */
 
 /* Keep the assembly contract explicit: a[16], pc, psw, sp are contiguous. */
 typedef char cp32_stackframe_layout_must_be_76[
-  sizeof(struct stackframe_s) == 76 ? 1 : -1];
+  sizeof(struct stackframe_s) == CP32_PROC_FRAME_BYTES ? 1 : -1];
+typedef char cp32_stackframe_a0_offset_must_be_0[
+  __builtin_offsetof(struct stackframe_s, a[0]) == CP32_REG_A0_OFFSET ? 1 : -1];
+typedef char cp32_stackframe_a1_offset_must_be_4[
+  __builtin_offsetof(struct stackframe_s, a[1]) == CP32_REG_A1_OFFSET ? 1 : -1];
+typedef char cp32_stackframe_a15_offset_must_be_60[
+  __builtin_offsetof(struct stackframe_s, a[15]) == CP32_REG_A15_OFFSET ? 1 : -1];
+typedef char cp32_stackframe_pc_offset_must_be_64[
+  __builtin_offsetof(struct stackframe_s, pc) == CP32_REG_PC_OFFSET ? 1 : -1];
+typedef char cp32_stackframe_psw_offset_must_be_68[
+  __builtin_offsetof(struct stackframe_s, psw) == CP32_REG_PSW_OFFSET ? 1 : -1];
+typedef char cp32_stackframe_sp_offset_must_be_72[
+  __builtin_offsetof(struct stackframe_s, sp) == CP32_REG_SP_OFFSET ? 1 : -1];
 #endif
 
 struct proc {
@@ -98,6 +111,7 @@ struct proc {
 							+ (vir_bytes) (vir))
 
 void schedule(void);
+void cp32_prepare_two_task_stress(void);
 extern phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len);
 extern void phys_copy(phys_bytes src, phys_bytes dst, phys_bytes len);
 extern int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len);

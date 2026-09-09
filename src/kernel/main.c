@@ -25,6 +25,26 @@ extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
+extern volatile int cp32_context_handoff_gate;
+
+volatile uint32_t cp32_task1_ticks;
+volatile uint32_t cp32_task2_ticks;
+
+static void cp32_task1_loop(void)
+{
+  for (;;) {
+    cp32_task1_ticks++;
+    delay(1000);
+  }
+}
+
+static void cp32_task2_loop(void)
+{
+  for (;;) {
+    cp32_task2_ticks++;
+    delay(1000);
+  }
+}
 
 /* Simple test for IPC and MM */
 void test_ipc_mm(void) {
@@ -71,7 +91,11 @@ void test_ipc_mm(void) {
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 6 - call0   main - in mpx32.S. */
 void kernel_idle_loop(void) {
-    usbj_print("[IDLE] entered idle loop\r\n");
+    static int idle_reported;
+    if (!idle_reported) {
+      usbj_print("[IDLE] entered idle loop\r\n");
+      idle_reported = 1;
+    }
     for (;;) {
         wdt_feed_all();
         delay(1000000);
@@ -120,7 +144,10 @@ void main(void) {
     
     // 2. Initialize Registers
     rp->p_reg.pc = (reg_t)kernel_idle_loop; // Point to a valid execution loop
+    if (t == 1) rp->p_reg.pc = (reg_t)cp32_task1_loop;
+    if (t == 2) rp->p_reg.pc = (reg_t)cp32_task2_loop;
     rp->p_reg.psw = istaskp(rp) ? 0x100 : 0x0; // Simplified PSW
+    if (t == 1 || t == 2) rp->p_reg.psw = 0x100;
     
     /* Fix: Initialize all registers to 0 to avoid junk in p_reg */
     memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
@@ -203,13 +230,23 @@ void main(void) {
     cp32_clock_irq_bridge_enabled = 0;
     usbj_print("[IMG V9] timer bridge gated during main validation\r\n");
     cp32_context_restore_gate = 1;
-    usbj_print("[CTX V16] register integrity gate=1\r\n");
-    systimer_irq_start();
-    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
-
-   
+    /* First live handoff experiment: keep clock_handler disabled, but allow
+     * the IRQ bridge to invoke the scheduler and select a saved frame. */
+    cp32_context_handoff_gate = 1;
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
    test_ipc_mm();
+   cp32_prepare_two_task_stress();
+   usbj_print("[STK V1 p1=");
+   usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
+   usbj_print(" p2=");
+   usbj_print_u32((uint32_t)proc_addr(2)->p_reg.sp);
+   usbj_print(" d=");
+   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
+   usbj_print("]\r\n");
+   cp32_context_handoff_gate = 1;
+   usbj_print("[CTX V38] restore=1 handoff=1 clock=0 stress=2\r\n");
+   systimer_irq_start();
+   usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
    /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
 
@@ -217,7 +254,11 @@ void main(void) {
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
   usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-2\r\n");
-  schedule();
+  /* With live handoff enabled, leave proc_ptr on the current idle frame.
+   * Calling schedule() here would assign main()'s live frame to process 1
+   * before the first IRQ and overwrite its task entry PC. */
+  if (!cp32_context_handoff_gate)
+    schedule();
   usbj_print("timer reentry baseline: ");
   usbj_print_u32((uint32_t) k_reenter);
   usbj_print(" (expected 0)\r\n");

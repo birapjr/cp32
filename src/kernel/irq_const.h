@@ -2,22 +2,26 @@
 #ifndef CP32_IRQ_FRAME_BYTES
 #define CP32_IRQ_FRAME_BYTES 80
 
-#define CP32_IRQ_A2_OFFSET  0
-#define CP32_IRQ_A3_OFFSET  4
-#define CP32_IRQ_A4_OFFSET  8
-#define CP32_IRQ_A5_OFFSET 12
-#define CP32_IRQ_A6_OFFSET 16
-#define CP32_IRQ_A7_OFFSET 20
-#define CP32_IRQ_A8_OFFSET 24
-#define CP32_IRQ_A9_OFFSET 28
-#define CP32_IRQ_A10_OFFSET 32
-#define CP32_IRQ_A11_OFFSET 36
-#define CP32_IRQ_A12_OFFSET 40
-#define CP32_IRQ_A13_OFFSET 44
-#define CP32_IRQ_A14_OFFSET 48
-#define CP32_IRQ_A15_OFFSET 52
+/* The temporary frame includes a0 and the interrupted a1 before a2-a15. */
+#define CP32_IRQ_A0_OFFSET   0
+#define CP32_IRQ_A1_OFFSET   4
+#define CP32_IRQ_A2_OFFSET   8
+#define CP32_IRQ_A3_OFFSET  12
+#define CP32_IRQ_A4_OFFSET  16
+#define CP32_IRQ_A5_OFFSET  20
+#define CP32_IRQ_A6_OFFSET  24
+#define CP32_IRQ_A7_OFFSET  28
+#define CP32_IRQ_A8_OFFSET  32
+#define CP32_IRQ_A9_OFFSET  36
+#define CP32_IRQ_A10_OFFSET 40
+#define CP32_IRQ_A11_OFFSET 44
+#define CP32_IRQ_A12_OFFSET 48
+#define CP32_IRQ_A13_OFFSET 52
+#define CP32_IRQ_A14_OFFSET 56
+#define CP32_IRQ_A15_OFFSET 60
 
 /* struct stackframe_s offsets in proc.p_reg (bytes). */
+#define CP32_PROC_FRAME_BYTES 76
 #define CP32_REG_A0_OFFSET   0
 #define CP32_REG_A1_OFFSET   4
 #define CP32_REG_A15_OFFSET 60
