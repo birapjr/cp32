@@ -505,6 +505,24 @@ claim process execution until all of these are complete.
       counters advanced with `rel=1`, `f=1`, and no exception.
 - [ ] Replace the two diagnostic task loops with the first real clock-task
       lifecycle entry, including a valid task frame and message-loop boundary.
+- [ ] Before activating `clock_task()`, complete its required blocking
+      `receive()`/`send()` path; the current IPC implementation is not yet a
+      safe message-loop boundary.
+- [x] Replace recursive `_send()`/`_receive()` wrappers with direct
+      `mini_send()`/`mini_rec()` dispatch and add the `_sendrec()` boundary.
+- [ ] Hardware-validate blocking wrapper behavior before assigning the CLOCK
+      task slot to `clock_task()`.
+- [ ] Hardware-validate the V6 IPC/MM marker after the direct `_send()` /
+      `_receive()` wrapper fix; the supplied V43 log predates that image.
+- [ ] Hardware-validate V7, which routes the deterministic IPC test through
+      `_send()` and `_receive()` rather than calling the primitives directly.
+- [ ] Hardware-validate V8 with receiver-first ordering to prove blocking,
+      sender wakeup, ready-queue reinsertion, and cleared flags.
+- [x] V8 hardware validation passed: receiver-first IPC completed with
+      `mem_copy`, delivery, `0/0`, `Hello IPC!`, and cleared flags; timer and
+      context checks remained clean through IRQ 144.
+- [ ] Move from the deterministic kernel IPC test to real task-owned message
+      loops before activating `clock_task()`.
 - [x] Reduced V18 handoff diagnostics: removed per-switch scheduler lines,
       rate-limited context reports, and made the idle banner one-shot.
 - [ ] Hardware-validate V17; revert the gate immediately on exception, stack

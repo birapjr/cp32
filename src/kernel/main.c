@@ -67,19 +67,22 @@ void test_ipc_mm(void) {
     
     usbj_print("[TEST] IPC send/receive: ");
     
-    extern int mini_send(struct proc *caller, int dest, message *m);
-    extern int mini_rec(struct proc *caller, int src, message *m);
+    extern int _send(int dest, message *m);
+    extern int _receive(int src, message *m);
 
-    int res = mini_send(p1, p2->p_nr, &m1);
-    usbj_print_u32((uint32_t)res);
-    res = mini_rec(p2, p1->p_nr, &m2);
+    /* Block the receiver first, then deliver through the sender. This
+     * exercises the MINIX wakeup path instead of only immediate delivery. */
+    proc_ptr = p2;
+    int res = _receive(p1->p_nr, &m2);
+    proc_ptr = p1;
+    int send_res = _send(p2->p_nr, &m1);
     usbj_print("/");
-    usbj_print_u32((uint32_t)res);
+    usbj_print_u32((uint32_t)send_res);
     usbj_print(" (send/receive, flags=");
     usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
     usbj_print(", text=");
     usbj_print((char *)&m2);
-    usbj_print(") [IPC V5][MM V5]\r\n\r\n");
+    usbj_print(") [IPC V8][MM V8]\r\n\r\n");
 
     /* Exercise the dispatcher validation without changing process state. */
     usbj_print("[TEST] syscall invalid-function: ");

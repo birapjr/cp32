@@ -310,3 +310,21 @@ unexpected `e=1`.
   `rel=1`, `f=1`, and no exception. Kernel-task rotation is now validated;
   the next risk is entering a real clock-task lifecycle rather than the
   diagnostic counter loops.
+- The existing `clock_task()` still assumes blocking `receive()` and `send()`
+  semantics. Do not assign the CLOCK task slot to that entry until the
+  partial CP32 IPC path can block, wake, and return messages safely.
+- The kernel-side `_send()` and `_receive()` wrappers previously called the
+  syslib macro names and could recurse. They now dispatch directly to
+  `mini_send()`/`mini_rec()`, with `_sendrec()` added; build validation is
+  pending hardware blocking/wakeup validation. The supplied V43 log predates
+  this change and still reports `[IPC V5][MM V5]`.
+- The V6 run confirmed the rebuilt image but the test still invoked
+  `mini_send()`/`mini_rec()` directly. V7 changes the test to exercise the
+  kernel-facing wrappers with explicit simulated callers.
+- V7 hardware validation passed: wrapper IPC returned `0/0`, delivered
+  `Hello IPC!`, and timer/context checks remained clean through IRQ 208.
+  V8 changes the test to receiver-first ordering for blocking/wakeup coverage.
+- V8 hardware validation passed: receiver-first ordering produced the expected
+  `mem_copy`, delivery, `0/0`, `Hello IPC!`, and cleared flags; timer/context
+  checks remained clean through IRQ 144. The next IPC gap is task-owned
+  message-loop execution.
