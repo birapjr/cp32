@@ -284,3 +284,29 @@ unexpected `e=1`.
   Hardware validation passed through IRQ 256: `t1=4711`, `t2=4611`,
   `rel=1`, `f=1`, and no exception. The next work is scheduler lifecycle,
   not further IRQ-frame diagnostics.
+- The held-interrupt replay path now retains its MINIX queue/replay behavior
+  without printing one multi-line debug record per replay; hardware validation
+  passed through IRQ 208 with both task counters advancing (`t1=3827`,
+  `t2=3740`), `rel=1`, `f=1`, and no exception.
+- V39 aligns `pick_proc()` with MINIX billing semantics: task/server picks
+  preserve the prior user billing target, while user and idle picks update
+  `bill_ptr`. Hardware validation is pending.
+- V40 enabled the existing clock-handler bridge for the first lifecycle test;
+  hardware validation passed through IRQ 256 with `t1=4705`, `t2=4605`,
+  `rel=1`, `f=1`, and no exception. The process handoff gate remained
+  separate.
+- V41 removes the direct per-IRQ scheduler call when the clock bridge is
+  active, allowing `clock_handler()` and its quantum accounting to control
+  rescheduling. Hardware validation is pending.
+- V41 hardware validation showed a policy regression: `t1` advanced to `9948`
+  while `t2` remained `0`. Both stress entries are kernel tasks, so the MINIX
+  user-quantum condition did not request a switch. V42 adds explicit rotation
+  when multiple kernel tasks are ready; hardware validation is pending.
+- V42 hardware validation showed `t1=34` while `t2` advanced to `9910`: the
+  two-entry queue guard stopped scheduling after task 2 was selected and only
+  task 1 remained queued. V43 rotates whenever a task is queued, allowing the
+  current task to be requeued by `sched()`.
+- V43 hardware validation passed through IRQ 192: `t1=3528`, `t2=3447`,
+  `rel=1`, `f=1`, and no exception. Kernel-task rotation is now validated;
+  the next risk is entering a real clock-task lifecycle rather than the
+  diagnostic counter loops.

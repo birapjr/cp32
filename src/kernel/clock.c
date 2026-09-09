@@ -476,15 +476,20 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print("]\r\n");
   }
   
-  /* Keep the raw IRQ probe from changing proc_ptr until context handoff is
-   * explicitly enabled by the bring-up sequence. */
+  /* Run the MINIX clock path first; the separate handoff gate below controls
+   * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
 
   /* The process handoff is deliberately a second gate.  This keeps the
    * validated clock/IRQ bridge testable without selecting another process. */
   extern volatile int cp32_context_handoff_gate;
-  if (cp32_context_handoff_gate)
+  /* MINIX tasks are interrupt-driven and are not covered by the user
+   * quantum test. During the CP32 task-lifecycle test, rotate ready kernel
+   * tasks explicitly; user scheduling remains clock-handler controlled. */
+  if (cp32_context_handoff_gate &&
+      (!cp32_clock_irq_bridge_enabled ||
+       rdy_head[TASK_Q] != NIL_PROC))
     sched();
 }
 

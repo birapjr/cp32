@@ -244,11 +244,17 @@ PRIVATE void pick_proc()
   }
 
     if (rp == NIL_PROC) {
-      rp = &proc[0]; 
+      /* No ready task/server/user: run the MINIX idle process and bill it. */
+      proc_ptr = proc_addr(IDLE);
+      bill_ptr = proc_ptr;
+      return;
     }
-    /* Keep scheduler selection silent during handoff diagnostics. */
+
     proc_ptr = rp;
-    bill_ptr = rp;
+    /* MINIX bills user time only when a user process is selected. Kernel
+     * tasks and servers retain the previous user billing target. */
+    if (rp->p_nr >= NR_TASKS + LOW_USER)
+      bill_ptr = rp;
 }
 
  
@@ -332,7 +338,7 @@ PRIVATE void switch_to(struct proc *next)
     current_proc = next;
     handoff_diag_count++;
     if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
-    usbj_print("[CTX V38 p=");
+    usbj_print("[CTX V43 p=");
     usbj_print_u32((uint32_t)next->p_nr);
     if (next->p_nr == 1 || next->p_nr == 2) {
       usbj_print(" t=");
@@ -436,10 +442,6 @@ PUBLIC void unhold()
   struct proc *rp;
   while (held_head != NIL_PROC) {
     rp = held_head;
-    usbj_print("[DEBUG] unhold() - processing held interrupt\r\n");
-    usbj_print(" task=");
-    usbj_print_u32(rp->p_nr);
-    usbj_print("\r\n");
     held_head = rp->p_nextheld;
     if (held_head == NIL_PROC)
       held_tail = NIL_PROC;

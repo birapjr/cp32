@@ -480,13 +480,31 @@ claim process execution until all of these are complete.
 - [x] Hardware-validate V37 with direct `t1`/`t2` counter summaries at the
       existing 16-IRQ diagnostic cadence; both counters advanced through
       IRQ 272 with `rel=1`, `f=1`, and no exception.
-- [ ] Reduce the remaining rate-limited `[CTX V37]` lines now that independent
-      task progress is proven, then begin the next scheduler-lifecycle step.
+- [x] Reduced the remaining rate-limited context lines to the V38 cadence after
+      independent task progress was proven.
 - [x] Hardware-validate V38's quieter context sampler; retain the V37 counter
       summary as the primary task-progress diagnostic. Both counters advanced
       through IRQ 256 with `rel=1`, `f=1`, and no exception.
 - [ ] Begin the next scheduler-lifecycle step: replace the diagnostic stress
       loops with one real MINIX-style kernel task and validate its lifecycle.
+- [x] Align `pick_proc()` billing with MINIX: task/server selection no longer
+      overwrites `bill_ptr`; idle fallback explicitly bills the idle process.
+- [ ] Hardware-validate V39 before enabling the normal clock-to-scheduler
+      bridge or replacing the two-task stress setup.
+- [ ] Hardware-validate V40 with the clock-to-scheduler bridge enabled; an
+      exception or stalled timer requires reverting only this bridge gate.
+- [ ] Hardware-validate V41 with scheduler handoff driven only by the clock
+      quantum path; direct per-IRQ `sched()` fallback is now disabled when the
+      clock bridge is active.
+- [ ] Hardware-validate V42 after adding explicit runnable-kernel-task
+      rotation; V41 showed task 1 monopolizing because user quantum accounting
+      does not schedule kernel tasks.
+- [ ] Hardware-validate V43 after allowing rotation with one queued task; V42
+      showed task 2 monopolizing once only task 1 remained queued.
+- [x] V43 hardware validation passed through IRQ 192: both kernel-task
+      counters advanced with `rel=1`, `f=1`, and no exception.
+- [ ] Replace the two diagnostic task loops with the first real clock-task
+      lifecycle entry, including a valid task frame and message-loop boundary.
 - [x] Reduced V18 handoff diagnostics: removed per-switch scheduler lines,
       rate-limited context reports, and made the idle banner one-shot.
 - [ ] Hardware-validate V17; revert the gate immediately on exception, stack

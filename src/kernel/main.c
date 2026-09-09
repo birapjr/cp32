@@ -227,8 +227,8 @@ void main(void) {
     usbj_print("[IMG V8] pre-IRQ setup complete\r\n");
     status_line("starting systimer interrupt probe", 0);
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
-    cp32_clock_irq_bridge_enabled = 0;
-    usbj_print("[IMG V9] timer bridge gated during main validation\r\n");
+    cp32_clock_irq_bridge_enabled = 1;
+    usbj_print("[IMG V10] timer bridge enabled for clock lifecycle\r\n");
     cp32_context_restore_gate = 1;
     /* First live handoff experiment: keep clock_handler disabled, but allow
      * the IRQ bridge to invoke the scheduler and select a saved frame. */
@@ -244,7 +244,7 @@ void main(void) {
    usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
    usbj_print("]\r\n");
    cp32_context_handoff_gate = 1;
-   usbj_print("[CTX V38] restore=1 handoff=1 clock=0 stress=2\r\n");
+   usbj_print("[CTX V43] restore=1 handoff=1 clock=1 stress=2\r\n");
    systimer_irq_start();
    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
