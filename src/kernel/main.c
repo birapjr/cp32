@@ -78,6 +78,7 @@ void kernel_idle_loop(void) {
 }
 
 void main(void) {
+  usbj_print("[IMG V8] CP32 diagnostic image\r\n");
   status_line("main() starting", 0);
 
   register struct proc *rp;
@@ -193,8 +194,11 @@ void main(void) {
     for (;;) { }
   }
   usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
+    usbj_print("[IMG V8] pre-IRQ setup complete\r\n");
     status_line("starting systimer interrupt probe", 0);
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
+    cp32_clock_irq_bridge_enabled = 0;
+    usbj_print("[IMG V9] timer bridge gated during main validation\r\n");
     systimer_irq_start();
     usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 

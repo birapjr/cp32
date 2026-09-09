@@ -133,3 +133,6 @@ unexpected `e=1`.
 - Task 3.2 hardware validation passed: invalid syscall returned `EBADCALL`
   (`-102`), printed as `4294967194`; timer IRQ progress remained stable through
   160 ticks. Task 3.3 is next.
+- V9 hardware validation passed: `[IMG V9]`, IPC/MM, `[SYS V6]`, and `[CTX V7]`
+  all appeared; timer progress reached 224 IRQs with no exception. The
+  transient counter skew at one sample self-corrected on the next report.

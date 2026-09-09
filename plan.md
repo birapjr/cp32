@@ -219,4 +219,22 @@ The following tasks address critical architectural gaps identified during the re
 - [ ] Save and restore the interrupted PC, PS, SP, and registers without
       corrupting the call0 frame pointer.
 - [ ] Add a compact `[CTX V7]` marker around the first controlled switch.
+- [x] Instrument the active C switch boundary with `[CTX V7 p=<nr> sp=<sp>]`
+      and reject a null switch target; full assembly handoff remains pending.
+- [x] Add early `[IMG V8]` and pre-IRQ markers before interrupt enable so the
+      flashed image can be identified even when post-enable output interleaves.
+- [x] Add `[IMG V9]` timer-bridge gating so the first IRQ cannot switch
+      `proc_ptr` away from `main()` before bring-up validation completes.
+- [ ] Hardware validation: confirm post-enable boot, IPC, and `[CTX V7]`
+      output now remain reachable with the bridge gated.
+- [x] Hardware validation passed with `[IMG V9]`: IPC/MM, syscall validation,
+      `[CTX V7]`, and timer progress through 224 IRQs completed without an
+      exception; final counters remained consistent.
+
+### Next context-switch step
+
+- [ ] Replace the diagnostic C-only switch boundary with a controlled assembly
+      handoff using the shared `struct stackframe_s` offsets.
+- [ ] Validate one process switch at a time and retain compact versioned
+      `[CTX V8]` diagnostics.
 - [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.

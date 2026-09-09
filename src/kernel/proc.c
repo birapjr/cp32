@@ -297,8 +297,13 @@ PRIVATE void unready(struct proc *rp)
  *===========================================================================*/
 PRIVATE void switch_to(struct proc *next)
 {
-    usbj_print("[SCHED] switch_to\r\n");
+    if (next == NIL_PROC) return;
     current_proc = next;
+    usbj_print("[CTX V7 p=");
+    usbj_print_u32((uint32_t)next->p_nr);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)next->p_reg.sp);
+    usbj_print("]\r\n");
 }
 
  

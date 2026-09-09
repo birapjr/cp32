@@ -469,8 +469,10 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print("]\r\n");
   }
   
-  /* Call the Minix clock handler instead of the raw schedule() stub */
-  clock_handler(0); 
+  /* Keep the raw IRQ probe from changing proc_ptr until context handoff is
+   * explicitly enabled by the bring-up sequence. */
+  if (cp32_clock_irq_bridge_enabled)
+    clock_handler(0);
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies
