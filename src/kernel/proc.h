@@ -96,6 +96,12 @@ struct proc {
 							+ (vir_bytes) (vir))
 
 void schedule(void);
+extern phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len);
+extern void phys_copy(phys_bytes src, phys_bytes dst, phys_bytes len);
+extern int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len);
+extern int mini_send(struct proc *caller, int dest, message *m);
+extern int mini_rec(struct proc *caller, int src, message *m);
+
 
 #if (SHADOWING == 1)
 #define isshadowp(p)      ((p)->p_shadow != 0)

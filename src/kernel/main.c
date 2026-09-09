@@ -14,6 +14,7 @@
 #include "proc.h"
 #include "esp32s3/systimer.h"
 #include <minix/com.h>
+#include <string.h>
 extern void schedule(void);
 
 extern char _stack_bottom[];
@@ -23,6 +24,45 @@ extern volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
+
+/* Simple test for IPC and MM */
+void test_ipc_mm(void) {
+    usbj_print("\r\n[TEST] Starting IPC and MM validation...\r\n");
+
+    struct proc *p1 = &proc[1];
+    struct proc *p2 = &proc[2];
+
+    // Setup dummy memory maps for testing
+    p1->p_map[D].mem_vir = 0x1000;
+    p1->p_map[D].mem_phys = 0x3FCB0000 >> CLICK_SHIFT;
+    p1->p_map[D].mem_len = 0x100;
+    
+    p2->p_map[D].mem_vir = 0x2000;
+    p2->p_map[D].mem_phys = 0x3FCC0000 >> CLICK_SHIFT;
+    p2->p_map[D].mem_len = 0x100;
+
+    message m1, m2;
+    memset(&m1, 0, sizeof(message));
+    strcpy((char*)&m1, "Hello IPC!");
+    
+    usbj_print("[TEST] Attempting mini_send from p1 to p2...\r\n");
+    
+    extern int mini_send(struct proc *caller, int dest, message *m);
+    extern int mini_rec(struct proc *caller, int src, message *m);
+
+    int res = mini_send(p1, 2, &m1);
+    usbj_print("[TEST] mini_send result: ");
+    usbj_print_u32((uint32_t)res);
+    usbj_print("\r\n");
+
+    usbj_print("[TEST] Attempting mini_rec for p2...\r\n");
+    res = mini_rec(p2, 1, &m2);
+    usbj_print("[TEST] mini_rec result: ");
+    usbj_print_u32((uint32_t)res);
+    usbj_print("\r\n");
+
+    usbj_print("[TEST] IPC Validation Complete\r\n\r\n");
+}
 
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 6 - call0   main - in mpx32.S. */
@@ -130,11 +170,14 @@ void main(void) {
     for (;;) { }
   }
   usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
-  status_line("starting systimer interrupt probe", 0);
-  systimer_irq_start();
-  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
+   status_line("starting systimer interrupt probe", 0);
+   systimer_irq_start();
+   usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
+   
+   test_ipc_mm();
 
-  /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
+   /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
+
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);

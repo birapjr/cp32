@@ -82,3 +82,64 @@ The following tasks address critical architectural gaps identified during the re
 - [x] Audited `proc.h` against MINIX 2.0.0.
 - [x] Added `p_shadow` to `struct proc` for MM support.
 - [x] Verified compilation.
+
+---
+
+## Task 3 - Core Kernel IPC & Process Lifecycle
+**Goal**: Move from stub IPC to a functioning MINIX-style message passing system.
+
+### 3.1 Implement `mini_send` and `mini_rec`
+**Goal**: Enable basic inter-process communication.
+**Change**: Port the logic from `minix-2.0.0/src/kernel/proc.c` to `src/kernel/proc.c`, implementing the blocking/unblocking logic and queue management.
+**Verification**: Create two dummy tasks that send/receive messages and verify they block/unblock correctly.
+
+### 3.2 Implement `sys_call` Trap Handler
+**Goal**: Allow user-space (future) to request kernel services.
+**Change**: Implement the entry point in `proc.c` that dispatches `SEND`, `RECEIVE`, and `BOTH` based on the trap frame.
+**Verification**: Trigger a manual system call from `main.c` to verify the dispatch path.
+
+### 3.3 Process Context Switching (The "Big Jump")
+**Goal**: Implement actual register saving/restoring.
+**Change**: Update `mpx32.S` and `irq.S` to save the current process state into `p_reg` and load the next process state from `p_reg` during `switch_to`.
+**Verification**: Verify that two tasks can actually swap execution and maintain their own stack/PC.
+
+---
+
+## Task 4 - Memory Management (MM) Foundation
+**Goal**: Implement the basic memory protection and allocation logic.
+
+### 4.1 Port `mm/` subsystem
+**Goal**: Establish the Memory Manager task.
+**Change**: Copy and adapt `minix-2.0.0/src/kernel/mm.c` (and associated headers).
+**Verification**: Verify the MM task can initialize the system memory map.
+
+### 4.2 Implement `mem_copy` and `mem_move`
+**Goal**: Safe memory transfer between processes.
+**Change**: Implement the kernel-level copy routines that respect the `p_map` boundaries.
+**Verification**: Test copying data between two different process memory segments.
+
+---
+
+## Task 5 - Device Driver Framework & Cardputer Hardware
+**Goal**: Establish the driver model and integrate Cardputer Adv specific peripherals.
+
+### 5.1 Port `driver.c` logic
+**Goal**: Implement the unified driver interface.
+**Change**: Implement the `drv_` prefix functions for device interaction.
+**Verification**: Register the USB Serial, Keyboard, and Display as system devices.
+
+### 5.2 Keyboard Driver & Input Path
+**Goal**: Allow hardware-based command entry.
+**Change**: Implement the I2C/GPIO driver for the Cardputer Adv keyboard. Map keypresses to kernel input events or TTY characters.
+**Verification**: Press a key on the Cardputer and see the character appear in the kernel console.
+
+### 5.3 Display Driver & Output Path
+**Goal**: Provide visual feedback on the device screen.
+**Change**: Implement the driver for the Cardputer Adv display (SPI/I2C). Create a basic `printk`-like output for the screen.
+**Verification**: Print "CP32 Kernel Booted" on the physical display.
+
+### 5.4 Full TTY Line Discipline
+**Goal**: Implement the MINIX TTY layer for the Cardputer.
+**Change**: Connect `tty.c` to both the serial driver and the keyboard driver.
+**Verification**: Type commands on the keyboard and see them echoed on the display and serial console.
+

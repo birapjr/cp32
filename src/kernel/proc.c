@@ -12,8 +12,9 @@
  *   lock_mini_send:  send a message (used by interrupt signals, etc.)
  *   lock_pick_proc:  pick a process to run (used by system initialization)
  *   unhold:          repeat all held-up interrupts
+ *
  */
-
+ 
 #include "kernel.h"
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -24,32 +25,19 @@ void sched(void);
 // Minimal scheduler stub for main to call.
 void schedule(void)
 {
-    // Initialize dummy task for Step 2
     proc[1].p_nr = 1;
     proc[1].p_flags = 0; // Make it runnable
     
     sched();
 }
 
-
-
-
-
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 
-FORWARD _PROTOTYPE( int mini_send, (struct proc *caller_ptr, int dest,
-		message *m_ptr) );
-FORWARD _PROTOTYPE( int mini_rec, (struct proc *caller_ptr, int src,
-		message *m_ptr) );
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
-void sched(void);
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
 
-/* Process table storage for the CP32 port.  The historical MINIX headers
- * keep these as EXTERN declarations, so we provide the actual definitions
- * here in the kernel translation unit that owns process management.
- */
+/* Process table storage for the CP32 port. */
 struct proc proc[NR_TASKS + NR_PROCS];
 struct proc *pproc_addr[NR_TASKS + NR_PROCS];
 struct proc *bill_ptr;
@@ -59,11 +47,11 @@ struct proc *rdy_tail[NQ];
 struct proc *held_head = NIL_PROC;
 struct proc *held_tail = NIL_PROC;
 
+ 
 /*===========================================================================*
  *				interrupt				     * 
  *===========================================================================*/
-PUBLIC void interrupt(task)
-int task;			/* number of task to be started */
+PUBLIC void interrupt(int task)
 {
   if (switching && task >= 0) {
     struct proc *rp = &proc[task];
@@ -80,7 +68,6 @@ int task;			/* number of task to be started */
     }
   } 
   
-  /* An interrupt has occurred.  Schedule the task that handles it. */
   int q;
   struct proc *rp = NIL_PROC;
   
@@ -95,65 +82,143 @@ int task;			/* number of task to be started */
   proc_ptr = rp;
   bill_ptr = rp;
 }
-
+ 
 /*===========================================================================*
  *				sys_call				     * 
  *===========================================================================*/
-PUBLIC int sys_call(function, src_dest, m_ptr)
-int function;			/* SEND, RECEIVE, or BOTH */
-int src_dest;			/* source to receive from or dest to send to */
-message *m_ptr;			/* pointer to message */
+PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 {
-/* The only system calls that exist in MINIX are sending and receiving
- * messages.  These are done by trapping to the kernel with an INT instruction.
- * The trap is caught and sys_call() is called to send or receive a message
- * (or both). The caller is always given by proc_ptr.
- */
-// to be implemented
-}
+  struct proc *rp = proc_ptr;
+  int result;
 
+  usbj_print("[SYS] sys_call: func=");
+  usbj_print_u32(function);
+  usbj_print(" src_dest=");
+  usbj_print_u32(src_dest);
+  usbj_print("\r\n");
+
+  if (function & SEND) {
+    result = mini_send(rp, src_dest, m_ptr);
+    if (!(function & RECEIVE)) return result;
+  }
+
+  if (function & RECEIVE) {
+    result = mini_rec(rp, src_dest, m_ptr);
+    return result;
+  }
+
+  return EBADCALL;
+}
+ 
 /*===========================================================================*
- *				send				     * 
+ *				mini_send				     * 
  *===========================================================================*/
-PUBLIC int send(dest, m_ptr)
-int dest;			/* to whom is message being sent? */
-message *m_ptr;			/* pointer to message buffer */
+PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
-  usbj_print("[IPC] send to proc[");
+  struct proc *dest_ptr, *next_ptr;
+
+  if (dest < 0 || dest >= NR_TASKS + NR_PROCS) return E_BAD_DEST;
+  dest_ptr = &proc[dest];
+  if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+
+  usbj_print("[IPC] mini_send: proc[");
+  usbj_print_u32(caller_ptr->p_nr);
+  usbj_print("] -> proc[");
   usbj_print_u32(dest);
-  usbj_print("] -> OK\r\n");
-  return OK;
-}
+  usbj_print("]\r\n");
 
+  if ((dest_ptr->p_flags & (RECEIVING | SENDING)) == RECEIVING &&
+      (dest_ptr->p_getfrom == ANY || dest_ptr->p_getfrom == caller_ptr->p_nr)) {
+    
+    mem_copy(caller_ptr->p_nr, (vir_bytes)m_ptr, dest, (vir_bytes)dest_ptr->p_messbuf, MESS_SIZE);
+    
+    dest_ptr->p_flags &= ~RECEIVING;
+    if (dest_ptr->p_flags == 0) ready(dest_ptr);
+    
+    usbj_print("[IPC] mini_send: delivered immediately\r\n");
+    return OK;
+  } else {
+    caller_ptr->p_messbuf = m_ptr;
+    caller_ptr->p_flags |= SENDING;
+    caller_ptr->p_sendto = dest;
+
+    if (caller_ptr->p_flags == 0) unready(caller_ptr);
+    
+    if (dest_ptr->p_callerq == NIL_PROC) {
+      dest_ptr->p_callerq = caller_ptr;
+    } else {
+      next_ptr = dest_ptr->p_callerq;
+      while (next_ptr->p_sendlink != NIL_PROC) {
+        next_ptr = next_ptr->p_sendlink;
+      }
+      next_ptr->p_sendlink = caller_ptr;
+    }
+    caller_ptr->p_sendlink = NIL_PROC;
+    
+    usbj_print("[IPC] mini_send: caller blocked\r\n");
+    return OK;
+  }
+}
+ 
 /*===========================================================================*
- *				receive				     * 
+ *				mini_rec				     * 
  *===========================================================================*/
-PUBLIC int receive(src, m_ptr)
-int src;			/* which message source is wanted (or ANY) */
-message *m_ptr;			/* pointer to message buffer */
+PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 {
-  usbj_print("[IPC] receive from proc[");
+  struct proc *sender_ptr;
+  struct proc *previous_ptr;
+
+  usbj_print("[IPC] mini_rec: proc[");
+  usbj_print_u32(caller_ptr->p_nr);
+  usbj_print("] src=");
   usbj_print_u32(src);
-  usbj_print("] -> OK\r\n");
+  usbj_print("\r\n");
+
+  if (!(caller_ptr->p_flags & SENDING)) {
+    for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
+         previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
+      if (src == ANY || src == sender_ptr->p_nr) {
+        
+        mem_copy(sender_ptr->p_nr, (vir_bytes)sender_ptr->p_messbuf, 
+                 caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE);
+
+        if (sender_ptr == caller_ptr->p_callerq)
+          caller_ptr->p_callerq = sender_ptr->p_sendlink;
+        else
+          previous_ptr->p_sendlink = sender_ptr->p_sendlink;
+
+        sender_ptr->p_flags &= ~SENDING;
+        if (sender_ptr->p_flags == 0) ready(sender_ptr);
+        
+        usbj_print("[IPC] mini_rec: delivered from proc[");
+        usbj_print_u32(sender_ptr->p_nr);
+        usbj_print("]\r\n");
+        return OK;
+      }
+    }
+  }
+
+  caller_ptr->p_getfrom = src;
+  caller_ptr->p_messbuf = m_ptr;
+  caller_ptr->p_flags |= RECEIVING;
+  
+  if (caller_ptr->p_flags == 0) unready(caller_ptr);
+  
+  usbj_print("[IPC] mini_rec: caller blocked\r\n");
   return OK;
 }
-
+ 
 /*===========================================================================*
  *				pick_proc				     * 
  *===========================================================================*/
 PRIVATE void pick_proc()
 {
-  /* Decide who to run now.  A new process is selected by setting 'proc_ptr'.
-   * We check queues in priority order: TASK_Q, SERVER_Q, USER_Q.
-   */
   int q;
   struct proc *rp = NIL_PROC;
 
   for (q = 0; q < NQ; q++) {
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
-      
-      /* Remove from head of the queue */
       rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) {
         rdy_tail[q] = NIL_PROC;
@@ -164,55 +229,38 @@ PRIVATE void pick_proc()
   }
 
   if (rp == NIL_PROC) {
-    /* Fallback to IDLE if no one is ready */
     rp = &proc[0]; 
   }
 
   proc_ptr = rp;
   bill_ptr = rp;
 }
-
+ 
 /*===========================================================================*
  *				ready					     * 
  *===========================================================================*/
-PRIVATE void ready(rp)
-register struct proc *rp;	/* this process is now runnable */
+PRIVATE void ready(struct proc *rp)
 {
-/* Add 'rp' to the end of one of the queues of runnable processes. Three
- * queues are maintained:
- *   TASK_Q   - (highest priority) for runnable tasks
- *   SERVER_Q - (middle priority) for MM and FS only
- *   USER_Q   - (lowest priority) for user processes
- */
   int q;
 
-  if (rp == NIL_PROC)
-    return;
-  if (rp->p_nr < NR_TASKS)
-    q = TASK_Q;
-  else if (rp->p_nr < NR_TASKS + LOW_USER)
-    q = SERVER_Q;
-  else
-    q = USER_Q;
+  if (rp == NIL_PROC) return;
+  if (rp->p_nr < NR_TASKS) q = TASK_Q;
+  else if (rp->p_nr < NR_TASKS + LOW_USER) q = SERVER_Q;
+  else q = USER_Q;
   
-  // Guard against uninitialized queues
   if (q < 0 || q >= NQ) return;
 
   rp->p_nextready = NIL_PROC;
-  if (rdy_tail[q] == NIL_PROC)
-    rdy_head[q] = rp;
-  else
-    rdy_tail[q]->p_nextready = rp;
+  if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
+  else rdy_tail[q]->p_nextready = rp;
   rdy_tail[q] = rp;
 }
-
+ 
 /*===========================================================================*
  *				unready					     * 
  *===========================================================================*/
-PRIVATE void unready(rp)
-register struct proc *rp;	/* this process is no longer runnable */
+PRIVATE void unready(struct proc *rp)
 {
-/* A process has blocked. */
   int q;
   struct proc *prev, *cur;
   if (rp == NIL_PROC) return;
@@ -233,20 +281,15 @@ register struct proc *rp;	/* this process is no longer runnable */
     cur = cur->p_nextready;
   }
 }
-
+ 
 /*===========================================================================*
  *				switch_to				     * 
  *===========================================================================*/
-PRIVATE void switch_to(next)
-struct proc *next;
+PRIVATE void switch_to(struct proc *next)
 {
-  /* Skeleton context switch: updates current process pointer.
-   * Real register saving/restoring will happen in assembly in Step 4.
-   */
   current_proc = next;
 }
-
-
+ 
 /*===========================================================================*
  *				sched					     * 
  *===========================================================================*/
@@ -255,78 +298,62 @@ void sched()
     if (current_proc != NIL_PROC && isuserp(current_proc)) {
         ready(current_proc);
     }
-    
     pick_proc();
     switch_to(proc_ptr);
 }
-
+ 
 /*==========================================================================*
  *				lock_mini_send				    *
  *==========================================================================*/
-PUBLIC int lock_mini_send(caller_ptr, dest, m_ptr)
-struct proc *caller_ptr;	/* who is trying to send a message? */
-int dest;			/* to whom is message being sent? */
-message *m_ptr;			/* pointer to message buffer */
+PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
-/* Safe gateway to mini_send() for tasks. */
   int result;
-
   switching = TRUE;
-  result = send(proc_ptr->p_nr, (message *)0); // updated to use send()
+  result = send(proc_ptr->p_nr, (message *)0); 
   switching = FALSE;
   return(result);
 }
-
+ 
 /*==========================================================================*
  *				lock_pick_proc				    *
  *==========================================================================*/
 PUBLIC void lock_pick_proc()
 {
-/* Safe gateway to pick_proc() for tasks. */
-
   switching = TRUE;
   pick_proc();
   switching = FALSE;
 }
-
+ 
 /*==========================================================================*
  *				lock_ready				    *
  *==========================================================================*/
-PUBLIC void lock_ready(rp)
-struct proc *rp;		/* this process is now runnable */
+PUBLIC void lock_ready(struct proc *rp)
 {
-/* Safe gateway to ready() for tasks. */
-
   switching = TRUE;
   ready(rp);
   switching = FALSE;
 }
-
+ 
 /*==========================================================================*
  *				lock_unready				    *
  *==========================================================================*/
-PUBLIC void lock_unready(rp)
-struct proc *rp;		/* this process is no longer runnable */
+PUBLIC void lock_unready(struct proc *rp)
 {
-/* Safe gateway to unready() for tasks. */
-
   switching = TRUE;
   unready(rp);
   switching = FALSE;
 }
-
+ 
 /*==========================================================================*
  *				lock_sched				    *
  *==========================================================================*/
 PUBLIC void lock_sched()
 {
-/* Safe gateway to sched() for tasks. */
-
   switching = TRUE;
   sched();
   switching = FALSE;
 }
-
+ 
 /*==========================================================================*
  *				unhold					    *
  *==========================================================================*/
@@ -347,4 +374,3 @@ PUBLIC void unhold()
     interrupt(rp->p_nr);
   }
 }
-

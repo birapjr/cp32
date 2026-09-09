@@ -1097,19 +1097,8 @@ vir_bytes bytes;		/* # of bytes to be copied */
 /*==========================================================================*
  *				numap					    *
  *==========================================================================*/
-PUBLIC phys_bytes numap(proc_nr, vir_addr, bytes)
-int proc_nr;			/* process number to be mapped */
-vir_bytes vir_addr;		/* virtual address in bytes within D seg */
-vir_bytes bytes;		/* # of bytes required in segment  */
-{
-/* Do umap() starting from a process number instead of a pointer.  This
- * function is used by device drivers, so they need not know about the
- * process table.  To save time, there is no 'seg' parameter. The segment
- * is always D.
- */
+// numap is now implemented in mm.c
 
-  return(umap(proc_addr(proc_nr), D, vir_addr, bytes));
-}
 
 
 #if (CHIP == INTEL)

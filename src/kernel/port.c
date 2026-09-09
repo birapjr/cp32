@@ -14,3 +14,13 @@ unsigned lost_ticks;
 clock_t tty_timeout;
 tty_t tty_table[NR_CONS + NR_RS_LINES + NR_PTYS];
 tty_t *tty_timelist;
+
+/* Temporary stubs to satisfy linker until Task 3.2 (sys_call) is complete */
+int _send(int dest, message *m) {
+    return send(dest, m);
+}
+
+int _receive(int src, message *m) {
+    return receive(src, m);
+}
+
