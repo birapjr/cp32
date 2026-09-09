@@ -20,6 +20,10 @@ struct stackframe_s {           /* proc_ptr points here */
   reg_t psw;			/* saved processor status */
   reg_t sp;			/* stack pointer */
 };
+
+/* Keep the assembly contract explicit: a[16], pc, psw, sp are contiguous. */
+typedef char cp32_stackframe_layout_must_be_76[
+  sizeof(struct stackframe_s) == 76 ? 1 : -1];
 #endif
 
 struct proc {

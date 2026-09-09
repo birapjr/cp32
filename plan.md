@@ -237,4 +237,36 @@ The following tasks address critical architectural gaps identified during the re
       handoff using the shared `struct stackframe_s` offsets.
 - [ ] Validate one process switch at a time and retain compact versioned
       `[CTX V8]` diagnostics.
+- [x] Centralize process-frame offsets and add a compile-time 76-byte layout
+      assertion; active switch diagnostics now report `[CTX V8]` and `a15ok`.
+- [x] Hardware validation passed: `[CTX V8 p=... sp=... a15ok=1]` appeared;
+      IPC/MM, syscall, and timer IRQ checks remained clean through 144 IRQs.
+- [ ] Prepare the first gated assembly context handoff test; do not enable it
+      in the normal IRQ path until its save/restore frame is independently
+      verified.
+- [x] Add non-mutating assembly probe `cp32_context_probe_pc()` and extend the
+      marker to `[CTX V8 ... pc=...]`; the real register handoff remains gated.
+- [x] Hardware validation passed: `[CTX V8 ... pc=1077348660]` reported a
+      valid target PC with `a15ok=1`; IPC/MM, syscall, and timer checks stayed
+      clean through 112 IRQs.
+- [ ] Extend the non-mutating probe to read target SP/PS before enabling any
+      live register restore.
+- [x] Extend the probe with assembly SP/PS readers and version the marker to
+      `[CTX V9]`; live register restoration remains gated.
+- [ ] Hardware-validate target PC/SP/PS and stack alignment.
+- [x] Hardware validation passed: `[CTX V9 p=... sp=1070284720 a15ok=1
+      ps=256 pc=1077348660]`; IPC/MM and syscall checks passed and timer
+      validation remained clean through 192 IRQs.
+- [ ] Run the first isolated register-restore experiment using a dedicated
+      gate and `[CTX V10]` marker; keep normal IRQ return unchanged.
+- [x] Add the gated V10 register contract check for saved `a0`, `a1`, `a15`,
+      target PC, and 16-byte SP alignment; live restoration remains disabled.
+- [x] Fix the V10 finding: initialize `p_reg.a[1]` from the aligned `p_reg.sp`
+      for every process, and bump the active marker to `[CTX V11]`.
+- [ ] Hardware-validate `a1 == sp` before enabling live register restoration.
+- [x] Hardware validation passed: `[CTX V11 ... a1=1070284736 sp=1070284736
+      spok=1]`; PC/PS and `a15` remained valid, with IPC/MM and timer checks
+      clean through 192 IRQs.
+- [ ] Implement the first gated live restore of only `a1`/`a15`; retain the
+      existing full IRQ restore as the default fallback and add `[CTX V12]`.
 - [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.

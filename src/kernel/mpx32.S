@@ -4,6 +4,7 @@
 # Author: Ubirajara Cortes
 # Date: 16.05.2026
 #
+#include "irq_const.h"
 
 #*====================================*
 #*    CP32 - Cardputer ESP32-S3 OS    *
@@ -117,6 +118,31 @@ switch_to:
     
     ret
     .size   switch_to, . - switch_to
+
+/* Gated V8 handoff probe: read the target PC without altering live context. */
+    .align 4
+    .global cp32_context_probe_pc
+    .type cp32_context_probe_pc, @function
+cp32_context_probe_pc:
+    l32i    a2, a2, CP32_REG_PC_OFFSET
+    ret
+    .size cp32_context_probe_pc, . - cp32_context_probe_pc
+
+    .align 4
+    .global cp32_context_probe_sp
+    .type cp32_context_probe_sp, @function
+cp32_context_probe_sp:
+    l32i    a2, a2, CP32_REG_SP_OFFSET
+    ret
+    .size cp32_context_probe_sp, . - cp32_context_probe_sp
+
+    .align 4
+    .global cp32_context_probe_ps
+    .type cp32_context_probe_ps, @function
+cp32_context_probe_ps:
+    l32i    a2, a2, CP32_REG_PSW_OFFSET
+    ret
+    .size cp32_context_probe_ps, . - cp32_context_probe_ps
 
 
 

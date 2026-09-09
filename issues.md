@@ -136,3 +136,15 @@ unexpected `e=1`.
 - V9 hardware validation passed: `[IMG V9]`, IPC/MM, `[SYS V6]`, and `[CTX V7]`
   all appeared; timer progress reached 224 IRQs with no exception. The
   transient counter skew at one sample self-corrected on the next report.
+- V8 context-layout validation passed: `[CTX V8 ... a15ok=1]` appeared and the
+  timer path remained clean through 144 IRQs. The real assembly handoff is
+  still gated and is the next context-switch step.
+- V8 assembly PC probe validated on hardware: `[CTX V8 ... pc=1077348660]`
+  appeared, with IPC/MM and timer checks clean through 112 IRQs. SP/PS probing
+  is the next gated step.
+- V9 SP/PS probe validated on hardware: `sp=1070284720`, `ps=256`,
+  `pc=1077348660`, `a15ok=1`; timer checks remained clean through 192 IRQs.
+  The live register-restore experiment remains gated.
+- V11 hardware validation passed: `a1` matched `sp` (`1070284736`), with valid
+  PC/PS and `a15`; IPC/MM and timer diagnostics remained clean through 192
+  IRQs. Next is the gated live `a1`/`a15` restore experiment.

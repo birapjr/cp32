@@ -142,6 +142,8 @@ void main(void) {
       // Server: Assign stack using a fixed offset from bottom
       rp->p_reg.sp = ((reg_t)_stack_bottom + 0x10000 + (t * 4096) + 4096) & ~0xF; // 16-byte align
     }
+    /* The live register frame must agree with the dedicated SP field. */
+    rp->p_reg.a[1] = rp->p_reg.sp;
 
     // 3. Initialize Memory Maps (Simplified for ESP32-S3 flat memory)
     rp->p_map[T].mem_phys = 0; 

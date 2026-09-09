@@ -20,6 +20,10 @@
 #include <minix/com.h>
 #include "proc.h"
 
+extern reg_t cp32_context_probe_pc(struct proc *next);
+extern reg_t cp32_context_probe_sp(struct proc *next);
+extern reg_t cp32_context_probe_ps(struct proc *next);
+
 void sched(void);
 
 /* Minimal scheduler stub for main to call. */
@@ -299,10 +303,22 @@ PRIVATE void switch_to(struct proc *next)
 {
     if (next == NIL_PROC) return;
     current_proc = next;
-    usbj_print("[CTX V7 p=");
+    usbj_print("[CTX V11 p=");
     usbj_print_u32((uint32_t)next->p_nr);
     usbj_print(" sp=");
-    usbj_print_u32((uint32_t)next->p_reg.sp);
+    usbj_print_u32((uint32_t)cp32_context_probe_sp(next));
+    usbj_print(" a15ok=");
+    usbj_print_u32(next->p_reg.a[15] != 0);
+    usbj_print(" ps=");
+    usbj_print_u32((uint32_t)cp32_context_probe_ps(next));
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)cp32_context_probe_pc(next));
+    usbj_print(" a0=");
+    usbj_print_u32((uint32_t)next->p_reg.a[0]);
+    usbj_print(" a1=");
+    usbj_print_u32((uint32_t)next->p_reg.a[1]);
+    usbj_print(" spok=");
+    usbj_print_u32((cp32_context_probe_sp(next) & 0x0F) == 0);
     usbj_print("]\r\n");
 }
 
