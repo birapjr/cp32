@@ -70,9 +70,6 @@ int task;			/* number of task to be started */
     if (rp->p_int_held == 0) {
       rp->p_int_held = 1;
       rp->p_nextheld = NIL_PROC;
-      usbj_print("[DEBUG] Interrupt held! task=");
-      usbj_print_u32(task);
-      usbj_print("\r\n");
       if (held_head == NIL_PROC) {
         held_head = rp;
         held_tail = rp;
@@ -81,26 +78,20 @@ int task;			/* number of task to be started */
         held_tail = rp;
       }
     }
-  } else {
-    usbj_print("[DEBUG] Interrupt normal! task=");
-    usbj_print_u32(task);
-    usbj_print("\r\n");
-  }
-
+  } 
+  
   /* An interrupt has occurred.  Schedule the task that handles it. */
   int q;
   struct proc *rp = NIL_PROC;
-
-  /* Lower queue number means higher priority. */
+  
   for (q = 0; q < NQ; q++) {
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
       break;
     }
   }
-  if (rp == NIL_PROC)
-    return;
-
+  if (rp == NIL_PROC) return;
+  
   proc_ptr = rp;
   bill_ptr = rp;
 }
@@ -261,16 +252,11 @@ struct proc *next;
  *===========================================================================*/
 void sched()
 {
-    /* Round-robin scheduling: 
-     * If the current process is a user process, move it to the end of its queue 
-     * so it doesn't hog the CPU if others in the same queue are ready.
-     */
     if (current_proc != NIL_PROC && isuserp(current_proc)) {
         ready(current_proc);
     }
     
     pick_proc();
-    
     switch_to(proc_ptr);
 }
 
@@ -349,6 +335,10 @@ PUBLIC void unhold()
   struct proc *rp;
   while (held_head != NIL_PROC) {
     rp = held_head;
+    usbj_print("[DEBUG] unhold() - processing held interrupt\r\n");
+    usbj_print(" task=");
+    usbj_print_u32(rp->p_nr);
+    usbj_print("\r\n");
     held_head = rp->p_nextheld;
     if (held_head == NIL_PROC)
       held_tail = NIL_PROC;

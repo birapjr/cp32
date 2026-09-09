@@ -28,6 +28,7 @@ struct proc {
   struct stackframe_s p_reg;	/* process' registers saved in stack frame */
 
   reg_t *p_stguard;		/* stack guard word */
+  reg_t p_shadow;		/* shadow pointer for MM */
 
   int p_nr;			/* number of this process (for fast access) */
 

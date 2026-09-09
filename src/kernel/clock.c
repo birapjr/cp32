@@ -424,11 +424,11 @@ int irq;
   if (tty_timeout <= now) tty_wakeup(now);
 
   /* Step 6: Switch to do_clocktick() if:
-   *   (a) an alarm has expired, OR
-   *   (b) the scheduling quantum is up AND the current bill_ptr has not
-   *       changed since last tick AND a user process is waiting to run.
-   * Occasional false positives are harmless (do_clocktick is idempotent).
-   */
+ *   (a) an alarm has expired, OR
+ *   (b) the scheduling quantum is up AND the current bill_ptr has not
+ *       changed since last tick AND a user process is waiting to run.
+ * Occasional false positives are harmless (do_clocktick is idempotent).
+ */
   if (next_alarm <= now ||
       sched_ticks == 1 &&
       bill_ptr == prev_ptr &&
@@ -462,7 +462,8 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
     cp32_clock_irq_frame_stack_calls++;
   
-  schedule();
+  /* Call the Minix clock handler instead of the raw schedule() stub */
+  clock_handler(0); 
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies
