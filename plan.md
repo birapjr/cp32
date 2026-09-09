@@ -321,3 +321,128 @@ The following tasks address critical architectural gaps identified during the re
       `gate=0`, IPC/MM and syscall checks passed, and timer diagnostics reached
       434 IRQs without an exception.
 - [ ] Add a compact `[SYS V]` diagnostic for the dispatch result.
+
+---
+
+# Authoritative continuation plan — CP32 on M5Stack Cardputer Adv
+
+This section supersedes the older high-level Task 3–5 checklist for new
+work. The entries above are retained as the historical implementation log;
+their unchecked probe items must not be reopened when a later hardware result
+already records them as passed. The current baseline is: the image reaches
+`main()`, the SYSTIMER IRQ frame is stable, IPC/MM and invalid syscall checks
+pass on hardware, and the V16 reduced restore experiment is stable. CP32 is
+still not a usable MINIX system.
+
+## Phase 0 — keep the baseline reproducible
+
+- [ ] Record the exact current image marker, toolchain version, ELF section
+      layout, flash command, serial device, and Cardputer board revision.
+- [ ] Separate diagnostic-only code from production paths with named build
+      gates; keep the clock-to-scheduler bridge disabled until Phase 1 passes.
+- [ ] For every phase: make the smallest change, run `make clean && make` in
+      `src/`, inspect `make headers`, `make segments`, and `make nm`, then flash
+      and record the marker plus `r/c/f/s/e` in `issues.md`.
+
+## Phase 1 — finish the kernel scheduler and context handoff
+
+This is the immediate missing step. Do not enable the normal clock handler or
+claim process execution until all of these are complete.
+
+- [ ] Define one authoritative `struct stackframe_s` contract shared by C,
+      `irq.S`, `mpx32.S`, and `proc.h`; assert every offset and total size.
+- [ ] Add a dedicated saved-frame field for the interrupted PC, PS, SP, `a0`,
+      `a1`, `a15`, and all registers required by the call0 ABI. Do not use a
+      magic DRAM address as a frame pointer.
+- [ ] Implement `sched()` as MINIX-style quantum/priority selection, including
+      queue removal, requeueing, `bill_ptr`, and idle fallback.
+- [ ] Implement a gated assembly `switch_to(old, new)` that saves the current
+      frame and restores the selected process without returning through the
+      diagnostic C boundary.
+- [ ] Run two deterministic kernel tasks with separate stacks and counters;
+      prove they alternate, resume at the correct PC, preserve registers, and
+      never corrupt the IRQ frame.
+- [ ] Enable the timer-to-scheduler bridge only after the isolated switch test
+      passes; validate 60 Hz progress, re-entry balance, queue integrity, and
+      idle fallback.
+
+## Phase 2 — make traps and IPC real
+
+- [ ] Complete Xtensa user exception/trap entry and document the user-frame
+      layout separately from the level-1 interrupt frame.
+- [ ] Route SEND, RECEIVE, and BOTH from the trap frame into `sys_call`, copy
+      the result back to the caller frame, and reject invalid privilege/cause/
+      function combinations.
+- [ ] Replace the current bring-up IPC call sequence with a blocking two-task
+      test: sender blocks, receiver wakes it, message contents and return values
+      are checked, and the ready queues are checked after each transition.
+- [ ] Implement `interrupt`, held-interrupt replay, locking boundaries, and
+      nested-entry policy using the MINIX `proc.c` behavior as the reference.
+
+## Phase 3 — activate the MINIX clock/task lifecycle
+
+- [ ] Port the relevant MINIX `clock.c` behavior onto ESP32-S3 SYSTIMER:
+      tick accounting, lost ticks, alarms, TTY timers, quantum expiration,
+      and deferred rescheduling.
+- [ ] Replace simplified process initialization with explicit task/server
+      descriptors, names, stacks, initial frames, maps, and privilege state.
+- [ ] Add a kernel panic/fatal path that preserves a short diagnostic marker
+      and never silently loops after an invariant failure.
+- [ ] Start one real kernel task through the scheduler, then add the system
+      task, clock task, and TTY task one at a time. Validate each transition on
+      hardware before adding the next.
+
+## Phase 4 — establish the Cardputer hardware abstraction
+
+Do not copy PC MINIX drivers directly. `driver.c`, BIOS access, 8259/PIT,
+8250 UART, VGA/console, and ATA/ floppy drivers are references for interfaces
+and state machines only; each device must be mapped to the Cardputer Adv
+hardware after checking its board documentation and a measured register test.
+
+- [ ] Add a small board configuration layer for the Cardputer Adv revision:
+      GPIOs, I2C buses, SPI host, USB Serial/JTAG, display controller, keyboard
+      controller, battery/power signals, and storage wiring.
+- [ ] Implement the lowest-risk diagnostic drivers first: USB console, GPIO,
+      I2C, SPI, and a monotonic delay/timeout facility. Keep all MMIO volatile
+      and document register offsets and clock/reset requirements.
+- [ ] Implement the keyboard input driver and interrupt/polling path; prove
+      debouncing, modifiers, key repeat policy, and a raw scancode/event test.
+- [ ] Implement the display driver with a framebuffer or bounded text console;
+      prove reset, initialization, pixel/text output, and recovery after a
+      malformed command.
+- [ ] Connect keyboard and display to the MINIX TTY line discipline while
+      retaining the USB console as the recovery/debug channel.
+
+## Phase 5 — storage, filesystem, and process loading
+
+- [ ] Choose and document the first persistent medium actually present on the
+      board (internal flash partition, SD, or another validated device). Add a
+      read-only block-device test before implementing writes.
+- [ ] Port the MINIX block-device interface and cache only after the chosen
+      medium has stable reads, bounds checks, and power-loss-safe error paths.
+- [ ] Port the MINIX filesystem structures and essential operations in this
+      order: superblock, inode lookup, directory read, open/close, read, then
+      write/create/unlink. Add an image-based host test for every operation.
+- [ ] Implement executable loading and user address-space setup for the CP32
+      flat-memory model; validate bounds, alignment, permissions, stack setup,
+      and initial user PC before launching any shell.
+
+## Phase 6 — minimal user space and usable system
+
+- [ ] Add the minimum syscall ABI and user library wrappers for TTY, process
+      creation/exit/wait, memory growth, file I/O, and time.
+- [ ] Boot one statically linked user program that prints a banner, reads a
+      line, and exits; validate the complete user trap → kernel → return path.
+- [ ] Implement a small shell with a bounded command parser and built-ins for
+      diagnostics, memory, processes, and files.
+- [ ] Add applications incrementally (test utilities first), then signals,
+      pipes, redirection, and job control only after the base shell is stable.
+
+## Definition of the first usable CP32 milestone
+
+- [ ] Cold boot reaches a versioned banner on USB console and Cardputer display.
+- [ ] Keyboard input is echoed through TTY; a shell command executes and exits.
+- [ ] At least one file can be read from validated persistent storage.
+- [ ] Two user processes can run, block on IPC or TTY, resume, and exit.
+- [ ] A stress run covering timer ticks, context switches, IPC, display output,
+      and repeated shell commands completes without exception or queue leak.
