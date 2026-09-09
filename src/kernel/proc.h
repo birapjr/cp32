@@ -15,12 +15,10 @@
  * and processor status.
  */
 struct stackframe_s {           /* proc_ptr points here */
-  reg_t a0;			/* saved scratch/return register */
-  reg_t retreg;			/* process return value */
-  reg_t fp;			/* frame pointer used by signal glue */
+  reg_t a[16];			/* general purpose registers a0-a15 */
   reg_t pc;			/* next instruction to execute */
-  reg_t sp;			/* stack pointer */
   reg_t psw;			/* saved processor status */
+  reg_t sp;			/* stack pointer */
 };
 #endif
 

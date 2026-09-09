@@ -170,31 +170,89 @@ irq_kernel:
 .global irq_level1
 .type   irq_level1, @function
 irq_level1:
-    /* Complete call0 scratch frame: a0 is held in EXCSAVE1 and a2-a15 are
-     * saved below.  This makes a future C handoff possible, but the probe
-     * remains assembly-only until the exception-frame policy is finished. */
+    /* Save full context to current process p_reg */
+    /* a1 is currently our stack pointer for the frame */
+    mov     a3, a1
     addi    a1, a1, -CP32_IRQ_FRAME_BYTES
-    s32i    a2, a1, CP32_IRQ_A2_OFFSET
-    s32i    a3, a1, CP32_IRQ_A3_OFFSET
-    s32i    a4, a1, CP32_IRQ_A4_OFFSET
-    s32i    a5, a1, CP32_IRQ_A5_OFFSET
-    s32i    a6, a1, CP32_IRQ_A6_OFFSET
-    s32i    a7, a1, CP32_IRQ_A7_OFFSET
-    s32i    a8, a1, CP32_IRQ_A8_OFFSET
-    s32i    a9, a1, CP32_IRQ_A9_OFFSET
-    s32i    a10, a1, CP32_IRQ_A10_OFFSET
-    s32i    a11, a1, CP32_IRQ_A11_OFFSET
-    s32i    a12, a1, CP32_IRQ_A12_OFFSET
-    s32i    a13, a1, CP32_IRQ_A13_OFFSET
-    s32i    a14, a1, CP32_IRQ_A14_OFFSET
-    s32i    a15, a1, CP32_IRQ_A15_OFFSET
-    /* Track interrupt nesting for the future MINIX clock handler. */
+    s32i    a3, a1, 4
+
+    /* 1. Save all registers to the temporary stack frame first */
+    /* Swap a3 with excsave1 so both the interrupted a0 and a3 survive. */
+    xsr     a3, excsave1
+    s32i    a3, a1, 0
+    s32i    a2, a1, 8
+    rsr     a3, excsave1
+    s32i    a3, a1, 12
+    s32i    a4, a1, 16
+    s32i    a5, a1, 20
+    s32i    a6, a1, 24
+    s32i    a7, a1, 28
+    s32i    a8, a1, 32
+    s32i    a9, a1, 36
+    s32i    a10, a1, 40
+    s32i    a11, a1, 44
+    s32i    a12, a1, 48
+    s32i    a13, a1, 52
+    s32i    a14, a1, 56
+    s32i    a15, a1, 60
+    
+    /* 2. Now load the base pointer to p_reg */
+    movi    a2, proc_ptr
+    l32i    a2, a2, 0          /* a2 = &proc[current].p_reg */
+    
+    /* 3. Copy from stack frame to p_reg */
+    mov     a3, a1
+    l32i    a4, a3, 0
+    s32i    a4, a2, 0          /* p_reg.a[0] */
+    l32i    a4, a3, 4
+    s32i    a4, a2, 4          /* p_reg.a[1] */
+    l32i    a4, a3, 8
+    s32i    a4, a2, 8          /* p_reg.a[2] */
+    l32i    a4, a3, 12
+    s32i    a4, a2, 12         /* p_reg.a[3] */
+    l32i    a4, a3, 16
+    s32i    a4, a2, 16         /* p_reg.a[4] */
+    l32i    a4, a3, 20
+    s32i    a4, a2, 20         /* p_reg.a[5] */
+    l32i    a4, a3, 24
+    s32i    a4, a2, 24         /* p_reg.a[6] */
+    l32i    a4, a3, 28
+    s32i    a4, a2, 28         /* p_reg.a[7] */
+    l32i    a4, a3, 32
+    s32i    a4, a2, 32         /* p_reg.a[8] */
+    l32i    a4, a3, 36
+    s32i    a4, a2, 36         /* p_reg.a[9] */
+    l32i    a4, a3, 40
+    s32i    a4, a2, 40         /* p_reg.a[10] */
+    l32i    a4, a3, 44
+    s32i    a4, a2, 44         /* p_reg.a[11] */
+    l32i    a4, a3, 48
+    s32i    a4, a2, 48         /* p_reg.a[12] */
+    l32i    a4, a3, 52
+    s32i    a4, a2, 52         /* p_reg.a[13] */
+    l32i    a4, a3, 56
+    s32i    a4, a2, 56         /* p_reg.a[14] */
+    l32i    a4, a3, 60
+    s32i    a4, a2, 60         /* p_reg.a[15] */
+    
+    /* Save PC and PS */
+    rsr     a3, epc1
+    s32i    a3, a2, 64          /* p_reg.pc */
+    rsr     a3, ps
+    s32i    a3, a2, 68          /* p_reg.psw */
+    
+    /* Save SP */
+    mov     a3, a1
+    s32i    a3, a2, 72           /* p_reg.sp */
+
+    
+    /* Track interrupt nesting */
     movi    a2, k_reenter
     l32i    a3, a2, 0
     addi    a3, a3, 1
     s32i    a3, a2, 0
-    /* Acknowledge TARGET0. Periodic mode keeps the source enabled and
-     * reloads the next deadline in hardware. */
+    
+    /* Acknowledge TARGET0 */
     movi    a2, 0x6002306C
     movi    a3, 1
     s32i    a3, a2, 0
@@ -202,35 +260,65 @@ irq_level1:
     l32i    a3, a2, 0
     addi    a3, a3, 1
     s32i    a3, a2, 0
-    /* Call the scheduler directly from the timer interrupt. */
+    
+    /* Call the scheduler */
     mov     a2, a1
+    /* Use current stack pointer as a base for a15 to avoid NULL dereference in printk */
+    mov     a15, a1
     call0   cp32_timer_irq_dispatch
+    
 1:
     movi    a2, k_reenter
     l32i    a3, a2, 0
     addi    a3, a3, -1
     s32i    a3, a2, 0
-    l32i    a15, a1, CP32_IRQ_A15_OFFSET
-    l32i    a14, a1, CP32_IRQ_A14_OFFSET
-    l32i    a13, a1, CP32_IRQ_A13_OFFSET
-    l32i    a12, a1, CP32_IRQ_A12_OFFSET
-    l32i    a11, a1, CP32_IRQ_A11_OFFSET
-    l32i    a10, a1, CP32_IRQ_A10_OFFSET
-    l32i    a9, a1, CP32_IRQ_A9_OFFSET
-    l32i    a8, a1, CP32_IRQ_A8_OFFSET
-    l32i    a7, a1, CP32_IRQ_A7_OFFSET
-    l32i    a6, a1, CP32_IRQ_A6_OFFSET
-    l32i    a5, a1, CP32_IRQ_A5_OFFSET
-    l32i    a4, a1, CP32_IRQ_A4_OFFSET
-    l32i    a3, a1, CP32_IRQ_A3_OFFSET
-    l32i    a2, a1, CP32_IRQ_A2_OFFSET
-    addi    a1, a1, CP32_IRQ_FRAME_BYTES
-    /* Level 1 arrived through the exception vector, so PS.EXCM is set.
-     * Return with RFE; RFI 1 is only for a dedicated level-1 interrupt
-     * vector and would re-enter the exception path on this core. */
-    rsr     a0, excsave1
+    
+    /* Restore registers from p_reg */
+    movi    a15, proc_ptr
+    l32i    a15, a15, 0
+    
+    /* Restore a14..a2 using a15 as constant base pointer */
+    l32i    a14, a15, 56
+    l32i    a13, a15, 52
+    l32i    a12, a15, 48
+    l32i    a11, a15, 44
+    l32i    a10, a15, 40
+    l32i    a9, a15, 36
+    l32i    a8, a15, 32
+    l32i    a7, a15, 28
+    l32i    a6, a15, 24
+    l32i    a5, a15, 20
+    l32i    a4, a15, 16
+    l32i    a3, a15, 12
+    l32i    a2, a15, 8
+    l32i    a1, a15, 4
+    
+    /* Restore a15 last */
+    l32i    a15, a15, 60
+    
+    /* Restore a0 from p_reg using a temporary register to avoid destroying a15 if needed, 
+     * but since we already restored a15, we must reload proc_ptr. */
+    movi    a14, proc_ptr
+    l32i    a14, a14, 0
+    l32i    a0, a14, 0
+    
+    /* Restore SP from p_reg */
+    l32i    a1, a14, 72
+
+    /* Safety: a call0 frame must have a non-null frame pointer. */
+    movi    a3, 0
+    beq     a15, a3, 1f
+    j       2f
+1:  mov     a15, a1
+2:
+    /* Restore PC and PS for rfi */
+    l32i    a14, a14, 64
+    wsr     a14, epc1
+    
     rsync
-    rfe
+    rfi 1
+
+
 .size irq_level1, .-irq_level1
 
 /* ── User exception ───────────────────────────────────────────────────── */

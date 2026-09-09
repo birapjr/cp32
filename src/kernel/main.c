@@ -66,6 +66,14 @@ void test_ipc_mm(void) {
 
 /* ── main ─────────────────────────────────────────────────────────────────────
  * Kernel entry point — called by the STEP 6 - call0   main - in mpx32.S. */
+void kernel_idle_loop(void) {
+    usbj_print("[IDLE] entered idle loop\r\n");
+    for (;;) {
+        wdt_feed_all();
+        delay(1000000);
+    }
+}
+
 void main(void) {
   status_line("main() starting", 0);
 
@@ -106,17 +114,29 @@ void main(void) {
     // 1. Assign Name (simplified since tasktab might not be fully ported)
     
     // 2. Initialize Registers
-    rp->p_reg.pc = 0x40000000; // Dummy entry point
+    rp->p_reg.pc = (reg_t)kernel_idle_loop; // Point to a valid execution loop
     rp->p_reg.psw = istaskp(rp) ? 0x100 : 0x0; // Simplified PSW
+    
+    /* Fix: Initialize all registers to 0 to avoid junk in p_reg */
+    memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
+    
+    /* Initialize a15 to a safe, non-null value for all processes.
+     * Many kernel functions (like printk) use a15 as a base pointer for frames.
+     * We point it to a safe region in DRAM to prevent null pointer exceptions. */
+    rp->p_reg.a[15] = 0x3FC00000; 
+    
+    /* Ensure the IDLE process (proc[0]) is explicitly handled if needed */
+    if (t == 0) {
+        rp->p_reg.pc = (reg_t)kernel_idle_loop;
+    }
     
     if (t < 0) {
       // Kernel Task: Assign stack from internal DRAM
-      rp->p_reg.sp = ktsb + 4096; // Give each task 4KB
+      rp->p_reg.sp = (ktsb + 4096) & ~0xF; // 16-byte align
       ktsb += 4096;
     } else {
-      // Server: Assign stack using a fixed offset from bottom for now 
-      // since _stack_top might be unavailable or improperly defined
-      rp->p_reg.sp = (reg_t)_stack_bottom + 0x10000 + (t * 4096) + 4096;
+      // Server: Assign stack using a fixed offset from bottom
+      rp->p_reg.sp = ((reg_t)_stack_bottom + 0x10000 + (t * 4096) + 4096) & ~0xF; // 16-byte align
     }
 
     // 3. Initialize Memory Maps (Simplified for ESP32-S3 flat memory)
@@ -170,9 +190,11 @@ void main(void) {
     for (;;) { }
   }
   usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
-   status_line("starting systimer interrupt probe", 0);
-   systimer_irq_start();
-   usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
+    status_line("starting systimer interrupt probe", 0);
+    proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
+    systimer_irq_start();
+    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
+
    
    test_ipc_mm();
 

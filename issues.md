@@ -106,3 +106,11 @@ make flash
 For every hardware test, record the marker and `r/c/f/s/e`. A regression is
 an exception, stalled counter, nonzero `r` after idle, `c/f/s` mismatch, or
 unexpected `e=1`.
+
+# Known Issues
+
+## Kernel Crash: EXCCAUSE 0x1D / EXCVADDR 0x0
+- **Symptom**: The system crashes with a LoadStore alignment or null pointer exception (`EXCCAUSE: 0x1D`, `EXCVADDR: 0x00000000`) shortly after the first periodic interrupt returns.
+- **Location**: `EPC1: 0x40375A9E` is the `s32i` in `delay()`, storing through the call0 frame pointer `a15`; it is not in `printk`.
+- **Cause**: The raw level-1 handler called `usbj_print_u32` before establishing a call0 frame and again immediately before `rfi`, corrupting interrupted call0 state. It also saved the post-allocation temporary frame address as the interrupted `a1`.
+- **Current State**: Removed both unsafe debug calls, preserve the pre-frame SP, and corrected the `a15 == 0` fallback. Rebuilt successfully; hardware validation remains pending.

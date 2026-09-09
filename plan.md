@@ -143,3 +143,21 @@ The following tasks address critical architectural gaps identified during the re
 **Change**: Connect `tty.c` to both the serial driver and the keyboard driver.
 **Verification**: Type commands on the keyboard and see them echoed on the display and serial console.
 
+---
+
+# Implementation Plan
+
+## Goal: Fix recurring kernel crash at `printk` during interrupt return
+
+### Completed
+- [x] Fix `irq_level1` save path (correctly save `a0-a15`).
+- [x] Fix `irq_level1` restore path (correctly restore `a1-a15`).
+- [x] Initialize `a15` to non-null value in `main.c` for all processes.
+- [x] Add safety fallback in `irq.S` to set `a15 = a1` if `a15` is `NULL`.
+- [x] Verify scheduler basic context switch to IDLE loop.
+
+### Next Steps
+- [x] **Analyze fault disassembly**: `0x40375A9E` is `delay()`'s `s32i` through the call0 frame pointer `a15`, not `printk`.
+- [x] **Fix IRQ call0 boundary**: Removed diagnostic C calls from the raw level-1 handler and preserved the interrupted SP before allocating the IRQ frame.
+- [x] **Fix `a15` validation**: The restore path now compares the restored frame pointer against zero instead of comparing it with `a0`.
+- [ ] **Hardware validation**: Flash the rebuilt image and verify repeated timer interrupts with no exception.

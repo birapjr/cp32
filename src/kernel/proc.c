@@ -22,11 +22,14 @@
 
 void sched(void);
 
-// Minimal scheduler stub for main to call.
+/* Minimal scheduler stub for main to call. */
+FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
+
 void schedule(void)
 {
     proc[1].p_nr = 1;
     proc[1].p_flags = 0; // Make it runnable
+    ready(&proc[1]);
     
     sched();
 }
@@ -228,13 +231,16 @@ PRIVATE void pick_proc()
     }
   }
 
-  if (rp == NIL_PROC) {
-    rp = &proc[0]; 
-  }
-
-  proc_ptr = rp;
-  bill_ptr = rp;
+    if (rp == NIL_PROC) {
+      rp = &proc[0]; 
+    }
+    usbj_print("[SCHED] picked proc nr ");
+    usbj_print_u32((uint32_t)rp->p_nr);
+    usbj_print("\r\n");
+    proc_ptr = rp;
+    bill_ptr = rp;
 }
+
  
 /*===========================================================================*
  *				ready					     * 
@@ -287,18 +293,22 @@ PRIVATE void unready(struct proc *rp)
  *===========================================================================*/
 PRIVATE void switch_to(struct proc *next)
 {
-  current_proc = next;
+    usbj_print("[SCHED] switch_to\r\n");
+    current_proc = next;
 }
+
  
 /*===========================================================================*
  *				sched					     * 
  *===========================================================================*/
 void sched()
 {
+    usbj_print("[SCHED] calling sched()\r\n");
     if (current_proc != NIL_PROC && isuserp(current_proc)) {
         ready(current_proc);
     }
     pick_proc();
+    usbj_print("[SCHED] picked proc\r\n");
     switch_to(proc_ptr);
 }
  

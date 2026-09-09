@@ -453,6 +453,7 @@ int irq;
 /* Called from the level-1 handler; disabled until scheduler handoff is safe. */
 PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 {
+  usbj_print("[IRQ] dispatch\r\n");
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;

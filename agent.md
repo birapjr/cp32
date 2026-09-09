@@ -10,7 +10,7 @@ The repository is currently kernel-focused. The long-term goal described by the 
 
 Before modifying kernel/assembly code:
 
-1. Identify the MINIX v2 original behavior.
+1. Identify the MINIX v2 original behavior. Use folder minix-2.0.0 as reference.
 2. Identify the ESP32-S3 architectural difference.
 3. Identify the CP32 invariant being preserved.
 4. Make the smallest testable change.
@@ -20,7 +20,15 @@ Before modifying kernel/assembly code:
    hardware validation result.
 8. Never replace bare-metal code with ESP-IDF unless explicitly requested.
 9. Update issues.md with hardware validation results.
-10. Do not combine unrelated subsystem changes.
+10. Update plan.md with tasks in progress, so next sessions can pick-up where was stopped
+10. Update plan.md with all completed task and validated on hardware.
+11. General Testing Procedure – For every change:
+11.1. Modify the code.
+11.2. `make clean && make` in `src/`.
+11.3. fix compilation errors
+11.4. jump back to 11.2. and repeat
+
+This incremental plan keeps each change small, build‑test‑validate cycles, and provides clear console output to aid human and agent debugging.
 
 ## Repository layout
 

@@ -1,6 +1,6 @@
 /* Constants safe to include from Xtensa assembly and C preprocessing. */
 #ifndef CP32_IRQ_FRAME_BYTES
-#define CP32_IRQ_FRAME_BYTES 64
+#define CP32_IRQ_FRAME_BYTES 80
 
 #define CP32_IRQ_A2_OFFSET  0
 #define CP32_IRQ_A3_OFFSET  4
