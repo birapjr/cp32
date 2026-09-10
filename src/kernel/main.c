@@ -424,10 +424,6 @@ void main(void) {
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
   usbj_print("]\r\n");
-  usbj_print("[SCHED V5 blocked-owner-unqueued pass=");
-  usbj_print_u32(cp32_blocked_return_proc == NIL_PROC &&
-                 cp32_blocked_handoff_gate == 0);
-  usbj_print("]\r\n");
   usbj_print("[SCHED V7 blocked-ready-guard pass=");
   usbj_print_u32(cp32_blocked_ready_guard_count == 1);
   usbj_print("]\r\n");

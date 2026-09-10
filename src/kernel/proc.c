@@ -50,6 +50,7 @@ volatile uint32_t cp32_sched_handoff_count;
 volatile uint32_t cp32_blocked_handoff_count;
 volatile int cp32_last_blocked_proc_nr;
 volatile struct proc *cp32_blocked_return_proc;
+volatile struct proc *cp32_irq_saved_owner;
 volatile int cp32_blocked_handoff_gate;
 volatile uint32_t cp32_blocked_ready_guard_count;
 volatile uint32_t cp32_ready_blocked_skip_count;

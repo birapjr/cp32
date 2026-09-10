@@ -199,6 +199,8 @@ irq_level1:
     /* 2. Now load the base pointer to p_reg */
     movi    a2, proc_ptr
     l32i    a2, a2, 0          /* a2 = &proc[current].p_reg */
+    movi    a3, cp32_irq_saved_owner
+    s32i    a2, a3, 0          /* preserve interrupted owner across dispatch */
     
     /* 3. Copy from stack frame to p_reg */
     mov     a3, a1
@@ -283,7 +285,7 @@ irq_level1:
     movi    a15, proc_ptr
     j       2f
 1:
-    movi    a15, current_proc
+    movi    a15, cp32_irq_saved_owner
 2:
     l32i    a15, a15, 0
     

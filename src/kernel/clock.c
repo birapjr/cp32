@@ -634,6 +634,23 @@ struct milli_state *msp;
 /*===========================================================================*
  *                              milli_elapsed                                 *
  *===========================================================================*/
+PRIVATE uint64_t cp32_u64_div_u32(uint64_t value, uint32_t divisor)
+{
+  uint64_t quotient = 0;
+  uint64_t remainder = 0;
+  int bit;
+
+  if (divisor == 0) return 0;
+  for (bit = 63; bit >= 0; bit--) {
+    remainder = (remainder << 1) | ((value >> bit) & 1u);
+    if (remainder >= divisor) {
+      remainder -= divisor;
+      quotient |= ((uint64_t)1 << bit);
+    }
+  }
+  return quotient;
+}
+
 PUBLIC unsigned milli_elapsed(msp)
 struct milli_state *msp;
 {
@@ -650,7 +667,7 @@ struct milli_state *msp;
  */
   uint64_t now   = systimer_unit0_read();
   uint64_t delta = now - msp->start_count;
-  return (unsigned)(delta / (SYSTIMER_CLK_HZ / 1000));
+  return (unsigned)cp32_u64_div_u32(delta, SYSTIMER_CLK_HZ / 1000);
 }
 
 /*===========================================================================*
