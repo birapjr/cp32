@@ -44,6 +44,7 @@ _PROTOTYPE( int sys_call, (int function, int src_dest, message *m_ptr)	);
 _PROTOTYPE( void unhold, (void)						);
 _PROTOTYPE( int cp32_probe_blocked_handoff, (void)			);
 _PROTOTYPE( void cp32_reset_handoff_diagnostics, (void)		);
+_PROTOTYPE( int cp32_probe_all_blocked_queue, (void)		);
 
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);

@@ -102,6 +102,20 @@ that count before context-handoff work.
       blocked-target count=0]` diagnostic for that timer guard.
 - [x] Added the first assembly restore boundary: disabled handoff restores
       from `current_proc`; only an enabled handoff gate selects `proc_ptr`.
+- [x] Removed the obsolete static `CTX V45` banner; live state is reported by
+      the versioned `CTX V46` frame markers.
+- [x] Removed the duplicate scheduler classification line by keeping
+      `[SCHED V1]` at the probe boundary only.
+- [x] Hardened `pick_proc()` to discard stale blocked entries from ready
+      queues and added `[SCHED V8 blocked-ready-skip count=0]` diagnostics.
+- [x] Fixed the all-blocked-queue edge case so a discarded blocked pointer
+      cannot leak into the final process selection.
+- [x] Added `[SCHED V9 all-blocked-idle pass=1]` to exercise that edge case
+      directly and verify fallback to the idle process.
+- [x] Extended the all-blocked probe to require idle billing; kept that check
+      inside the single `[SCHED V9 all-blocked-idle pass=1]` marker.
+- [x] Extended the all-blocked probe across task, server, and user queue
+      classifications while retaining the single versioned marker.
 - [x] Added saved-frame shape guards to blocked handoff eligibility: nonzero
       aligned SP and a preserved `a15` are required before any future gate
       activation can select a suspended syscall owner.

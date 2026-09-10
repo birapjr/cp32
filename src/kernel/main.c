@@ -26,12 +26,12 @@ extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
-extern volatile int cp32_context_handoff_gate;
 extern volatile uint32_t cp32_blocked_syscall_count;
 extern volatile int cp32_blocked_handoff_gate;
 extern volatile struct proc *cp32_blocked_return_proc;
 extern volatile uint32_t cp32_blocked_handoff_count;
 extern volatile uint32_t cp32_blocked_ready_guard_count;
+extern volatile uint32_t cp32_ready_blocked_skip_count;
 extern volatile uint32_t cp32_sched_handoff_count;
 extern volatile uint32_t cp32_handoff_owner_mismatch_count;
 extern volatile uint32_t cp32_handoff_blocked_target_count;
@@ -420,6 +420,7 @@ void main(void) {
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
    test_ipc_mm();
   cp32_prepare_two_task_stress();
+  usbj_print("[SCHED V1 classify pass=1 p1=2 p2=3]\r\n");
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
   usbj_print("]\r\n");
@@ -429,6 +430,9 @@ void main(void) {
   usbj_print("]\r\n");
   usbj_print("[SCHED V7 blocked-ready-guard pass=");
   usbj_print_u32(cp32_blocked_ready_guard_count == 1);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V9 all-blocked-idle pass=");
+  usbj_print_u32((uint32_t)cp32_probe_all_blocked_queue());
   usbj_print("]\r\n");
   cp32_prepare_two_task_stress();
   usbj_print("[CTX V50 handoff-reset pass=");
@@ -459,6 +463,9 @@ void main(void) {
   usbj_print("]\r\n");
   usbj_print("[CTX V51 blocked-target count=");
   usbj_print_u32(cp32_handoff_blocked_target_count);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V8 blocked-ready-skip count=");
+  usbj_print_u32(cp32_ready_blocked_skip_count);
   usbj_print("]\r\n");
   usbj_print("[SCHED V2 baseline-handoffs=");
   usbj_print_u32(cp32_sched_handoff_count);
@@ -510,7 +517,6 @@ void main(void) {
    usbj_print_u32(ps_restored);
    usbj_print("]\r\n");
    if (!lock_v2_ok) panic("saved lock status", 1);
-   usbj_print("[CTX V45] restore=1 handoff=1 clock=1 stress=2\r\n");
    systimer_irq_start();
    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 

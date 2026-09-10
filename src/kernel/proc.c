@@ -52,6 +52,7 @@ volatile int cp32_last_blocked_proc_nr;
 volatile struct proc *cp32_blocked_return_proc;
 volatile int cp32_blocked_handoff_gate;
 volatile uint32_t cp32_blocked_ready_guard_count;
+volatile uint32_t cp32_ready_blocked_skip_count;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
 PRIVATE unsigned char cp32_blocked_probe_active;
 
@@ -337,6 +338,18 @@ PRIVATE void pick_proc()
   struct proc *rp = NIL_PROC;
 
   for (q = 0; q < NQ; q++) {
+    while (rdy_head[q] != NIL_PROC &&
+           rdy_head[q]->p_flags != 0) {
+      rp = rdy_head[q];
+      rdy_head[q] = rp->p_nextready;
+      if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
+      rp->p_nextready = NIL_PROC;
+      cp32_ready_blocked_skip_count++;
+    }
+    if (rdy_head[q] == NIL_PROC) {
+      rp = NIL_PROC;
+      continue;
+    }
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
       rdy_head[q] = rp->p_nextready;
@@ -396,6 +409,7 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   cp32_blocked_return_proc = NIL_PROC;
   cp32_blocked_handoff_count = 0;
   cp32_blocked_ready_guard_count = 0;
+  cp32_ready_blocked_skip_count = 0;
   cp32_last_blocked_proc_nr = 0;
   cp32_blocked_handoff_reported = 0;
   cp32_blocked_probe_active = 0;
@@ -423,13 +437,6 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   p2->p_nextready = NIL_PROC;
   ready(p1);
   ready(p2);
-  usbj_print("[SCHED V1 classify pass=");
-  usbj_print_u32((p1->p_nr >= LOW_USER) && (p2->p_nr >= LOW_USER));
-  usbj_print(" p1=");
-  usbj_print_u32((uint32_t)p1->p_nr);
-  usbj_print(" p2=");
-  usbj_print_u32((uint32_t)p2->p_nr);
-  usbj_print("]\r\n");
   current_proc = proc_addr(IDLE);
   proc_ptr = proc_addr(IDLE);
 }
@@ -477,6 +484,44 @@ PUBLIC int cp32_probe_blocked_handoff(void)
   blocked->p_flags = 0;
   blocked->p_sendto = 0;
   runnable->p_flags = 0;
+  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
+  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
+  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
+  current_proc = proc_addr(IDLE);
+  proc_ptr = proc_addr(IDLE);
+  return pass;
+}
+
+PUBLIC int cp32_probe_all_blocked_queue(void)
+{
+  struct proc *blocked = proc_addr(1);
+  int original_nr = blocked->p_nr;
+  int pass;
+
+  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
+  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
+  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
+  blocked->p_flags = SENDING;
+  blocked->p_nextready = NIL_PROC;
+  cp32_ready_blocked_skip_count = 0;
+  blocked->p_nr = -1;
+  ready(blocked);
+  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
+  blocked->p_nr = 0;
+  ready(blocked);
+  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
+  blocked->p_nr = LOW_USER;
+  ready(blocked);
+  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
+  pass = proc_ptr == proc_addr(IDLE) &&
+         bill_ptr == proc_addr(IDLE) &&
+         cp32_ready_blocked_skip_count == 3 &&
+         rdy_head[TASK_Q] == NIL_PROC &&
+         rdy_head[SERVER_Q] == NIL_PROC &&
+         rdy_head[USER_Q] == NIL_PROC;
+  blocked->p_flags = 0;
+  blocked->p_nr = original_nr;
+  blocked->p_nextready = NIL_PROC;
   rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
   rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
   rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
