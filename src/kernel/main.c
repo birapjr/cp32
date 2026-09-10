@@ -486,7 +486,7 @@ void main(void) {
     usbj_print(" e=");
     usbj_print_u32((uint32_t) cp32_clock_irq_bridge_enabled);
     usbj_print("]");
-  if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
+    if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
       uint32_t cpu_interrupt;
       usbj_print(" [target_hi=");
       usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_HI_REG));
@@ -498,11 +498,9 @@ void main(void) {
         uint64_t counter = systimer_unit0_read();
         usbj_print(" now_hi=");
         usbj_print_hex32((uint32_t)(counter >> 32));
-      usbj_print(" now_lo=");
+        usbj_print(" now_lo=");
         usbj_print_hex32((uint32_t)counter);
-}
-
-
+      }
       usbj_print(" real_hi=");
       usbj_print_hex32(REG_READ(SYSTIMER_REAL_TARGET0_HI_REG));
       usbj_print(" real_lo=");
@@ -539,9 +537,9 @@ int n;
   __asm__ volatile("rsil %0, 15" : "=a"(saved_ps) : : "memory");
   usbj_print("[PANIC V1] halted\r\n");
   if (s != 0 && *s != 0) {
-	printf("\nKernel panic: %s",s);
-	if (n != NO_NUM) printf(" %d", n);
-	printf("\n");
+	  printf("\nKernel panic: %s",s);
+	  if (n != NO_NUM) printf(" %d", n);
+	    printf("\n");
   }
   for (;;) { __asm__ volatile("nop"); }
 }
