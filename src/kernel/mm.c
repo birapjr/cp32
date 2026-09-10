@@ -9,19 +9,26 @@
 PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
 {
     /* proc_nr is a MINIX process number, not a raw proc[] index. */
-    struct proc *rp = proc_addr(proc_nr);
+    struct proc *rp;
     int i;
 
+    if (!isokprocn(proc_nr) || len == 0 || len - 1 > (vir_bytes)-1 - vir)
+        return 0;
+    rp = proc_addr(proc_nr);
+    if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE)) return 0;
+
     for (i = 0; i < NR_SEGS; i++) {
-        if (rp->p_map[i].mem_len > 0 &&
-            vir >= (vir_bytes)rp->p_map[i].mem_vir &&
-            vir + len <= (vir_bytes)(rp->p_map[i].mem_vir +
-                                     ((vir_bytes)rp->p_map[i].mem_len << CLICK_SHIFT))) {
-            
-            phys_bytes phys = (phys_bytes)rp->p_map[i].mem_phys << CLICK_SHIFT;
-            phys += (vir - (vir_bytes)rp->p_map[i].mem_vir);
-            return phys;
-        }
+        uint64_t base = rp->p_map[i].mem_vir;
+        uint64_t size = (uint64_t)rp->p_map[i].mem_len << CLICK_SHIFT;
+        uint64_t offset;
+        uint64_t phys;
+        if ((uint64_t)vir < base) continue;
+        offset = (uint64_t)vir - base;
+        if (offset > size || (uint64_t)len > size - offset) continue;
+        phys = ((uint64_t)rp->p_map[i].mem_phys << CLICK_SHIFT) + offset;
+        if (phys > (phys_bytes)-1 || len - 1 > (phys_bytes)-1 - phys)
+            continue;
+        return (phys_bytes)phys;
     }
     return 0;
 }

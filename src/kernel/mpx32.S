@@ -156,12 +156,10 @@ cp32_context_probe_ps:
     .global lock
     .type   lock, @function
 lock:
-    movi    a2, 1              /* set INTLEVEL to 1 (mask all interrupts) */
-    wsr     a2, ps                  /* write to PS.INTLEVEL - wait, rsil is for PS.INTLEVEL */
-    /* For LX7, to disable interrupts, we typically use rsil or modify PS */
-    /* Let's use the correct rsil syntax: rsil a2, 0 (sets intlevel to 0) */
-    /* To disable, we want a higher level. */
-    rsil    a2, 1                  /* set INTLEVEL to 1 */
+    /* Like MINIX cli, mask interrupts without clearing unrelated status.
+     * This is the non-nesting lock/unlock API; saved-state locks are separate. */
+    rsil    a2, 15
+    rsync
     ret
     .size   lock, . - lock
 
@@ -176,5 +174,6 @@ lock:
     .type   unlock, @function
 unlock:
     rsil    a2, 0           /* read PS, then set INTLEVEL=0 (enable all interrupts) */
+    rsync
     ret
     .size   unlock, . - unlock

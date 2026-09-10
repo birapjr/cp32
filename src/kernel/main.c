@@ -61,6 +61,10 @@ void test_ipc_mm(void) {
     m1.m_type = 42;
     strcpy(m1.m3_ca1, "Hello IPC!");
 
+    /* Isolate the test maps: the bootstrap S map otherwise maps low virtual
+     * addresses (including 1), invalidating the unmapped-buffer test. */
+    memset(p1->p_map, 0, sizeof(p1->p_map));
+    memset(p2->p_map, 0, sizeof(p2->p_map));
     /* Map the actual kernel test buffers so mem_copy can validate them. */
     p1->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m1 & ~(CLICK_SIZE - 1);
     p1->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m1) >> CLICK_SHIFT;
@@ -158,6 +162,101 @@ void test_ipc_mm(void) {
     usbj_print_u32(pass);
     usbj_print("]\r\n");
     if (!pass) panic("IPC sendrec", 11);
+
+    /* Coalesced notification, followed by notification to a waiting task. */
+    proc_ptr = p1; /* p1 is SYN_ALRM_TASK; p2 is the reserved IDLE slot. */
+    interrupt(p1->p_nr);
+    interrupt(p1->p_nr);
+    pass = p1->p_int_blocked && proc_ptr == p1;
+    res = _receive(HARDWARE, &m1);
+    pass = pass && res == OK && !p1->p_int_blocked &&
+        p1->p_flags == 0 && m1.m_source == HARDWARE && m1.m_type == HARD_INT;
+    res = _receive(ANY, &m1);
+    pass = pass && res == OK && p1->p_flags == RECEIVING;
+    interrupt(p1->p_nr);
+    pass = pass && p1->p_flags == 0 && !p1->p_int_blocked &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT && proc_ptr == p1;
+    usbj_print("[IPC V12 interrupt pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC interrupt", 12);
+
+    /* Exercise held-list transitions before IRQ enable. This simulates the
+     * nesting counter only; it does not cause a physical nested interrupt. */
+    extern struct proc *held_head, *held_tail;
+    int saved_reenter = k_reenter;
+    res = _receive(HARDWARE, &m1);
+    k_reenter = 2;
+    interrupt(p1->p_nr);
+    interrupt(p1->p_nr);
+    pass = res == OK && p1->p_flags == RECEIVING && p1->p_int_held &&
+        held_head == p1 && held_tail == p1 && p1->p_nextheld == NIL_PROC;
+    unhold();
+    pass = pass && held_head == p1 && p1->p_flags == RECEIVING;
+    k_reenter = saved_reenter;
+    unhold();
+    pass = pass && held_head == NIL_PROC && held_tail == NIL_PROC &&
+        p1->p_nextheld == NIL_PROC && !p1->p_int_held &&
+        !p1->p_int_blocked && p1->p_flags == 0 &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT && proc_ptr == p1;
+    usbj_print("[IPC V13 held-replay pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC held replay", 13);
+
+    /* A waits for B; B's attempt to send back must fail without queueing B.
+     * Receiving A's original message must still recover both processes. */
+    res = _send(p2->p_nr, &m1);
+    proc_ptr = p2;
+    send_res = _send(p1->p_nr, &m2);
+    pass = res == OK && send_res == ELOCKED &&
+        p1->p_flags == SENDING && p2->p_flags == 0 &&
+        p2->p_callerq == p1 && p1->p_callerq == NIL_PROC &&
+        p1->p_sendlink == NIL_PROC;
+    recv_res = _receive(p1->p_nr, &m2);
+    pass = pass && recv_res == OK && p1->p_flags == 0 &&
+        p2->p_flags == 0 && p2->p_callerq == NIL_PROC &&
+        m2.m_source == p1->p_nr;
+    usbj_print("[IPC V14 deadlock pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC deadlock", 14);
+    pass = mini_send(p1, p2->p_nr, (message *)1) == EFAULT &&
+        mini_rec(p2, ANY, (message *)1) == EFAULT &&
+        numap(p1->p_nr, (vir_bytes)-8, MESS_SIZE) == 0 &&
+        numap(ANY, (vir_bytes)&m1, MESS_SIZE) == 0 &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        p1->p_callerq == NIL_PROC && p2->p_callerq == NIL_PROC;
+    usbj_print("[IPC V16 buffers pass=");
+    usbj_print_u32(pass);
+    usbj_print("][MM V11]\r\n");
+    if (!pass) panic("IPC buffers", 16);
+
+    /* A synthetic virtual base maps to m1's real backing page. Both pending
+     * and waiting-receiver delivery must translate, never dereference alias. */
+    vir_clicks original_base = p1->p_map[D].mem_vir;
+    p1->p_map[D].mem_vir = 0x10000000;
+    message *alias = (message *)(0x10000000 +
+        ((vir_bytes)&m1 - original_base));
+    proc_ptr = p1;
+    m1.m_source = 0;
+    m1.m_type = 0;
+    interrupt(p1->p_nr);
+    res = _receive(HARDWARE, alias);
+    pass = res == OK && !p1->p_int_blocked &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT;
+    m1.m_source = 0;
+    m1.m_type = 0;
+    res = _receive(HARDWARE, alias);
+    pass = pass && res == OK && p1->p_flags == RECEIVING;
+    interrupt(p1->p_nr);
+    pass = pass && p1->p_flags == 0 && !p1->p_int_blocked &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT;
+    p1->p_map[D].mem_vir = original_base;
+    usbj_print("[IPC V17 translated-irq pass=");
+    usbj_print_u32(pass);
+    usbj_print("][MM V12]\r\n");
+    if (!pass) panic("IPC translated IRQ", 17);
     proc_ptr = saved_proc;
 
     /* Exercise the dispatcher validation without changing process state. */
@@ -323,7 +422,22 @@ void main(void) {
    usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
    usbj_print("]\r\n");
    cp32_context_handoff_gate = 1;
-   usbj_print("[CTX V43] restore=1 handoff=1 clock=1 stress=2\r\n");
+   unsigned ps_before, ps_locked, ps_unlocked;
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_before));
+   lock();
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_locked));
+   unlock();
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_unlocked));
+   /* Restore boot mask before the timer is armed. */
+   __asm__ volatile("wsr %0, ps; rsync" : : "a"(ps_before) : "memory");
+   int lock_ok = (ps_locked & 15) == 15 && (ps_unlocked & 15) == 0 &&
+       (ps_locked & ~15u) == (ps_before & ~15u) &&
+       (ps_unlocked & ~15u) == (ps_before & ~15u);
+   usbj_print("[LOCK V1 pass=");
+   usbj_print_u32(lock_ok);
+   usbj_print("]\r\n");
+   if (!lock_ok) panic("status preservation", 1);
+   usbj_print("[CTX V45] restore=1 handoff=1 clock=1 stress=2\r\n");
    systimer_irq_start();
    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
@@ -420,9 +534,14 @@ int n;
  * kind of stuck.
  */
 
-  if (*s != 0) {
+  /* Preserve other PS fields while masking interrupts; panic never returns. */
+  unsigned saved_ps;
+  __asm__ volatile("rsil %0, 15" : "=a"(saved_ps) : : "memory");
+  usbj_print("[PANIC V1] halted\r\n");
+  if (s != 0 && *s != 0) {
 	printf("\nKernel panic: %s",s);
 	if (n != NO_NUM) printf(" %d", n);
 	printf("\n");
   }
+  for (;;) { __asm__ volatile("nop"); }
 }

@@ -1,5 +1,82 @@
 
-## Current handoff — 2026-09-10, IPC V11 / MM V9
+## Current handoff — 2026-09-10, LOCK V1 / CTX V45
+
+- [x] V17 hardware passed translated IRQ delivery; IRQ 144 reached with
+      t1=2645, t2=2575 and no reported exception.
+- [x] Replace lock's destructive PS write with rsil 15 / rsync; unlock uses
+      rsil 0 / rsync. This remains the non-nesting MINIX lock/unlock API.
+- [x] Clean build, ELF segments and lock/unlock disassembly verified; existing
+      libgcc ABI warning persists.
+- [x] Hardware: `[LOCK V1 pass=1]`, `[CTX V45]`; IRQ 176 reached with
+      t1=3234, t2=3156. Sampled frames retained a15ok=1, spok=1, rel=1;
+      IRQ samples showed r=1 inside the handler and f=1. No exception or
+      panic appeared; all emitted IPC regression checks passed.
+
+### Resume next session
+
+User requested a documentation-only pause after this result. No source change
+or rebuild was made for this handoff. This current summary takes precedence
+over stale pending checkboxes and overclaims in the historical log below.
+
+- [ ] Implement saved-state interrupt exclusion for IPC critical sections:
+      save PS, mask interrupts, restore the caller's original mask; do not use
+      unconditional unlock for nested callers. Verify against MINIX and the
+      active Xtensa entry/return path before integrating it.
+- [ ] Implement suspension/resumption inside send/receive/sendrec and validate
+      a task-owned exchange. Current wrappers return after setting flags;
+      boot tests simulate callers and do not prove suspended execution.
+- [ ] Correct scheduler process-number versus table-index classification and
+      validate ready queues/billing before claiming MINIX quantum scheduling.
+- [ ] Activate clock_task only after its blocking message loop is supported.
+
+Keep debug markers versioned for the next code change. Current markers:
+LOCK V1, CTX V45, IPC V17, MM V12, PANIC V1 (older regression markers remain).
+Physical nested IRQs, concurrent task IPC and the terminal panic path remain
+unvalidated. Existing libgcc ABI mismatch warning remains unresolved.
+
+- [x] V16 hardware passed buffers and previous checks; IRQ 128 reached with
+      t1=2351, t2=2289. Fatal panic path was not exercised by this success.
+- [x] Translate interrupt-message buffers in pending and waiting delivery;
+      retain pending notification and blocked state if translation fails.
+- [ ] Hardware: `[IPC V17 translated-irq pass=1][MM V12]` tests both paths
+      through a synthetic virtual alias backed by the actual message buffer.
+
+- [x] V15 failed on hardware: address 1 was mapped by bootstrap S (virtual
+      base 0); the test incorrectly assumed it was unmapped. Panic returned.
+- [x] Isolate boot IPC maps to mapped message buffers; make panic mask
+      interrupts, handle a null message, and halt permanently.
+- [ ] Hardware: `[IPC V16 buffers pass=1][MM V11]`, previous tests pass.
+      Any `[PANIC V1] halted` must stop further boot/IRQ output.
+
+- [x] V14 hardware passed; IRQ 144 reached with t1=2645, t2=2577.
+- [x] Validate IPC buffers before queueing; numap now checks process numbers
+      before indexing and uses wide subtraction-based range checks.
+- [x] Clean build and ELF segments passed; existing ABI warning remains.
+- [ ] Hardware: `[IPC V15 buffers pass=1][MM V10]`, prior tests still pass.
+      Task suspension remains the outstanding execution boundary.
+
+- [x] V13 hardware passed; IRQ 176 reached with t1=3234, t2=3158.
+- [x] Fix send-cycle detection to check caller identity before SENDING, as
+      MINIX does. Bound traversal and reject invalid links before indexing.
+- [ ] Hardware: `[IPC V14 deadlock pass=1]` verifies rejection of A→B→A
+      and recovery by receiving the original queued message.
+
+- [x] V12 hardware interrupt pass=1; IRQ 192 reached with t1=3528,
+      t2=3449 and no reported exception.
+- [x] V13 adds held-notification deduplication/defer/replay state checks;
+      clear p_nextheld on dequeue. Uses simulated k_reenter before IRQ enable.
+- [ ] Hardware: `[IPC V13 held-replay pass=1]`, previous checks still pass.
+      This does not validate real nested IRQ execution or task-level locking.
+
+- [x] V11 hardware passed SENDREC and prior tests, with continued counters
+      through IRQ 144 (t1=2646, t2=2576).
+- [x] Replace interrupt's unrelated ready-process selection with task-directed
+      HARD_INT delivery/coalescing; receive consumes pending notifications.
+      Held notifications replay at the outer timer dispatch boundary.
+- [x] Clean build passed, existing libgcc ABI warning remains.
+- [ ] Hardware: `[IPC V12 interrupt pass=1]`, `[CTX V44]`, advancing t1/t2.
+      Boot test covers pending and waiting-receiver cases; nested interrupts
+      and task-level concurrent IPC remain unvalidated.
 
 - [x] V10 hardware: gateway/rejection pass=1; IRQ 208 reached with
       t1=3823, t2=3736, no exception in supplied output.

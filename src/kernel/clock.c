@@ -480,6 +480,7 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
+  unhold();
 
   /* The process handoff is deliberately a second gate.  This keeps the
    * validated clock/IRQ bridge testable without selecting another process. */

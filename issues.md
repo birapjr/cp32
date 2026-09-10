@@ -1,5 +1,88 @@
 # CP32 Port – Current Issues and Handoff
 
+## LOCK V1 / CTX V45
+
+V17 passed on hardware through IRQ 144 (2645/2575). lock previously overwrote
+the complete PS with 1 before rsil, clearing unrelated status bits. It now
+uses rsil 15 and rsync; unlock uses rsil 0 and rsync. The pre-timer test checks
+mask levels and preservation of other PS bits, then restores the original PS.
+Clean build, segments and disassembly passed, with existing libgcc ABI warning.
+Hardware passed: `[LOCK V1 pass=1]` and `[CTX V45]` appeared. IRQ 176 reached
+with t1=3234, t2=3156; sampled frames retained a15ok=1, spok=1, rel=1.
+IRQ samples showed r=1 inside the handler and f=1; no panic or exception was
+reported. All emitted IPC regression checks passed. This API does not restore
+a caller's previous interrupt mask; nesting-safe IPC locks remain future work.
+
+Session paused at the user's request with documentation updates only. Next:
+implement saved-PS critical sections, then actual IPC suspension/resumption
+and a task-owned message exchange. Current wrappers only change blocked flags
+and return; simulated boot tests do not validate suspended execution. Correct
+scheduler process-number/index classification before claiming real MINIX
+quantum behavior. The clock task message loop is not yet active.
+
+Latest markers: LOCK V1, CTX V45, IPC V17, MM V12, PANIC V1. Keep markers
+updated on subsequent code changes. Real nested interrupts, concurrent task
+IPC, and terminal panic behavior remain unvalidated; the libgcc ABI warning
+is unresolved. This summary supersedes historical pending/validation claims.
+
+## IPC V17 / MM V12 — translated interrupt messages
+
+V16 passed on hardware through IRQ 128 (2351/2289). Interrupt delivery and
+pending receive previously wrote directly through virtual pointers. Both now
+translate the full message range and copy the HARDWARE/HARD_INT header to
+the physical buffer. Translation failure retains pending/blocked state.
+V17 tests both paths with a synthetic nonidentity virtual mapping and restores
+the mapping afterward. Hardware passed, including the latest LOCK V1/CTX V45
+run; the original translation test used CTX V44.
+
+## IPC V16 / MM V11 / PANIC V1 — V15 failure
+
+V15 failed: bootstrap S maps virtual 0..16383 to stack memory, so pointer 1
+was legitimately translated and queued. The boot test now clears inherited
+maps before installing its buffer maps. numap's bounds logic is unchanged.
+Panic previously returned; it now masks interrupts preserving other PS fields,
+prints PANIC V1, accepts null strings and loops forever. IRQ progress after
+the V15 panic is not a successful buffer-validation result. Hardware pending.
+
+## IPC V15 / MM V10 — buffer validation
+
+V14 passed on hardware through IRQ 144 (2645/2577). IPC primitives now reject
+unmapped message buffers before setting blocked flags or inserting queue links.
+numap validates process numbers before table lookup, rejects empty/wrapping
+ranges, and checks segment offsets/physical addresses using wide arithmetic.
+V15 tests unmapped send/receive buffers, wrapped ranges and an invalid process
+number without queue mutation. Clean build/ELF segments passed with existing
+ABI warning. Hardware pending; CTX V44 is unchanged.
+
+## IPC V14 — send deadlock correction
+
+V13 passed on hardware through IRQ 176 (3234/3158). The existing deadlock
+walk tested SENDING before caller identity, missing a runnable caller closing
+the cycle. V14 matches MINIX's identity-first order, bounds traversal, and
+validates send links. The new boot test checks ELOCKED without queue mutation
+and then drains the original message. Hardware pending; suspended IPC is
+still outstanding. CTX V44 remains unchanged.
+
+## IPC V13 — held notification replay
+
+V12 passed on hardware, with counter progress through IRQ 192 (3528/3449).
+V13 simulates k_reenter=2 before timer enable to check duplicate notification
+coalescing, deferred replay and eventual delivery to a waiting receiver.
+The test restores the original nesting count. unhold clears the removed
+entry's p_nextheld. Hardware pending; physical nesting and concurrent task
+IPC are still unvalidated. CTX V44 remains unchanged.
+
+## IPC V12 / CTX V44
+
+V11 passed on hardware through IRQ 144 (t1=2646, t2=2576). Interrupt now
+addresses the requested negative task number, coalesces pending notifications,
+and delivers HARDWARE/HARD_INT to an eligible receiver without replacing
+proc_ptr or bill_ptr. Receive consumes pending notifications. Held entries
+replay from timer dispatch; CP32 nesting uses task=0, outer IRQ=1.
+Boot checks use SYN_ALRM_TASK (not the reserved IDLE slot). Clean build passed
+with existing ABI warning; hardware and nested/concurrent paths are pending.
+Actual suspended IPC and the clock task message loop remain incomplete.
+
 ## IPC V11 — request/reply state coverage
 
 V10 passed gateway and rejection checks on hardware, with continued counter

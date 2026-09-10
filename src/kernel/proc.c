@@ -62,10 +62,23 @@ struct proc *held_tail = NIL_PROC;
 /*===========================================================================*
  *				interrupt				     * 
  *===========================================================================*/
+PRIVATE int interrupt_message(struct proc *rp, message *buffer)
+{
+  int header[2] = { HARDWARE, HARD_INT };
+  phys_bytes dst = numap(rp->p_nr, (vir_bytes)buffer, MESS_SIZE);
+  if (!dst) return EFAULT;
+  phys_copy((phys_bytes)header, dst, sizeof(header));
+  return OK;
+}
+
 PUBLIC void interrupt(int task)
 {
-  if (switching && task >= 0) {
-    struct proc *rp = &proc[task];
+  struct proc *rp;
+  if (!isokprocn(task) || task >= 0 || isidlehardware(task)) return;
+  rp = proc_addr(task);
+  if (rp->p_flags & P_SLOT_FREE) return;
+  /* CP32 uses 0 at task level and 1 in the outer IRQ (MINIX uses -1/0). */
+  if (switching || k_reenter > 1) {
     if (rp->p_int_held == 0) {
       rp->p_int_held = 1;
       rp->p_nextheld = NIL_PROC;
@@ -77,21 +90,22 @@ PUBLIC void interrupt(int task)
         held_tail = rp;
       }
     }
-  } 
-  
-  int q;
-  struct proc *rp = NIL_PROC;
-  
-  for (q = 0; q < NQ; q++) {
-    if (rdy_head[q] != NIL_PROC) {
-      rp = rdy_head[q];
-      break;
-    }
+    return;
   }
-  if (rp == NIL_PROC) return;
-  
-  proc_ptr = rp;
-  bill_ptr = rp;
+  if ((rp->p_flags & (RECEIVING | SENDING)) != RECEIVING ||
+      !isrxhardware(rp->p_getfrom)) {
+    rp->p_int_blocked = TRUE;
+    return;
+  }
+  if (interrupt_message(rp, rp->p_messbuf) != OK) {
+    rp->p_int_blocked = TRUE;
+    return;
+  }
+  rp->p_int_blocked = FALSE;
+  rp->p_flags &= ~RECEIVING;
+  if (rp->p_flags == 0) ready(rp);
+  /* IRQ return selects a frame after this notification; do not change the
+   * owner of the interrupted frame here. */
 }
  
 /*===========================================================================*
@@ -155,14 +169,19 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
   if (dest == caller_ptr->p_nr) return ELOCKED;
   dest_ptr = proc_addr(dest);
   if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+  if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
 
-  /* Reject a send cycle before blocking the caller. */
-  if (dest_ptr->p_flags & SENDING) {
-    next_ptr = proc_addr(dest_ptr->p_sendto);
-    while (next_ptr != NIL_PROC && (next_ptr->p_flags & SENDING)) {
-      if (next_ptr == caller_ptr) return ELOCKED;
-      next_ptr = proc_addr(next_ptr->p_sendto);
-    }
+  /* Check identity before SENDING: the caller closing a cycle is still
+   * runnable. Bound traversal so an already-corrupt cycle cannot hang IPC. */
+  next_ptr = dest_ptr;
+  for (int hops = 0; ; ++hops) {
+    if (next_ptr == caller_ptr) return ELOCKED;
+    if (!(next_ptr->p_flags & SENDING)) break;
+    if (hops >= NR_TASKS + NR_PROCS) return ELOCKED;
+    if (!isokprocn(next_ptr->p_sendto)) return E_BAD_DEST;
+    next_ptr = proc_addr(next_ptr->p_sendto);
+    if (next_ptr == NIL_PROC || (next_ptr->p_flags & P_SLOT_FREE))
+      return E_BAD_DEST;
   }
 
   if ((dest_ptr->p_flags & (RECEIVING | SENDING)) == RECEIVING &&
@@ -212,6 +231,7 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isoksrc_dest(src)) return E_BAD_SRC;
+  if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
 
   if (!(caller_ptr->p_flags & SENDING)) {
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
@@ -234,6 +254,13 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
         return OK;
       }
     }
+  }
+
+  if (!(caller_ptr->p_flags & SENDING) && caller_ptr->p_int_blocked &&
+      isrxhardware(src)) {
+    if (interrupt_message(caller_ptr, m_ptr) != OK) return EFAULT;
+    caller_ptr->p_int_blocked = FALSE;
+    return OK;
   }
 
   caller_ptr->p_getfrom = src;
@@ -359,7 +386,7 @@ PRIVATE void switch_to(struct proc *next)
     current_proc = next;
     handoff_diag_count++;
     if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
-    usbj_print("[CTX V43 p=");
+    usbj_print("[CTX V45 p=");
     usbj_print_u32((uint32_t)next->p_nr);
     if (next->p_nr == 1 || next->p_nr == 2) {
       usbj_print(" t=");
@@ -461,12 +488,13 @@ PUBLIC void lock_sched()
 PUBLIC void unhold()
 {
   struct proc *rp;
+  if (switching || k_reenter > 1) return;
   while (held_head != NIL_PROC) {
     rp = held_head;
     held_head = rp->p_nextheld;
     if (held_head == NIL_PROC)
       held_tail = NIL_PROC;
-    
+    rp->p_nextheld = NIL_PROC;
     rp->p_int_held = 0;
     interrupt(rp->p_nr);
   }
