@@ -16,6 +16,52 @@ that count before context-handoff work.
 - [x] Hardware passed restored CTX handoff and task progress through IRQ 240
       (`t1=4409`, `t2=4318`, `f=1`). Added `[SCHED V2 handoffs=...]` as the
       baseline for blocked-call context-return work.
+- [x] Hardware confirmed actual handoff counts in CTX (`h=1,32,64,96`) with
+      stable IRQ output through IRQ 112. Added a blocked-handoff counter for
+      the next suspended-IPC experiment.
+- [x] Hardware advanced CTX handoffs through `h=128` with `f=1`; CTX markers
+      now include `bh=` for blocked-call handoff accounting.
+- [x] Added a one-shot `[SCHED V3 blocked-handoff ...]` marker at the actual
+      blocked scheduler branch; it remains silent until true suspended IPC
+      execution reaches that branch.
+- [x] Added `cp32_last_blocked_proc_nr` so the first real blocked handoff can
+      identify its caller without increasing normal serial output.
+- [x] Hardware remained stable through IRQ 128 with `bh=0`; CTX markers now
+      include `bp=` for the recorded blocked caller when that path activates.
+- [x] Added `cp32_blocked_return_proc` at the syscall boundary; it records
+      the blocked caller whose suspended return must be resumed by the future
+      context handoff path.
+- [x] Clear the pending blocked-return owner when IPC delivery deblocks that
+      sender or receiver, preventing stale ownership across exchanges.
+- [x] Restricted blocked-handoff accounting to the exact process recorded by
+      `cp32_blocked_return_proc`, preventing unrelated blocked entries from
+      being counted as suspended syscall returns.
+- [x] Added disabled `cp32_blocked_handoff_gate` scaffolding at the syscall
+      boundary; it will remain off until returning through a blocked syscall's
+      saved frame is proven safe.
+- [x] When the current syscall enters SENDING/RECEIVING, `sys_call()` now
+      records that caller as `current_proc`, allowing the next timer scheduler
+      pass to observe and leave it blocked.
+- [x] Clear stale blocked-return ownership when the same process completes a
+      syscall without remaining blocked.
+- [x] Hardware remained stable through IRQ 112 with `bh=0 bp=0`; CTX markers
+      now include `bg=` to show the blocked-handoff gate state explicitly.
+- [x] Reset `cp32_blocked_handoff_gate` explicitly during stress setup so each
+      boot begins from the validated `bg=0` state.
+- [x] Reset blocked-return ownership, handoff counters, and one-shot reporting
+      state with the gate for deterministic repeated hardware runs.
+- [x] Added `[IPC V20 handoff-reset pass=1]` to verify those reset invariants
+      before enabling the live scheduler probe.
+- [x] Renamed the pre-IRQ `SCHED V2` output to
+      `[SCHED V2 baseline-handoffs=...]`; actual handoffs remain measured by
+      CTX `h=`.
+- [x] Latest hardware run passed IPC V20 and remained stable through IRQ 160
+      (`t1=2938`, `t2=2867`), with CTX `h=160`, `f=1`, `bh=0`, `bp=0`, and
+      `bg=0`. The next implementation boundary is true blocked syscall
+      return/context handoff.
+- [x] Restricted pending blocked-return ownership to the active `proc_ptr`,
+      so simulated calls from non-current processes cannot claim a live
+      suspended-return handoff.
 
 - [x] V17 hardware passed translated IRQ delivery; IRQ 144 reached with
       t1=2645, t2=2575 and no reported exception.

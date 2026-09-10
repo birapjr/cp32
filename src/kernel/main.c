@@ -27,6 +27,9 @@ extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
 extern volatile uint32_t cp32_blocked_syscall_count;
+extern volatile int cp32_blocked_handoff_gate;
+extern volatile struct proc *cp32_blocked_return_proc;
+extern volatile uint32_t cp32_blocked_handoff_count;
 extern volatile uint32_t cp32_sched_handoff_count;
 
 volatile uint32_t cp32_task1_ticks;
@@ -412,7 +415,12 @@ void main(void) {
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
    test_ipc_mm();
   cp32_prepare_two_task_stress();
-  usbj_print("[SCHED V2 handoffs=");
+  usbj_print("[IPC V20 handoff-reset pass=");
+  usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
+                 cp32_blocked_return_proc == NIL_PROC &&
+                 cp32_blocked_handoff_count == 0);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V2 baseline-handoffs=");
   usbj_print_u32(cp32_sched_handoff_count);
   usbj_print("]\r\n");
    usbj_print("[STK V1 p1=");

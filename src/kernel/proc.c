@@ -45,6 +45,11 @@ PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 PRIVATE unsigned handoff_diag_count;
 volatile uint32_t cp32_blocked_syscall_count;
 volatile uint32_t cp32_sched_handoff_count;
+volatile uint32_t cp32_blocked_handoff_count;
+volatile int cp32_last_blocked_proc_nr;
+volatile struct proc *cp32_blocked_return_proc;
+volatile int cp32_blocked_handoff_gate;
+PRIVATE unsigned char cp32_blocked_handoff_reported;
 
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
@@ -55,6 +60,14 @@ PRIVATE int proc_queue(struct proc *rp)
   if (rp->p_nr < 0) return TASK_Q;
   if (rp->p_nr < LOW_USER) return SERVER_Q;
   return USER_Q;
+}
+
+PRIVATE int blocked_handoff_eligible(struct proc *rp)
+{
+  return cp32_blocked_handoff_gate && rp != NIL_PROC &&
+         rp == cp32_blocked_return_proc &&
+         (rp->p_flags & (SENDING | RECEIVING)) != 0 &&
+         proc_ptr == rp;
 }
 
 /* Process table storage for the CP32 port. */
@@ -115,6 +128,7 @@ PUBLIC void interrupt(int task)
   }
   rp->p_int_blocked = FALSE;
   rp->p_flags &= ~RECEIVING;
+  if (cp32_blocked_return_proc == rp) cp32_blocked_return_proc = NIL_PROC;
   if (rp->p_flags == 0) ready(rp);
   /* IRQ return selects a frame after this notification; do not change the
    * owner of the interrupted frame here. */
@@ -146,11 +160,20 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 report:
   if (result == OK && (rp->p_flags & (SENDING | RECEIVING)) != 0) {
     cp32_blocked_syscall_count++;
+    if (proc_ptr == rp) {
+      cp32_blocked_return_proc = rp;
+      current_proc = rp;
+    }
     usbj_print("[IPC V18 blocked-state pass=1 flags=");
     usbj_print_u32((uint32_t)rp->p_flags);
     usbj_print(" n=");
     usbj_print_u32(cp32_blocked_syscall_count);
     usbj_print("]\r\n");
+    /* Deliberately disabled until the syscall return frame is proven safe. */
+    if (blocked_handoff_eligible(rp))
+      sched();
+  } else if (cp32_blocked_return_proc == rp) {
+    cp32_blocked_return_proc = NIL_PROC;
   }
   return result;
 }
@@ -206,6 +229,8 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     if (result != OK) return result;
     
     dest_ptr->p_flags &= ~RECEIVING;
+    if (cp32_blocked_return_proc == dest_ptr)
+      cp32_blocked_return_proc = NIL_PROC;
     if (dest_ptr->p_flags == 0) ready(dest_ptr);
     
     return OK;
@@ -258,6 +283,8 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 
         sender_ptr->p_sendlink = NIL_PROC;
         sender_ptr->p_flags &= ~SENDING;
+        if (cp32_blocked_return_proc == sender_ptr)
+          cp32_blocked_return_proc = NIL_PROC;
         if (sender_ptr->p_flags == 0) ready(sender_ptr);
         
         return OK;
@@ -339,6 +366,13 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   struct proc *p1 = proc_addr(1);
   struct proc *p2 = proc_addr(2);
 
+  /* Every bring-up run starts with experimental blocked-return handoff off. */
+  cp32_blocked_handoff_gate = 0;
+  cp32_blocked_return_proc = NIL_PROC;
+  cp32_blocked_handoff_count = 0;
+  cp32_last_blocked_proc_nr = 0;
+  cp32_blocked_handoff_reported = 0;
+
   for (q = 0; q < NQ; q++) {
     rdy_head[q] = NIL_PROC;
     rdy_tail[q] = NIL_PROC;
@@ -401,6 +435,7 @@ PRIVATE void switch_to(struct proc *next)
 {
     if (next == NIL_PROC) return;
     current_proc = next;
+    cp32_sched_handoff_count++;
     handoff_diag_count++;
     if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
     usbj_print("[CTX V45 p=");
@@ -425,6 +460,14 @@ PRIVATE void switch_to(struct proc *next)
     usbj_print_u32((cp32_context_probe_sp(next) & 0x0F) == 0);
     usbj_print(" gate=");
     usbj_print_u32((uint32_t)cp32_context_restore_gate);
+    usbj_print(" h=");
+    usbj_print_u32(cp32_sched_handoff_count);
+    usbj_print(" bh=");
+    usbj_print_u32(cp32_blocked_handoff_count);
+    usbj_print(" bp=");
+    usbj_print_u32((uint32_t)cp32_last_blocked_proc_nr);
+    usbj_print(" bg=");
+    usbj_print_u32((uint32_t)cp32_blocked_handoff_gate);
     usbj_print(" rel=");
     usbj_print_u32(next->p_reg.a[1] == next->p_reg.sp);
     usbj_print("]\r\n");
@@ -436,13 +479,21 @@ PRIVATE void switch_to(struct proc *next)
  *===========================================================================*/
 void sched()
 {
-    cp32_sched_handoff_count++;
     /* Requeue every runnable non-idle process. Restricting this to users
      * consumes the task queue after its first pick and starves task entries. */
     if (current_proc != NIL_PROC &&
         current_proc->p_flags == 0 &&
         !isidlehardware(current_proc->p_nr)) {
         ready(current_proc);
+    } else if (blocked_handoff_eligible(current_proc)) {
+        cp32_blocked_handoff_count++;
+        cp32_last_blocked_proc_nr = current_proc->p_nr;
+        if (!cp32_blocked_handoff_reported) {
+            cp32_blocked_handoff_reported = 1;
+            usbj_print("[SCHED V3 blocked-handoff pass=1 flags=");
+            usbj_print_u32((uint32_t)current_proc->p_flags);
+            usbj_print("]\r\n");
+        }
     }
     pick_proc();
     switch_to(proc_ptr);
