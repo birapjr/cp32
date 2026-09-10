@@ -43,6 +43,7 @@ _PROTOTYPE( void lock_unready, (struct proc *rp)			);
 _PROTOTYPE( int sys_call, (int function, int src_dest, message *m_ptr)	);
 _PROTOTYPE( void unhold, (void)						);
 _PROTOTYPE( int cp32_probe_blocked_handoff, (void)			);
+_PROTOTYPE( void cp32_reset_handoff_diagnostics, (void)		);
 
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);

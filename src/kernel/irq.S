@@ -276,7 +276,15 @@ irq_level1:
     s32i    a3, a2, 0
     
     /* Restore registers from p_reg */
+    /* Only a gated scheduler handoff may replace the interrupted owner. */
+    movi    a3, cp32_context_handoff_gate
+    l32i    a3, a3, 0
+    beqz    a3, 1f
     movi    a15, proc_ptr
+    j       2f
+1:
+    movi    a15, current_proc
+2:
     l32i    a15, a15, 0
     
     /* Restore general registers first, using a15 as the frame base. */

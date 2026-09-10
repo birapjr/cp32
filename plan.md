@@ -74,6 +74,34 @@ that count before context-handoff work.
 - [x] Guarded `ready()` against reinserting the exact blocked syscall owner
       while blocked handoff is active; the probe attempts that stale wakeup and
       emits `[SCHED V7 blocked-ready-guard pass=1]` after reset.
+- [x] Counted the guarded stale-wakeup rejection so `SCHED V7` now proves the
+      protection executed exactly once, not only that teardown ended cleanly.
+- [x] Required both existing context-restore and context-handoff gates before
+      blocked-return eligibility can select a suspended syscall owner.
+- [x] Exposed the context-handoff gate in the live context marker, bumping it
+      to `[CTX V46]` with `gate=` for restore and `hg=` for handoff state.
+- [x] Added `[CTX V47 gates-ready pass=1]` before stress startup to verify both
+      context gates are enabled when the live handoff loop begins.
+- [x] Required blocked-return eligibility to have matching `current_proc` and
+      `proc_ptr` ownership, preventing a split scheduler/frame handoff.
+- [x] Added `[CTX V48 owner-aligned pass=1]` at stress startup to expose the
+      initial scheduler/frame owner alignment.
+- [x] Added the same owner-alignment guard at the timer handoff call site;
+      scheduler selection is skipped if `current_proc` and `proc_ptr` diverge.
+- [x] Added a counter and `[CTX V49 owner-mismatch count=0]` diagnostic for
+      timer handoffs rejected due to split scheduler/frame ownership.
+- [x] Added an explicit reset entry point for the handoff diagnostic counter
+      and invoke it inside every stress setup boundary.
+- [x] Added `[CTX V50 handoff-reset pass=1]` after stress preparation to verify
+      that reset boundary on hardware.
+- [x] Extended the timer handoff guard to reject null scheduler/frame owners
+      as well as mismatched owners.
+- [x] Required the selected timer handoff target to have runnable flags before
+      entering `sched()` and the IRQ restore path.
+- [x] Added a blocked-target rejection counter and `[CTX V51
+      blocked-target count=0]` diagnostic for that timer guard.
+- [x] Added the first assembly restore boundary: disabled handoff restores
+      from `current_proc`; only an enabled handoff gate selects `proc_ptr`.
 - [x] Added saved-frame shape guards to blocked handoff eligibility: nonzero
       aligned SP and a preserved `a15` are required before any future gate
       activation can select a suspended syscall owner.

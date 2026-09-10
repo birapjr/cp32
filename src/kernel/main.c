@@ -26,11 +26,16 @@ extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
+extern volatile int cp32_context_handoff_gate;
 extern volatile uint32_t cp32_blocked_syscall_count;
 extern volatile int cp32_blocked_handoff_gate;
 extern volatile struct proc *cp32_blocked_return_proc;
 extern volatile uint32_t cp32_blocked_handoff_count;
+extern volatile uint32_t cp32_blocked_ready_guard_count;
 extern volatile uint32_t cp32_sched_handoff_count;
+extern volatile uint32_t cp32_handoff_owner_mismatch_count;
+extern volatile uint32_t cp32_handoff_blocked_target_count;
+extern struct proc *current_proc;
 
 volatile uint32_t cp32_task1_ticks;
 volatile uint32_t cp32_task2_ticks;
@@ -422,7 +427,13 @@ void main(void) {
   usbj_print_u32(cp32_blocked_return_proc == NIL_PROC &&
                  cp32_blocked_handoff_gate == 0);
   usbj_print("]\r\n");
+  usbj_print("[SCHED V7 blocked-ready-guard pass=");
+  usbj_print_u32(cp32_blocked_ready_guard_count == 1);
+  usbj_print("]\r\n");
   cp32_prepare_two_task_stress();
+  usbj_print("[CTX V50 handoff-reset pass=");
+  usbj_print_u32(cp32_handoff_owner_mismatch_count == 0);
+  usbj_print("]\r\n");
   usbj_print("[IPC V20 handoff-reset pass=");
   usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
                  cp32_blocked_return_proc == NIL_PROC &&
@@ -431,14 +442,23 @@ void main(void) {
   usbj_print("[SCHED V6 blocked-owner-unbilled pass=");
   usbj_print_u32(bill_ptr != cp32_blocked_return_proc);
   usbj_print("]\r\n");
-  usbj_print("[SCHED V7 blocked-ready-guard pass=");
-  usbj_print_u32(cp32_blocked_return_proc == NIL_PROC &&
-                 cp32_blocked_handoff_gate == 0);
-  usbj_print("]\r\n");
   usbj_print("[IPC V21 owner-reset pass=");
   usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
                  cp32_blocked_return_proc == NIL_PROC &&
                  cp32_blocked_handoff_count == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V47 gates-ready pass=");
+  usbj_print_u32(cp32_context_restore_gate == 1 &&
+                 cp32_context_handoff_gate == 1);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V48 owner-aligned pass=");
+  usbj_print_u32(current_proc == proc_ptr);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V49 owner-mismatch count=");
+  usbj_print_u32(cp32_handoff_owner_mismatch_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V51 blocked-target count=");
+  usbj_print_u32(cp32_handoff_blocked_target_count);
   usbj_print("]\r\n");
   usbj_print("[SCHED V2 baseline-handoffs=");
   usbj_print_u32(cp32_sched_handoff_count);

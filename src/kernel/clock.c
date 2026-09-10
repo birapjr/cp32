@@ -97,6 +97,14 @@ volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
 volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 volatile uint32_t cp32_clock_irq_frame_stack_calls;
+volatile uint32_t cp32_handoff_owner_mismatch_count;
+volatile uint32_t cp32_handoff_blocked_target_count;
+
+PUBLIC void cp32_reset_handoff_diagnostics(void)
+{
+  cp32_handoff_owner_mismatch_count = 0;
+  cp32_handoff_blocked_target_count = 0;
+}
 extern char _stack_bottom[];
 extern char _stack_top[];
 
@@ -485,10 +493,21 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   /* The process handoff is deliberately a second gate.  This keeps the
    * validated clock/IRQ bridge testable without selecting another process. */
   extern volatile int cp32_context_handoff_gate;
+  extern struct proc *current_proc;
   /* During the CP32 handoff probe, any runnable queue is eligible. The
    * previous TASK_Q-only gate starved synthetic user-range stress entries
    * after scheduler queue classification was corrected. */
   if (cp32_context_handoff_gate &&
+      (current_proc == NIL_PROC || proc_ptr == NIL_PROC ||
+       current_proc != proc_ptr))
+    cp32_handoff_owner_mismatch_count++;
+  if (cp32_context_handoff_gate && current_proc != NIL_PROC &&
+      proc_ptr != NIL_PROC && current_proc == proc_ptr &&
+      proc_ptr->p_flags != 0)
+    cp32_handoff_blocked_target_count++;
+  if (cp32_context_handoff_gate && current_proc != NIL_PROC &&
+      proc_ptr != NIL_PROC && current_proc == proc_ptr &&
+      proc_ptr->p_flags == 0 &&
       (!cp32_clock_irq_bridge_enabled ||
        rdy_head[TASK_Q] != NIL_PROC ||
        rdy_head[SERVER_Q] != NIL_PROC ||

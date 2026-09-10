@@ -24,8 +24,10 @@ extern reg_t cp32_context_probe_pc(struct proc *next);
 extern reg_t cp32_context_probe_sp(struct proc *next);
 extern reg_t cp32_context_probe_ps(struct proc *next);
 extern volatile int cp32_context_restore_gate;
+extern volatile int cp32_context_handoff_gate;
 extern volatile uint32_t cp32_task1_ticks;
 extern volatile uint32_t cp32_task2_ticks;
+extern struct proc *current_proc;
 
 void sched(void);
 
@@ -49,6 +51,7 @@ volatile uint32_t cp32_blocked_handoff_count;
 volatile int cp32_last_blocked_proc_nr;
 volatile struct proc *cp32_blocked_return_proc;
 volatile int cp32_blocked_handoff_gate;
+volatile uint32_t cp32_blocked_ready_guard_count;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
 PRIVATE unsigned char cp32_blocked_probe_active;
 
@@ -65,10 +68,11 @@ PRIVATE int proc_queue(struct proc *rp)
 
 PRIVATE int blocked_handoff_eligible(struct proc *rp)
 {
-  return cp32_blocked_handoff_gate && rp != NIL_PROC &&
+  return cp32_blocked_handoff_gate && cp32_context_restore_gate &&
+         cp32_context_handoff_gate && rp != NIL_PROC &&
          rp == cp32_blocked_return_proc &&
          (rp->p_flags & (SENDING | RECEIVING)) != 0 &&
-         proc_ptr == rp &&
+         proc_ptr == rp && current_proc == rp &&
          cp32_context_probe_sp(rp) != 0 &&
          (cp32_context_probe_sp(rp) & 0x0F) == 0 &&
          rp->p_reg.a[15] != 0;
@@ -367,7 +371,10 @@ PRIVATE void ready(struct proc *rp)
   int q;
 
   if (rp == NIL_PROC) return;
-  if (blocked_handoff_eligible(rp)) return;
+  if (blocked_handoff_eligible(rp)) {
+    cp32_blocked_ready_guard_count++;
+    return;
+  }
   q = proc_queue(rp);
   
   if (q < 0 || q >= NQ) return;
@@ -388,11 +395,13 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   cp32_blocked_handoff_gate = 0;
   cp32_blocked_return_proc = NIL_PROC;
   cp32_blocked_handoff_count = 0;
+  cp32_blocked_ready_guard_count = 0;
   cp32_last_blocked_proc_nr = 0;
   cp32_blocked_handoff_reported = 0;
   cp32_blocked_probe_active = 0;
   cp32_sched_handoff_count = 0;
   handoff_diag_count = 0;
+  cp32_reset_handoff_diagnostics();
 
   for (q = 0; q < NQ; q++) {
     rdy_head[q] = NIL_PROC;
@@ -511,7 +520,7 @@ PRIVATE void switch_to(struct proc *next)
     handoff_diag_count++;
     if (cp32_blocked_probe_active) return;
     if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
-    usbj_print("[CTX V45 p=");
+    usbj_print("[CTX V46 p=");
     usbj_print_u32((uint32_t)next->p_nr);
     if (next->p_nr == 1 || next->p_nr == 2) {
       usbj_print(" t=");
@@ -533,6 +542,8 @@ PRIVATE void switch_to(struct proc *next)
     usbj_print_u32((cp32_context_probe_sp(next) & 0x0F) == 0);
     usbj_print(" gate=");
     usbj_print_u32((uint32_t)cp32_context_restore_gate);
+    usbj_print(" hg=");
+    usbj_print_u32((uint32_t)cp32_context_handoff_gate);
     usbj_print(" h=");
     usbj_print_u32(cp32_sched_handoff_count);
     usbj_print(" bh=");
