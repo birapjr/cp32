@@ -62,6 +62,21 @@ that count before context-handoff work.
 - [x] Restricted pending blocked-return ownership to the active `proc_ptr`,
       so simulated calls from non-current processes cannot claim a live
       suspended-return handoff.
+- [x] Strengthened the blocked-handoff probe to require exact return-owner
+      identity while the gate is active; added `[IPC V21 owner-reset pass=1]`
+      after teardown verifies the owner and gate are cleared.
+- [x] Extended the probe to scan every ready queue and require the blocked
+      return owner is absent from runnable queues; added `[SCHED V5
+      blocked-owner-unqueued pass=1]` for the reset boundary.
+- [x] Extended the blocked-owner probe to require the scheduler billing target
+      is not the blocked return owner; added `[SCHED V6
+      blocked-owner-unbilled pass=1]`.
+- [x] Guarded `ready()` against reinserting the exact blocked syscall owner
+      while blocked handoff is active; the probe attempts that stale wakeup and
+      emits `[SCHED V7 blocked-ready-guard pass=1]` after reset.
+- [x] Added saved-frame shape guards to blocked handoff eligibility: nonzero
+      aligned SP and a preserved `a15` are required before any future gate
+      activation can select a suspended syscall owner.
 
 - [x] V17 hardware passed translated IRQ delivery; IRQ 144 reached with
       t1=2645, t2=2575 and no reported exception.

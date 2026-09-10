@@ -415,7 +415,27 @@ void main(void) {
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
    test_ipc_mm();
   cp32_prepare_two_task_stress();
+  usbj_print("[SCHED V4 blocked-probe pass=");
+  usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V5 blocked-owner-unqueued pass=");
+  usbj_print_u32(cp32_blocked_return_proc == NIL_PROC &&
+                 cp32_blocked_handoff_gate == 0);
+  usbj_print("]\r\n");
+  cp32_prepare_two_task_stress();
   usbj_print("[IPC V20 handoff-reset pass=");
+  usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
+                 cp32_blocked_return_proc == NIL_PROC &&
+                 cp32_blocked_handoff_count == 0);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V6 blocked-owner-unbilled pass=");
+  usbj_print_u32(bill_ptr != cp32_blocked_return_proc);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V7 blocked-ready-guard pass=");
+  usbj_print_u32(cp32_blocked_return_proc == NIL_PROC &&
+                 cp32_blocked_handoff_gate == 0);
+  usbj_print("]\r\n");
+  usbj_print("[IPC V21 owner-reset pass=");
   usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
                  cp32_blocked_return_proc == NIL_PROC &&
                  cp32_blocked_handoff_count == 0);
