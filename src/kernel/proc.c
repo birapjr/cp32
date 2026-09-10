@@ -19,6 +19,7 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
+#include "irq_frame.h"
 
 extern reg_t cp32_context_probe_pc(struct proc *next);
 extern reg_t cp32_context_probe_sp(struct proc *next);
@@ -55,6 +56,7 @@ volatile int cp32_blocked_handoff_gate;
 volatile uint32_t cp32_blocked_ready_guard_count;
 volatile uint32_t cp32_ready_blocked_skip_count;
 volatile uint32_t cp32_blocked_frame_mismatch_count;
+volatile int cp32_user_trap_gate;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
 PRIVATE unsigned char cp32_blocked_probe_active;
 
@@ -65,6 +67,19 @@ PRIVATE int cp32_blocked_frame_restore_ready(struct proc *rp)
          rp->p_blocked_frame_pc == rp->p_reg.pc &&
          rp->p_blocked_frame_psw == rp->p_reg.psw &&
          rp->p_blocked_frame_sp == rp->p_reg.sp;
+}
+
+/* C-side boundary for the future user exception handler.  Until irq_user
+ * supplies a trusted owner/cause and a real saved frame, dispatch is refused
+ * deliberately rather than treating an IRQ frame as a user syscall frame. */
+PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
+                                   cp32_user_frame_t *frame, int cause)
+{
+  if (owner == NIL_PROC || frame == (cp32_user_frame_t *)0 || cause < 0 ||
+      !cp32_user_frame_contract_valid(frame)) return EINVAL;
+  if (owner != proc_ptr || owner->p_flags != 0) return EINVAL;
+  if (!cp32_user_trap_gate) return EBADCALL;
+  return EBADCALL;
 }
 
 /* Complete the data portion of a blocked syscall wakeup.  Scheduling and
@@ -447,6 +462,7 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   cp32_blocked_ready_guard_count = 0;
   cp32_ready_blocked_skip_count = 0;
   cp32_blocked_frame_mismatch_count = 0;
+  cp32_user_trap_gate = 0;
   cp32_last_blocked_proc_nr = 0;
   cp32_blocked_handoff_reported = 0;
   cp32_blocked_probe_active = 0;

@@ -49,6 +49,17 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
       entry and end-to-end return validation.
 - [x] Added a distinct user/trap frame contract and `[CTX V59
       user-frame-contract pass=1]`; trap entry wiring remains pending.
+- [x] Added the shared runtime user-frame validator used by V59; the user
+      exception vector remains terminal until trap restore is implemented.
+- [x] Added a guarded C-side user-trap dispatch boundary; it validates owner,
+      cause, and frame shape but returns `EBADCALL` until `irq_user` is wired.
+- [x] Added `[CTX V60 trap-boundary-guard pass=1]` to verify invalid trap
+      inputs fail closed before syscall dispatch.
+- [x] Added `[CTX V61 trap-dispatch-pending pass=1]` to verify valid frames
+      reach the guarded boundary and remain intentionally undispatched.
+- [x] Added an explicit disabled user-trap gate and `[CTX V62
+      user-trap-gate pass=1]`; it will remain off until `irq_user` constructs
+      and validates a real frame.
 - [ ] Add hardware markers for blocked-frame save, wake, restore, and resumed
       syscall return.
 

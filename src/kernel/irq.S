@@ -355,6 +355,48 @@ irq_user:
     rsr     a3, excvaddr
     rsr     a4, epc1
     rsr     a5, ps
+    /* Preserve the interrupted user SP and a0 before switching to the
+     * kernel diagnostic stack.  The frame is terminal-only until the user
+     * trap gate and rfe path are validated end to end. */
+    mov     a6, a1
+    mov     a7, a0
+    mov     a9, a2             /* exception cause */
+    movi    a1, _stack_top
+    addi    a1, a1, -128       /* 16-byte aligned 76-byte user frame */
+    s32i    a7, a1, 0          /* a0 */
+    s32i    a6, a1, 4          /* interrupted user a1/sp */
+    s32i    a9, a1, 8          /* a2 carries cause until C boundary */
+    s32i    a3, a1, 12         /* a3 */
+    s32i    a4, a1, 16         /* a4 */
+    s32i    a5, a1, 20         /* a5 */
+    s32i    a6, a1, 24         /* a6 */
+    s32i    a7, a1, 28         /* a7 */
+    s32i    a8, a1, 32         /* a8 */
+    s32i    a9, a1, 36         /* a9 */
+    s32i    a10, a1, 40
+    s32i    a11, a1, 44
+    s32i    a12, a1, 48
+    s32i    a13, a1, 52
+    s32i    a14, a1, 56
+    s32i    a15, a1, 60
+    rsr     a4, epc1
+    s32i    a4, a1, 64         /* saved PC */
+    rsr     a5, ps
+    s32i    a5, a1, 68         /* saved PS */
+    s32i    a6, a1, 72         /* saved user SP */
+
+    /* call0 arguments: owner, frame, exception cause. */
+    movi    a2, proc_ptr
+    l32i    a2, a2, 0
+    mov     a3, a1
+    mov     a4, a9
+    call0   cp32_user_trap_dispatch
+
+    /* The boundary is currently fail-closed; retain the established dump. */
+    rsr     a2, exccause
+    rsr     a3, excvaddr
+    rsr     a4, epc1
+    rsr     a5, ps
     movi    a1, _stack_top
     addi    a1, a1, -16
     call0   exception_dump

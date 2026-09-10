@@ -88,4 +88,10 @@ typedef char cp32_user_frame_pc_offset_must_be_64[
 typedef char cp32_user_frame_sp_offset_must_be_72[
     __builtin_offsetof(cp32_user_frame_t, sp) == 72 ? 1 : -1];
 
+static inline int cp32_user_frame_contract_valid(const cp32_user_frame_t *frame)
+{
+  return frame != (const cp32_user_frame_t *)0 && frame->pc != 0 &&
+         frame->sp != 0 && (frame->sp & 0x0F) == 0;
+}
+
 #endif

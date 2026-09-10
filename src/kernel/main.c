@@ -34,6 +34,7 @@ extern volatile uint32_t cp32_blocked_handoff_count;
 extern volatile uint32_t cp32_blocked_ready_guard_count;
 extern volatile uint32_t cp32_ready_blocked_skip_count;
 extern volatile uint32_t cp32_blocked_frame_mismatch_count;
+extern volatile int cp32_user_trap_gate;
 extern volatile uint32_t cp32_sched_handoff_count;
 extern volatile uint32_t cp32_handoff_owner_mismatch_count;
 extern volatile uint32_t cp32_handoff_blocked_target_count;
@@ -506,7 +507,24 @@ void main(void) {
   usbj_print("[CTX V59 user-frame-contract pass=");
   usbj_print_u32(sizeof(cp32_user_frame_t) == 76 &&
                  __builtin_offsetof(cp32_user_frame_t, pc) == 64 &&
-                 __builtin_offsetof(cp32_user_frame_t, sp) == 72);
+                 __builtin_offsetof(cp32_user_frame_t, sp) == 72 &&
+                 cp32_user_frame_contract_valid(
+                   (const cp32_user_frame_t *)&proc_addr(1)->p_reg));
+  usbj_print("]\r\n");
+  usbj_print("[CTX V60 trap-boundary-guard pass=");
+  usbj_print_u32(cp32_user_trap_dispatch(NIL_PROC, (cp32_user_frame_t *)0,
+                                         -1) == EINVAL);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V61 trap-dispatch-pending pass=");
+  usbj_print_u32(proc_ptr != NIL_PROC &&
+                 cp32_user_frame_contract_valid(
+                   (const cp32_user_frame_t *)&proc_ptr->p_reg) &&
+                 cp32_user_trap_dispatch(
+                   proc_ptr, (cp32_user_frame_t *)&proc_ptr->p_reg, 0) ==
+                   EBADCALL);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V62 user-trap-gate pass=");
+  usbj_print_u32(cp32_user_trap_gate == 0);
   usbj_print("]\r\n");
   usbj_print("[CTX V49 owner-mismatch count=");
   usbj_print_u32(cp32_handoff_owner_mismatch_count);
