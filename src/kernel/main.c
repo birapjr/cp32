@@ -54,16 +54,20 @@ void test_ipc_mm(void) {
     struct proc *p2 = &proc[2];
 
     message m1, m2;
+    struct proc *saved_proc = proc_ptr;
     memset(&m1, 0, sizeof(message));
-    strcpy((char*)&m1, "Hello IPC!");
+    memset(&m2, 0, sizeof(message));
+    m1.m_source = 12345; /* Forged source must be replaced by the kernel. */
+    m1.m_type = 42;
+    strcpy(m1.m3_ca1, "Hello IPC!");
 
     /* Map the actual kernel test buffers so mem_copy can validate them. */
     p1->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m1 & ~(CLICK_SIZE - 1);
     p1->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m1) >> CLICK_SHIFT;
-    p1->p_map[D].mem_len = (sizeof(m1) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+    p1->p_map[D].mem_len = (((vir_bytes)&m1 & (CLICK_SIZE - 1)) + sizeof(m1) + CLICK_SIZE - 1) >> CLICK_SHIFT;
     p2->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m2 & ~(CLICK_SIZE - 1);
     p2->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m2) >> CLICK_SHIFT;
-    p2->p_map[D].mem_len = (sizeof(m2) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+    p2->p_map[D].mem_len = (((vir_bytes)&m2 & (CLICK_SIZE - 1)) + sizeof(m2) + CLICK_SIZE - 1) >> CLICK_SHIFT;
     
     usbj_print("[TEST] IPC send/receive: ");
     
@@ -74,15 +78,87 @@ void test_ipc_mm(void) {
      * exercises the MINIX wakeup path instead of only immediate delivery. */
     proc_ptr = p2;
     int res = _receive(p1->p_nr, &m2);
+    int blocked = p2->p_flags == RECEIVING;
     proc_ptr = p1;
     int send_res = _send(p2->p_nr, &m1);
+    usbj_print_u32((uint32_t)res);
     usbj_print("/");
     usbj_print_u32((uint32_t)send_res);
     usbj_print(" (send/receive, flags=");
     usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
     usbj_print(", text=");
-    usbj_print((char *)&m2);
-    usbj_print(") [IPC V8][MM V8]\r\n\r\n");
+    usbj_print(m2.m3_ca1);
+    int pass = res == OK && send_res == OK && blocked &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        m2.m_source == p1->p_nr && m2.m_type == 42 &&
+        strcmp(m2.m3_ca1, "Hello IPC!") == 0 && m1.m_source == 12345;
+    usbj_print(") [IPC V9 receiver-first pass=");
+    usbj_print_u32(pass);
+    usbj_print("][MM V9]\r\n");
+    if (!pass) panic("IPC receiver-first", 9);
+
+    memset(&m2, 0, sizeof(m2));
+    res = _send(p2->p_nr, &m1);
+    blocked = p1->p_flags == SENDING;
+    proc_ptr = p2;
+    int recv_res = _receive(p1->p_nr, &m2);
+    pass = res == OK && recv_res == OK && blocked &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        p2->p_callerq == NIL_PROC && m2.m_source == p1->p_nr &&
+        m2.m_type == 42 && strcmp(m2.m3_ca1, "Hello IPC!") == 0 &&
+        m1.m_source == 12345;
+    usbj_print("[IPC V9 sender-first pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC sender-first", 9);
+
+    /* Keep proc_ptr on the receiver: the internal gateway must use its
+     * explicit caller, not the currently selected process. */
+    memset(&m2, 0, sizeof(m2));
+    res = _receive(p1->p_nr, &m2);
+    send_res = lock_mini_send(p1, p2->p_nr, &m1);
+    pass = res == OK && send_res == OK && p2->p_flags == 0 &&
+        m2.m_source == p1->p_nr && m2.m_type == 42 &&
+        strcmp(m2.m3_ca1, "Hello IPC!") == 0 && proc_ptr == p2;
+    usbj_print("[IPC V10 gateway pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC gateway", 10);
+
+    pass = mini_send(p1, p1->p_nr, &m1) == ELOCKED &&
+        mini_send(p1, ANY, &m1) == E_BAD_DEST &&
+        mini_rec(p2, ANY + 1, &m2) == E_BAD_SRC &&
+        mini_send(p1, p2->p_nr, (message *)0) == EINVAL &&
+        mini_rec(p2, ANY, (message *)0) == EINVAL &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        p1->p_callerq == NIL_PROC && p2->p_callerq == NIL_PROC;
+    usbj_print("[IPC V10 rejection pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC rejection", 10);
+
+    /* Simulate both halves of SENDREC before timer enable. Accepting the
+     * request must not make the client runnable until its reply arrives. */
+    proc_ptr = p1;
+    res = sendrec(p2->p_nr, &m1);
+    pass = res == OK && p1->p_flags == (SENDING | RECEIVING) &&
+        p1->p_getfrom == p2->p_nr && p2->p_callerq == p1;
+    proc_ptr = p2;
+    recv_res = _receive(p1->p_nr, &m2);
+    pass = pass && recv_res == OK && p1->p_flags == RECEIVING &&
+        p1->p_sendlink == NIL_PROC && p2->p_callerq == NIL_PROC &&
+        m2.m_source == p1->p_nr && m2.m_type == 42;
+    m2.m_type = 43;
+    strcpy(m2.m3_ca1, "Reply IPC!");
+    send_res = _send(p1->p_nr, &m2);
+    pass = pass && send_res == OK && p1->p_flags == 0 &&
+        p2->p_flags == 0 && m1.m_source == p2->p_nr &&
+        m1.m_type == 43 && strcmp(m1.m3_ca1, "Reply IPC!") == 0;
+    usbj_print("[IPC V11 sendrec pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC sendrec", 11);
+    proc_ptr = saved_proc;
 
     /* Exercise the dispatcher validation without changing process state. */
     usbj_print("[TEST] syscall invalid-function: ");

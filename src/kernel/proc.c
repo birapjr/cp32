@@ -129,12 +129,30 @@ report:
 /*===========================================================================*
  *				mini_send				     * 
  *===========================================================================*/
+/* MINIX CopyMess supplies the sender identity; never trust m_source supplied
+ * by the caller. Translate the receiver's address before writing its header. */
+PRIVATE int copy_message(struct proc *sender, message *src,
+                         struct proc *receiver, message *dst)
+{
+  phys_bytes target = numap(receiver->p_nr, (vir_bytes)dst, MESS_SIZE);
+  int source = sender->p_nr;
+  int result;
+  if (!target) return EFAULT;
+  result = mem_copy(source, (vir_bytes)src, receiver->p_nr,
+                    (vir_bytes)dst, MESS_SIZE);
+  if (result != OK) return result;
+  phys_copy((phys_bytes)&source, target, sizeof(source));
+  return OK;
+}
+
 PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   struct proc *dest_ptr, *next_ptr;
   int result;
 
+  if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isokprocn(dest)) return E_BAD_DEST;
+  if (dest == caller_ptr->p_nr) return ELOCKED;
   dest_ptr = proc_addr(dest);
   if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
 
@@ -150,8 +168,7 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
   if ((dest_ptr->p_flags & (RECEIVING | SENDING)) == RECEIVING &&
       (dest_ptr->p_getfrom == ANY || dest_ptr->p_getfrom == caller_ptr->p_nr)) {
     
-    result = mem_copy(caller_ptr->p_nr, (vir_bytes)m_ptr, dest,
-                      (vir_bytes)dest_ptr->p_messbuf, MESS_SIZE);
+    result = copy_message(caller_ptr, m_ptr, dest_ptr, dest_ptr->p_messbuf);
     if (result != OK) return result;
     
     dest_ptr->p_flags &= ~RECEIVING;
@@ -193,13 +210,16 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
   struct proc *sender_ptr;
   struct proc *previous_ptr;
 
+  if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
+  if (!isoksrc_dest(src)) return E_BAD_SRC;
+
   if (!(caller_ptr->p_flags & SENDING)) {
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
       if (src == ANY || src == sender_ptr->p_nr) {
         
-        if (mem_copy(sender_ptr->p_nr, (vir_bytes)sender_ptr->p_messbuf,
-                     caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE) != OK)
+        if (copy_message(sender_ptr, sender_ptr->p_messbuf,
+                         caller_ptr, m_ptr) != OK)
           return EFAULT;
 
         if (sender_ptr == caller_ptr->p_callerq)
@@ -207,6 +227,7 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
         else
           previous_ptr->p_sendlink = sender_ptr->p_sendlink;
 
+        sender_ptr->p_sendlink = NIL_PROC;
         sender_ptr->p_flags &= ~SENDING;
         if (sender_ptr->p_flags == 0) ready(sender_ptr);
         
@@ -389,7 +410,7 @@ PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   int result;
   switching = TRUE;
-  result = send(proc_ptr->p_nr, (message *)0); 
+  result = mini_send(caller_ptr, dest, m_ptr);
   switching = FALSE;
   return(result);
 }

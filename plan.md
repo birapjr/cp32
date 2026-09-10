@@ -1,4 +1,44 @@
 
+## Current handoff — 2026-09-10, IPC V11 / MM V9
+
+- [x] V10 hardware: gateway/rejection pass=1; IRQ 208 reached with
+      t1=3823, t2=3736, no exception in supplied output.
+- [x] Add SENDREC request/reply state test: SENDING|RECEIVING becomes
+      RECEIVING when the request is accepted, then runnable after reply.
+      Clear the consumed sender link. This is a simulated boot-time exchange.
+- [ ] Hardware: expect `[IPC V11 sendrec pass=1]` plus previous passing tests.
+- [x] V11 clean build and ELF segment inspection passed; existing libgcc ABI
+      mismatch warning remains.
+
+- [x] V9 hardware checks passed in both orderings; IRQ 160 reached with
+      t1=2940, t2=2871 and rel=1, no exception in the supplied output.
+- [x] V10 fixes lock_mini_send to forward its explicit arguments, matching
+      the MINIX reference. Reject null IPC buffers, invalid endpoints and
+      sends to self before altering blocked flags/queues.
+- [x] Clean V10 build passed; existing libgcc ABI warning persists.
+- [ ] Hardware: expect `[IPC V10 gateway pass=1]` and
+      `[IPC V10 rejection pass=1]` after the retained V9 regression tests.
+
+- [x] Restore MINIX CopyMess sender identity in both delivery paths, using
+      the translated destination address. Payload no longer overwrites headers.
+- [x] Add receiver-first and sender-first checks for return values, blocked
+      flags, cleared flags, source identity, type, payload, and sender queue drain.
+      Preserve the original proc_ptr after the simulated exchange; account
+      for buffer offsets when calculating mapped clicks.
+- [x] Clean build and ELF section/segment checks passed (existing libgcc ABI
+      mismatch warning remains).
+- [ ] Hardware: expect both `[IPC V9 receiver-first pass=1]` and
+      `[IPC V9 sender-first pass=1]`, then advancing t1/t2 counters.
+- [ ] Implement actual suspended IPC calls and a task-owned exchange.
+      Current wrappers return after setting blocked flags; these boot tests
+      validate IPC state transitions, not suspended execution.
+
+Historical correction: V8 printed `/0`, not `0/0`; it did not print the
+receive return code or demonstrate suspension. Earlier V43 logs cannot be
+dated relative to wrapper edits from unchanged markers alone. Process numbers
+1/2 were incorrectly classified as tasks by the existing NR_TASKS comparison;
+the clock-task/quantum lifecycle remains unfinished.
+
 ## Project identity
 
 CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the M5Stack Cardputer Adv, built around the Espressif ESP32-S3FN8 (Xtensa LX7, dual core). The kernel is based on the MINIX 2.0 architecture and source style, adapted incrementally for the ESP32-S3 rather than running on a PC BIOS, 8259 PIC, or 8253 PIT.

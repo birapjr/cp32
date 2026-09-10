@@ -1,5 +1,47 @@
 # CP32 Port – Current Issues and Handoff
 
+## IPC V11 — request/reply state coverage
+
+V10 passed gateway and rejection checks on hardware, with continued counter
+progress through IRQ 208 (t1=3823, t2=3736). V11 exercises _sendrec, checking
+that request acceptance clears only SENDING and reply delivery clears
+RECEIVING. It also checks reply source, type and payload; the consumed sender
+link is now cleared. Hardware validation is pending. The test simulates callers
+before IRQ enable and does not prove suspended wrapper execution.
+V11 clean build and ELF segment inspection passed; existing libgcc ABI
+mismatch warning remains.
+
+## IPC V10 — 2026-09-10
+
+V9 hardware validation passed both ordering checks; IRQ progress reached 160
+with t1=2940 and t2=2871 and no exception. This proves the tested message/state
+transitions, not task suspension inside IPC.
+
+Fixed lock_mini_send: it previously ignored all arguments and invoked send
+with a null message. It now calls mini_send(caller_ptr, dest, m_ptr), as in
+MINIX. V10 tests this with proc_ptr deliberately different from the sender.
+Null buffers, invalid send/receive endpoints and self-send now return errors
+before queue/flag mutations. A separate rejection marker checks those cases.
+Clean build passed with the existing libgcc ABI warning; hardware pending.
+
+## 2026-09-10 — IPC V9 / MM V9 (build verified, hardware pending)
+
+Both message-copy paths now assign the actual sender to m_source, matching
+MINIX CopyMess. The write uses the translated receiver address. The boot test
+uses m3_ca1 for text and an intentionally forged source, checks both delivery
+orderings, and restores proc_ptr afterward. Mapping lengths include buffer
+offsets. Expected results: receiver-first pass=1 and sender-first pass=1.
+Clean build, ELF sections and segments passed; libgcc ABI mismatch warning
+persists. No assembly changes in this step.
+
+Correction to historical reports below: V8 showed `/0`, message delivery and
+cleared flags, not two printed return values or suspended IPC execution.
+The wrappers still return while callers have blocked flags. Real task-owned
+IPC needs a protected context-switch boundary before clock_task can run.
+The existing ready/unready and billing tests confuse process numbers with
+table indexes (1/2 are not negative kernel task numbers). V43 demonstrated
+counter progress under that temporary policy, not full MINIX scheduling.
+
 Work-in-progress MINIX 2.0 port to the M5Stack Cardputer Adv / ESP32-S3
 Xtensa LX7. Tested path:
 
