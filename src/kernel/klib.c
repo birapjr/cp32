@@ -1,14 +1,25 @@
 #include <stdint.h>
+#include <stddef.h>
 
 void *memcpy(void *dst, const void *src, unsigned int n)
 {
-	unsigned char *d = (unsigned char *) dst;
-	const unsigned char *s = (const unsigned char *) src;
-	while (n--) *d++ = *s++;
-	return dst;
+ 	unsigned char *d = (unsigned char *) dst;
+ 	const unsigned char *s = (const unsigned char *) src;
+ 	while (n--) *d++ = *s++;
+ 	return dst;
+}
+
+void *memset(void *s, int c, size_t n)
+{
+ 	unsigned char *p = s;
+ 	while (n--) {
+ 		*p++ = (unsigned char)c;
+ 	}
+ 	return s;
 }
 
 char *strcpy(char *dst, const char *src)
+
 {
 	char *ret = dst;
 	while ((*dst++ = *src++) != '\0') { }

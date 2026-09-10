@@ -13,6 +13,9 @@
 #include "kernel.h"
 #include "proc.h"
 #include "esp32s3/systimer.h"
+#include <minix/com.h>
+#include <string.h>
+extern void schedule(void);
 
 extern char _stack_bottom[];
 extern volatile uint32_t cp32_timer_irq_ticks;
@@ -21,13 +24,266 @@ extern volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
+extern volatile int cp32_context_restore_gate;
+extern volatile int cp32_context_handoff_gate;
+
+volatile uint32_t cp32_task1_ticks;
+volatile uint32_t cp32_task2_ticks;
+
+static void cp32_task1_loop(void)
+{
+  for (;;) {
+    cp32_task1_ticks++;
+    delay(1000);
+  }
+}
+
+static void cp32_task2_loop(void)
+{
+  for (;;) {
+    cp32_task2_ticks++;
+    delay(1000);
+  }
+}
+
+/* Simple test for IPC and MM */
+void test_ipc_mm(void) {
+    usbj_print("\r\n[TEST] Starting IPC and MM validation...\r\n");
+
+    struct proc *p1 = &proc[1];
+    struct proc *p2 = &proc[2];
+
+    message m1, m2;
+    struct proc *saved_proc = proc_ptr;
+    memset(&m1, 0, sizeof(message));
+    memset(&m2, 0, sizeof(message));
+    m1.m_source = 12345; /* Forged source must be replaced by the kernel. */
+    m1.m_type = 42;
+    strcpy(m1.m3_ca1, "Hello IPC!");
+
+    /* Isolate the test maps: the bootstrap S map otherwise maps low virtual
+     * addresses (including 1), invalidating the unmapped-buffer test. */
+    memset(p1->p_map, 0, sizeof(p1->p_map));
+    memset(p2->p_map, 0, sizeof(p2->p_map));
+    /* Map the actual kernel test buffers so mem_copy can validate them. */
+    p1->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m1 & ~(CLICK_SIZE - 1);
+    p1->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m1) >> CLICK_SHIFT;
+    p1->p_map[D].mem_len = (((vir_bytes)&m1 & (CLICK_SIZE - 1)) + sizeof(m1) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+    p2->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&m2 & ~(CLICK_SIZE - 1);
+    p2->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m2) >> CLICK_SHIFT;
+    p2->p_map[D].mem_len = (((vir_bytes)&m2 & (CLICK_SIZE - 1)) + sizeof(m2) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+    
+    usbj_print("[TEST] IPC send/receive: ");
+    
+    extern int _send(int dest, message *m);
+    extern int _receive(int src, message *m);
+
+    /* Block the receiver first, then deliver through the sender. This
+     * exercises the MINIX wakeup path instead of only immediate delivery. */
+    proc_ptr = p2;
+    int res = _receive(p1->p_nr, &m2);
+    int blocked = p2->p_flags == RECEIVING;
+    proc_ptr = p1;
+    int send_res = _send(p2->p_nr, &m1);
+    usbj_print_u32((uint32_t)res);
+    usbj_print("/");
+    usbj_print_u32((uint32_t)send_res);
+    usbj_print(" (send/receive, flags=");
+    usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
+    usbj_print(", text=");
+    usbj_print(m2.m3_ca1);
+    int pass = res == OK && send_res == OK && blocked &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        m2.m_source == p1->p_nr && m2.m_type == 42 &&
+        strcmp(m2.m3_ca1, "Hello IPC!") == 0 && m1.m_source == 12345;
+    usbj_print(") [IPC V9 receiver-first pass=");
+    usbj_print_u32(pass);
+    usbj_print("][MM V9]\r\n");
+    if (!pass) panic("IPC receiver-first", 9);
+
+    memset(&m2, 0, sizeof(m2));
+    res = _send(p2->p_nr, &m1);
+    blocked = p1->p_flags == SENDING;
+    proc_ptr = p2;
+    int recv_res = _receive(p1->p_nr, &m2);
+    pass = res == OK && recv_res == OK && blocked &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        p2->p_callerq == NIL_PROC && m2.m_source == p1->p_nr &&
+        m2.m_type == 42 && strcmp(m2.m3_ca1, "Hello IPC!") == 0 &&
+        m1.m_source == 12345;
+    usbj_print("[IPC V9 sender-first pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC sender-first", 9);
+
+    /* Keep proc_ptr on the receiver: the internal gateway must use its
+     * explicit caller, not the currently selected process. */
+    memset(&m2, 0, sizeof(m2));
+    res = _receive(p1->p_nr, &m2);
+    send_res = lock_mini_send(p1, p2->p_nr, &m1);
+    pass = res == OK && send_res == OK && p2->p_flags == 0 &&
+        m2.m_source == p1->p_nr && m2.m_type == 42 &&
+        strcmp(m2.m3_ca1, "Hello IPC!") == 0 && proc_ptr == p2;
+    usbj_print("[IPC V10 gateway pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC gateway", 10);
+
+    pass = mini_send(p1, p1->p_nr, &m1) == ELOCKED &&
+        mini_send(p1, ANY, &m1) == E_BAD_DEST &&
+        mini_rec(p2, ANY + 1, &m2) == E_BAD_SRC &&
+        mini_send(p1, p2->p_nr, (message *)0) == EINVAL &&
+        mini_rec(p2, ANY, (message *)0) == EINVAL &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        p1->p_callerq == NIL_PROC && p2->p_callerq == NIL_PROC;
+    usbj_print("[IPC V10 rejection pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC rejection", 10);
+
+    /* Simulate both halves of SENDREC before timer enable. Accepting the
+     * request must not make the client runnable until its reply arrives. */
+    proc_ptr = p1;
+    res = sendrec(p2->p_nr, &m1);
+    pass = res == OK && p1->p_flags == (SENDING | RECEIVING) &&
+        p1->p_getfrom == p2->p_nr && p2->p_callerq == p1;
+    proc_ptr = p2;
+    recv_res = _receive(p1->p_nr, &m2);
+    pass = pass && recv_res == OK && p1->p_flags == RECEIVING &&
+        p1->p_sendlink == NIL_PROC && p2->p_callerq == NIL_PROC &&
+        m2.m_source == p1->p_nr && m2.m_type == 42;
+    m2.m_type = 43;
+    strcpy(m2.m3_ca1, "Reply IPC!");
+    send_res = _send(p1->p_nr, &m2);
+    pass = pass && send_res == OK && p1->p_flags == 0 &&
+        p2->p_flags == 0 && m1.m_source == p2->p_nr &&
+        m1.m_type == 43 && strcmp(m1.m3_ca1, "Reply IPC!") == 0;
+    usbj_print("[IPC V11 sendrec pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC sendrec", 11);
+
+    /* Coalesced notification, followed by notification to a waiting task. */
+    proc_ptr = p1; /* p1 is SYN_ALRM_TASK; p2 is the reserved IDLE slot. */
+    interrupt(p1->p_nr);
+    interrupt(p1->p_nr);
+    pass = p1->p_int_blocked && proc_ptr == p1;
+    res = _receive(HARDWARE, &m1);
+    pass = pass && res == OK && !p1->p_int_blocked &&
+        p1->p_flags == 0 && m1.m_source == HARDWARE && m1.m_type == HARD_INT;
+    res = _receive(ANY, &m1);
+    pass = pass && res == OK && p1->p_flags == RECEIVING;
+    interrupt(p1->p_nr);
+    pass = pass && p1->p_flags == 0 && !p1->p_int_blocked &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT && proc_ptr == p1;
+    usbj_print("[IPC V12 interrupt pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC interrupt", 12);
+
+    /* Exercise held-list transitions before IRQ enable. This simulates the
+     * nesting counter only; it does not cause a physical nested interrupt. */
+    extern struct proc *held_head, *held_tail;
+    int saved_reenter = k_reenter;
+    res = _receive(HARDWARE, &m1);
+    k_reenter = 2;
+    interrupt(p1->p_nr);
+    interrupt(p1->p_nr);
+    pass = res == OK && p1->p_flags == RECEIVING && p1->p_int_held &&
+        held_head == p1 && held_tail == p1 && p1->p_nextheld == NIL_PROC;
+    unhold();
+    pass = pass && held_head == p1 && p1->p_flags == RECEIVING;
+    k_reenter = saved_reenter;
+    unhold();
+    pass = pass && held_head == NIL_PROC && held_tail == NIL_PROC &&
+        p1->p_nextheld == NIL_PROC && !p1->p_int_held &&
+        !p1->p_int_blocked && p1->p_flags == 0 &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT && proc_ptr == p1;
+    usbj_print("[IPC V13 held-replay pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC held replay", 13);
+
+    /* A waits for B; B's attempt to send back must fail without queueing B.
+     * Receiving A's original message must still recover both processes. */
+    res = _send(p2->p_nr, &m1);
+    proc_ptr = p2;
+    send_res = _send(p1->p_nr, &m2);
+    pass = res == OK && send_res == ELOCKED &&
+        p1->p_flags == SENDING && p2->p_flags == 0 &&
+        p2->p_callerq == p1 && p1->p_callerq == NIL_PROC &&
+        p1->p_sendlink == NIL_PROC;
+    recv_res = _receive(p1->p_nr, &m2);
+    pass = pass && recv_res == OK && p1->p_flags == 0 &&
+        p2->p_flags == 0 && p2->p_callerq == NIL_PROC &&
+        m2.m_source == p1->p_nr;
+    usbj_print("[IPC V14 deadlock pass=");
+    usbj_print_u32(pass);
+    usbj_print("]\r\n");
+    if (!pass) panic("IPC deadlock", 14);
+    pass = mini_send(p1, p2->p_nr, (message *)1) == EFAULT &&
+        mini_rec(p2, ANY, (message *)1) == EFAULT &&
+        numap(p1->p_nr, (vir_bytes)-8, MESS_SIZE) == 0 &&
+        numap(ANY, (vir_bytes)&m1, MESS_SIZE) == 0 &&
+        p1->p_flags == 0 && p2->p_flags == 0 &&
+        p1->p_callerq == NIL_PROC && p2->p_callerq == NIL_PROC;
+    usbj_print("[IPC V16 buffers pass=");
+    usbj_print_u32(pass);
+    usbj_print("][MM V11]\r\n");
+    if (!pass) panic("IPC buffers", 16);
+
+    /* A synthetic virtual base maps to m1's real backing page. Both pending
+     * and waiting-receiver delivery must translate, never dereference alias. */
+    vir_clicks original_base = p1->p_map[D].mem_vir;
+    p1->p_map[D].mem_vir = 0x10000000;
+    message *alias = (message *)(0x10000000 +
+        ((vir_bytes)&m1 - original_base));
+    proc_ptr = p1;
+    m1.m_source = 0;
+    m1.m_type = 0;
+    interrupt(p1->p_nr);
+    res = _receive(HARDWARE, alias);
+    pass = res == OK && !p1->p_int_blocked &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT;
+    m1.m_source = 0;
+    m1.m_type = 0;
+    res = _receive(HARDWARE, alias);
+    pass = pass && res == OK && p1->p_flags == RECEIVING;
+    interrupt(p1->p_nr);
+    pass = pass && p1->p_flags == 0 && !p1->p_int_blocked &&
+        m1.m_source == HARDWARE && m1.m_type == HARD_INT;
+    p1->p_map[D].mem_vir = original_base;
+    usbj_print("[IPC V17 translated-irq pass=");
+    usbj_print_u32(pass);
+    usbj_print("][MM V12]\r\n");
+    if (!pass) panic("IPC translated IRQ", 17);
+    proc_ptr = saved_proc;
+
+    /* Exercise the dispatcher validation without changing process state. */
+    usbj_print("[TEST] syscall invalid-function: ");
+    res = sys_call(0, p2->p_nr, &m1);
+    usbj_print_u32((uint32_t)res);
+    usbj_print(" [SYS V6]\r\n\r\n");
+}
 
 /* ── main ─────────────────────────────────────────────────────────────────────
- * Kernel entry point — called by the STEP 5 - call0   main - in mpx32.S. */
+ * Kernel entry point — called by the STEP 6 - call0   main - in mpx32.S. */
+void kernel_idle_loop(void) {
+    static int idle_reported;
+    if (!idle_reported) {
+      usbj_print("[IDLE] entered idle loop\r\n");
+      idle_reported = 1;
+    }
+    for (;;) {
+        wdt_feed_all();
+        delay(1000000);
+    }
+}
+
 void main(void) {
+  usbj_print("[IMG V8] CP32 diagnostic image\r\n");
   status_line("main() starting", 0);
 
-  status_line("setup initial kernel variables", 0);
   register struct proc *rp;
   register int t;
   int sizeindex;
@@ -39,33 +295,80 @@ void main(void) {
   struct memory *memp;
   struct tasktab *ttp;
 
-  /* Interpret memory sizes. */
-  status_line("initialize memory", 0);
-  mem_init();
-
-
-  /* Clear the process table.
-   * Set up mappings for proc_addr() and proc_number() macros.
-   */
+  /* Clear the process table and set up mappings. */
   status_line("cleaning proccess table", 0);
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
-	rp->p_flags = P_SLOT_FREE;
-	rp->p_nr = t;		/* proc number from ptr */
-        (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
+    rp->p_flags = P_SLOT_FREE;
+    rp->p_nr = t;
+    (pproc_addr + NR_TASKS)[t] = rp;
   }
 
-  status_line("checking process table", 0);
-  for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
-    if (rp->p_nr != t || (pproc_addr + NR_TASKS)[t] != rp) {
-      usbj_print("FATAL: process table mapping at ");
-      usbj_print_u32((uint32_t)(t + NR_TASKS));
-      usbj_print("\r\n");
-      for (;;) { }
-    }
+  status_line("init ready queues", 0);
+  for (t = 0; t < NQ; t++) {
+    rdy_head[t] = NIL_PROC;
+    rdy_tail[t] = NIL_PROC;
   }
-  usbj_print("process slots: ");
-  usbj_print_u32((uint32_t)(NR_TASKS + NR_PROCS));
-  usbj_print(" (mapping valid)\r\n");
+
+  /* Set up proc table entries for tasks and servers. */
+  status_line("initializing proc table", 0);
+  
+  // Use the existing ktsb declaration from line 39
+  ktsb = (reg_t)_stack_bottom + 0x4000; // Offset from bottom to avoid overlap
+
+  for (t = -NR_TASKS; t <= LOW_USER; ++t) {
+    rp = proc_addr(t);
+    
+    // 1. Assign Name (simplified since tasktab might not be fully ported)
+    
+    // 2. Initialize Registers
+    rp->p_reg.pc = (reg_t)kernel_idle_loop; // Point to a valid execution loop
+    if (t == 1) rp->p_reg.pc = (reg_t)cp32_task1_loop;
+    if (t == 2) rp->p_reg.pc = (reg_t)cp32_task2_loop;
+    rp->p_reg.psw = istaskp(rp) ? 0x100 : 0x0; // Simplified PSW
+    if (t == 1 || t == 2) rp->p_reg.psw = 0x100;
+    
+    /* Fix: Initialize all registers to 0 to avoid junk in p_reg */
+    memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
+    
+    /* Initialize a15 to a safe, non-null value for all processes.
+     * Many kernel functions (like printk) use a15 as a base pointer for frames.
+     * We point it to a safe region in DRAM to prevent null pointer exceptions. */
+    rp->p_reg.a[15] = 0x3FC00000; 
+    
+    /* Ensure the IDLE process (proc[0]) is explicitly handled if needed */
+    if (t == 0) {
+        rp->p_reg.pc = (reg_t)kernel_idle_loop;
+    }
+    
+    if (t < 0) {
+      // Kernel Task: Assign stack from internal DRAM
+      rp->p_reg.sp = (ktsb + 4096) & ~0xF; // 16-byte align
+      ktsb += 4096;
+    } else {
+      // Server: Assign stack using a fixed offset from bottom
+      rp->p_reg.sp = ((reg_t)_stack_bottom + 0x10000 + (t * 4096) + 4096) & ~0xF; // 16-byte align
+    }
+    /* The live register frame must agree with the dedicated SP field. */
+    rp->p_reg.a[1] = rp->p_reg.sp;
+
+    // 3. Initialize Memory Maps (Simplified for ESP32-S3 flat memory)
+    rp->p_map[T].mem_phys = 0; 
+    rp->p_map[T].mem_len = 0;
+    rp->p_map[D].mem_phys = 0;
+    rp->p_map[D].mem_len = 0;
+    rp->p_map[S].mem_phys = (rp->p_reg.sp >> CLICK_SHIFT);
+    rp->p_map[S].mem_len = 4; // 4 clicks = 16KB
+
+    // 4. Set Status
+    if (!isidlehardware(t)) {
+      lock_ready(rp);
+    }
+    rp->p_flags = 0; // Runnable
+  }
+  
+  bill_ptr = proc_addr(IDLE);
+  lock_pick_proc();
+
 
   status_line("checking click memory accounting", 0);
   usbj_print("memory base clicks: ");
@@ -99,18 +402,60 @@ void main(void) {
     for (;;) { }
   }
   usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
-  status_line("starting systimer interrupt probe", 0);
-  systimer_irq_start();
-  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1)\r\n");
+    usbj_print("[IMG V8] pre-IRQ setup complete\r\n");
+    status_line("starting systimer interrupt probe", 0);
+    proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
+    cp32_clock_irq_bridge_enabled = 1;
+    usbj_print("[IMG V10] timer bridge enabled for clock lifecycle\r\n");
+    cp32_context_restore_gate = 1;
+    /* First live handoff experiment: keep clock_handler disabled, but allow
+     * the IRQ bridge to invoke the scheduler and select a saved frame. */
+    cp32_context_handoff_gate = 1;
+   usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
+   test_ipc_mm();
+   cp32_prepare_two_task_stress();
+   usbj_print("[STK V1 p1=");
+   usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
+   usbj_print(" p2=");
+   usbj_print_u32((uint32_t)proc_addr(2)->p_reg.sp);
+   usbj_print(" d=");
+   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
+   usbj_print("]\r\n");
+   cp32_context_handoff_gate = 1;
+   unsigned ps_before, ps_locked, ps_unlocked;
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_before));
+   lock();
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_locked));
+   unlock();
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_unlocked));
+   /* Restore boot mask before the timer is armed. */
+   __asm__ volatile("wsr %0, ps; rsync" : : "a"(ps_before) : "memory");
+   int lock_ok = (ps_locked & 15) == 15 && (ps_unlocked & 15) == 0 &&
+       (ps_locked & ~15u) == (ps_before & ~15u) &&
+       (ps_unlocked & ~15u) == (ps_before & ~15u);
+   usbj_print("[LOCK V1 pass=");
+   usbj_print_u32(lock_ok);
+   usbj_print("]\r\n");
+   if (!lock_ok) panic("status preservation", 1);
+   usbj_print("[CTX V45] restore=1 handoff=1 clock=1 stress=2\r\n");
+   systimer_irq_start();
+   usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
-  /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
+   /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
+
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
-  usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-3\r\n");
+  usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-2\r\n");
+  /* With live handoff enabled, leave proc_ptr on the current idle frame.
+   * Calling schedule() here would assign main()'s live frame to process 1
+   * before the first IRQ and overwrite its task entry PC. */
+  if (!cp32_context_handoff_gate)
+    schedule();
   usbj_print("timer reentry baseline: ");
   usbj_print_u32((uint32_t) k_reenter);
   usbj_print(" (expected 0)\r\n");
+  usbj_print("Periodic interrupt and reentry validation starting...\r\n");
   for (;;) {
     wdt_feed_all();
     swd_disable();
@@ -155,7 +500,9 @@ void main(void) {
         usbj_print_hex32((uint32_t)(counter >> 32));
       usbj_print(" now_lo=");
         usbj_print_hex32((uint32_t)counter);
-      }
+}
+
+
       usbj_print(" real_hi=");
       usbj_print_hex32(REG_READ(SYSTIMER_REAL_TARGET0_HI_REG));
       usbj_print(" real_lo=");
@@ -187,9 +534,14 @@ int n;
  * kind of stuck.
  */
 
-  if (*s != 0) {
+  /* Preserve other PS fields while masking interrupts; panic never returns. */
+  unsigned saved_ps;
+  __asm__ volatile("rsil %0, 15" : "=a"(saved_ps) : : "memory");
+  usbj_print("[PANIC V1] halted\r\n");
+  if (s != 0 && *s != 0) {
 	printf("\nKernel panic: %s",s);
 	if (n != NO_NUM) printf(" %d", n);
 	printf("\n");
   }
+  for (;;) { __asm__ volatile("nop"); }
 }

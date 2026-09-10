@@ -11,8 +11,6 @@
 #include <stdlib.h>
 #include <minix/com.h>
 
-#if (CHIP == ESP32_S3)
-
 extern char _heap_start[];
 extern char _stack_bottom[];
 
@@ -43,7 +41,6 @@ PUBLIC void mem_init()
 
 	tot_mem_size = mem[0].size + mem[1].size + mem[2].size;
 }
-#endif /* (CHIP == ESP32_S3) */
 
 /*=========================================================================*
  *				env_parse				   *

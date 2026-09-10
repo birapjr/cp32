@@ -1,5 +1,130 @@
 # CP32 Port – Current Issues and Handoff
 
+## LOCK V1 / CTX V45
+
+V17 passed on hardware through IRQ 144 (2645/2575). lock previously overwrote
+the complete PS with 1 before rsil, clearing unrelated status bits. It now
+uses rsil 15 and rsync; unlock uses rsil 0 and rsync. The pre-timer test checks
+mask levels and preservation of other PS bits, then restores the original PS.
+Clean build, segments and disassembly passed, with existing libgcc ABI warning.
+Hardware passed: `[LOCK V1 pass=1]` and `[CTX V45]` appeared. IRQ 176 reached
+with t1=3234, t2=3156; sampled frames retained a15ok=1, spok=1, rel=1.
+IRQ samples showed r=1 inside the handler and f=1; no panic or exception was
+reported. All emitted IPC regression checks passed. This API does not restore
+a caller's previous interrupt mask; nesting-safe IPC locks remain future work.
+
+Session paused at the user's request with documentation updates only. Next:
+implement saved-PS critical sections, then actual IPC suspension/resumption
+and a task-owned message exchange. Current wrappers only change blocked flags
+and return; simulated boot tests do not validate suspended execution. Correct
+scheduler process-number/index classification before claiming real MINIX
+quantum behavior. The clock task message loop is not yet active.
+
+Latest markers: LOCK V1, CTX V45, IPC V17, MM V12, PANIC V1. Keep markers
+updated on subsequent code changes. Real nested interrupts, concurrent task
+IPC, and terminal panic behavior remain unvalidated; the libgcc ABI warning
+is unresolved. This summary supersedes historical pending/validation claims.
+
+## IPC V17 / MM V12 — translated interrupt messages
+
+V16 passed on hardware through IRQ 128 (2351/2289). Interrupt delivery and
+pending receive previously wrote directly through virtual pointers. Both now
+translate the full message range and copy the HARDWARE/HARD_INT header to
+the physical buffer. Translation failure retains pending/blocked state.
+V17 tests both paths with a synthetic nonidentity virtual mapping and restores
+the mapping afterward. Hardware passed, including the latest LOCK V1/CTX V45
+run; the original translation test used CTX V44.
+
+## IPC V16 / MM V11 / PANIC V1 — V15 failure
+
+V15 failed: bootstrap S maps virtual 0..16383 to stack memory, so pointer 1
+was legitimately translated and queued. The boot test now clears inherited
+maps before installing its buffer maps. numap's bounds logic is unchanged.
+Panic previously returned; it now masks interrupts preserving other PS fields,
+prints PANIC V1, accepts null strings and loops forever. IRQ progress after
+the V15 panic is not a successful buffer-validation result. Hardware pending.
+
+## IPC V15 / MM V10 — buffer validation
+
+V14 passed on hardware through IRQ 144 (2645/2577). IPC primitives now reject
+unmapped message buffers before setting blocked flags or inserting queue links.
+numap validates process numbers before table lookup, rejects empty/wrapping
+ranges, and checks segment offsets/physical addresses using wide arithmetic.
+V15 tests unmapped send/receive buffers, wrapped ranges and an invalid process
+number without queue mutation. Clean build/ELF segments passed with existing
+ABI warning. Hardware pending; CTX V44 is unchanged.
+
+## IPC V14 — send deadlock correction
+
+V13 passed on hardware through IRQ 176 (3234/3158). The existing deadlock
+walk tested SENDING before caller identity, missing a runnable caller closing
+the cycle. V14 matches MINIX's identity-first order, bounds traversal, and
+validates send links. The new boot test checks ELOCKED without queue mutation
+and then drains the original message. Hardware pending; suspended IPC is
+still outstanding. CTX V44 remains unchanged.
+
+## IPC V13 — held notification replay
+
+V12 passed on hardware, with counter progress through IRQ 192 (3528/3449).
+V13 simulates k_reenter=2 before timer enable to check duplicate notification
+coalescing, deferred replay and eventual delivery to a waiting receiver.
+The test restores the original nesting count. unhold clears the removed
+entry's p_nextheld. Hardware pending; physical nesting and concurrent task
+IPC are still unvalidated. CTX V44 remains unchanged.
+
+## IPC V12 / CTX V44
+
+V11 passed on hardware through IRQ 144 (t1=2646, t2=2576). Interrupt now
+addresses the requested negative task number, coalesces pending notifications,
+and delivers HARDWARE/HARD_INT to an eligible receiver without replacing
+proc_ptr or bill_ptr. Receive consumes pending notifications. Held entries
+replay from timer dispatch; CP32 nesting uses task=0, outer IRQ=1.
+Boot checks use SYN_ALRM_TASK (not the reserved IDLE slot). Clean build passed
+with existing ABI warning; hardware and nested/concurrent paths are pending.
+Actual suspended IPC and the clock task message loop remain incomplete.
+
+## IPC V11 — request/reply state coverage
+
+V10 passed gateway and rejection checks on hardware, with continued counter
+progress through IRQ 208 (t1=3823, t2=3736). V11 exercises _sendrec, checking
+that request acceptance clears only SENDING and reply delivery clears
+RECEIVING. It also checks reply source, type and payload; the consumed sender
+link is now cleared. Hardware validation is pending. The test simulates callers
+before IRQ enable and does not prove suspended wrapper execution.
+V11 clean build and ELF segment inspection passed; existing libgcc ABI
+mismatch warning remains.
+
+## IPC V10 — 2026-09-10
+
+V9 hardware validation passed both ordering checks; IRQ progress reached 160
+with t1=2940 and t2=2871 and no exception. This proves the tested message/state
+transitions, not task suspension inside IPC.
+
+Fixed lock_mini_send: it previously ignored all arguments and invoked send
+with a null message. It now calls mini_send(caller_ptr, dest, m_ptr), as in
+MINIX. V10 tests this with proc_ptr deliberately different from the sender.
+Null buffers, invalid send/receive endpoints and self-send now return errors
+before queue/flag mutations. A separate rejection marker checks those cases.
+Clean build passed with the existing libgcc ABI warning; hardware pending.
+
+## 2026-09-10 — IPC V9 / MM V9 (build verified, hardware pending)
+
+Both message-copy paths now assign the actual sender to m_source, matching
+MINIX CopyMess. The write uses the translated receiver address. The boot test
+uses m3_ca1 for text and an intentionally forged source, checks both delivery
+orderings, and restores proc_ptr afterward. Mapping lengths include buffer
+offsets. Expected results: receiver-first pass=1 and sender-first pass=1.
+Clean build, ELF sections and segments passed; libgcc ABI mismatch warning
+persists. No assembly changes in this step.
+
+Correction to historical reports below: V8 showed `/0`, message delivery and
+cleared flags, not two printed return values or suspended IPC execution.
+The wrappers still return while callers have blocked flags. Real task-owned
+IPC needs a protected context-switch boundary before clock_task can run.
+The existing ready/unready and billing tests confuse process numbers with
+table indexes (1/2 are not negative kernel task numbers). V43 demonstrated
+counter progress under that temporary policy, not full MINIX scheduling.
+
 Work-in-progress MINIX 2.0 port to the M5Stack Cardputer Adv / ESP32-S3
 Xtensa LX7. Tested path:
 
@@ -24,7 +149,25 @@ handler are not active.
 - `k_reenter` is balanced (`r=0`).
 - The guarded ISR-to-C bridge receives a non-null aligned frame inside the
   kernel stack (`c=f=s`).
-- The real clock-handler gate remains disabled (`e=0`).
+## Validated on hardware
+ 
+ - ESP image-loader-owned `.data`/`.rodata`/IRAM placement works. Do not add
+   software LMA copy loops without changing and revalidating the image format.
+ - `.data`/`.bss` sentinels pass.
+ - Vectors are resident at `0x40370000`, size `0x400`.
+ - Call0 stack is within linker bounds and 16-byte aligned.
+ - Process reverse mapping passes: `41` slots.
+ - 4 KiB click accounting reports about `32–33` usable clicks.
+ - Stack guard remains intact during idle.
+ - SYSTIMER UNIT0 advances.
+ - TARGET0 maps to CPU interrupt `2`, Xtensa level 1.
+ - Periodic TARGET0 interrupts enter/return safely and advance regularly.
+ - `k_reenter` is balanced (`r=0`).
+ - The guarded ISR-to-C bridge receives a non-null aligned frame inside the
+   kernel stack (`c=f=s`).
+ - The real clock-handler gate remains disabled (`e=0`).
+ - Minimal scheduler with dummy task, timer-driven scheduling, and IPC stubs verified on hardware. Marker: CP32-IRQ-FRAME-64-FINAL.
+
 
 Typical diagnostic:
 
@@ -85,6 +228,228 @@ make clean && make
 make flash
 ```
 
+## 2026-09-09 build validation
+
+- The temporary level-1 IRQ-frame contract was corrected to match the
+  assembly's 80-byte allocation: saved `a0`, interrupted `a1`, `a2-a15`, and
+  reserved padding. Compile-time size and `a15` offset checks now protect the
+  C/assembly boundary.
+- `make clean && make`, `make headers`, `make segments`, and `make nm` passed.
+- ELF placement remained unchanged: vectors at `0x40370000`, executable
+  segment in IRAM, and data/bss/heap/stack in DRAM.
+- Hardware validation is pending. The clock-to-scheduler bridge remains
+  disabled; no claim about live context switching is made from this build.
+- The process-frame contract now has compile-time checks for all assembly-used
+  offsets: `a[0]`, `a[1]`, `a[15]`, `pc`, `psw`, and `sp` in the 76-byte frame.
+- Added a separate disabled `cp32_context_handoff_gate` for the future live
+  scheduler experiment; the normal validated image does not invoke `sched()`
+  from the timer IRQ.
+- The next image enables only `cp32_context_handoff_gate` and identifies itself
+  with `[CTX V17]`; `clock_handler` remains disabled. Hardware validation is
+  required before treating this as a working process handoff.
+- V17 partial hardware result: the IRQ path selected multiple saved frames and
+  returned to each target's diagnostic idle loop without an immediate fault.
+  The trace stopped before the periodic IRQ counters resumed; timer progress,
+  queue integrity, and true task resumption remain unvalidated. All targets
+  currently use the same diagnostic idle PC, so this is not yet proof of
+  independent task execution.
+- V18 reduces diagnostic volume without changing handoff behavior: scheduler
+  lines are suppressed, context lines are rate-limited, and idle entry prints
+  once. Hardware validation of the quieter image is pending.
+- V18 handoff hardware validation failed: after initial frame selection,
+  `[CTX V18]` reported `rel=0` with `a1` offset from `sp`, `ps=16`, changing
+  stack values, and `f=2`. This indicates the live handoff is saving/restoring
+  the temporary IRQ frame as a process stack rather than preserving the
+  interrupted process SP. The handoff gate is disabled again in V19; do not
+  re-enable it until the save/restore boundary is corrected.
+- V20 fixes the identified save-side bug: `p_reg.sp` now receives the
+  interrupted `a1` from the IRQ frame, not the temporary frame pointer. The
+  handoff remains disabled pending safe-path hardware validation.
+- V20 safe-path hardware validation passed through 208 IRQs. V21 enables only
+  the handoff gate; the clock bridge remains disabled. Hardware validation is
+  required before declaring process switching functional.
+- V21 partial hardware validation passed: live handoff held `rel=1` and
+  `a15==sp` through 112 IRQs with ongoing timer progress and no exception.
+  The scheduler repeatedly selected process 2; fair rotation and independent
+  task execution are still not proven.
+- V22 requeues every runnable non-idle task/server as well as user processes,
+  correcting the starvation identified in V21. Handoff remains enabled and
+  hardware validation is pending.
+- V22 hardware validation passed through 96 IRQs: process/task selection
+  rotated across multiple entries, `rel=1` and `a15ok=1` stayed valid, and no
+  exception occurred. Independent task counters and normal clock lifecycle
+  remain unvalidated.
+- V23 adds separate counter loops and PCs for processes 1 and 2. Hardware
+  validation is pending; the clock bridge remains disabled.
+- V23 hardware validation passed through 160 IRQs: process/task frames rotated,
+  `rel=1` and `a15ok=1` stayed valid, and processes 1 and 2 showed distinct
+  resumed PCs without an exception. Counter values are not yet emitted, so
+  loop progress still needs direct confirmation.
+- V24 adds compact `t=` values to `[CTX V24]` for processes 1 and 2 so the
+  dedicated loop counters can be verified directly on hardware.
+- V24 hardware validation passed through 176 IRQs: task 1 advanced `t=37`
+  to `615`, task 2 advanced `t=0` to `579`, and live frame integrity stayed
+  valid with `rel=1` and no exception.
+- V25 isolates the handoff experiment to processes 1 and 2 after IPC
+  validation and before IRQ enable. Hardware validation is pending.
+- V25 hardware validation failed: process 2 advanced from `t=74` to `2097`,
+  while process 1 stayed at `t=0`; frame/stack counters also diverged. V26
+  disables handoff again. The next investigation is per-process stack and
+  saved-frame ownership.
+- V27 adds pre-IRQ process 1/2 stack-pointer and separation diagnostics while
+  keeping handoff disabled.
+- V27 hardware validation passed: `p1=1070325744`, `p2=1070329840`,
+  separation `4096`; safe IRQ validation remained clean through 256 IRQs.
+  Initial stack overlap is ruled out; live saved-frame ownership remains the
+  handoff issue.
+- V28 fixes the identified ownership sequence: handoff starts with the current
+  idle/main frame selected, and the explicit `schedule()` call is skipped so
+  process 1 is not overwritten before its first execution.
+- V28 hardware validation narrowed the remaining bug: process 1 was selected
+  first but never advanced, while process 2 monopolized later selections;
+  frame integrity stayed valid. V29 disables handoff pending ready-queue flag
+  diagnostics.
+- V30 explicitly initializes process 1/2 stress frames with `ps=0x100` after
+  V29 showed process 1 being restored with `ps=0`. Handoff is re-enabled for
+  the controlled test; hardware validation is pending.
+- V31 moves the stress PS override after the generic initializer; V30 showed
+  the earlier override was immediately overwritten.
+- V31 hardware validation still showed process 1 stalled at `t=0` while
+  process 2 advanced to `t=2941`, despite `ps=256` and valid frames. V32
+  disables handoff pending process-1 execution/queue diagnostics.
+- V33 resets `current_proc` and `proc_ptr` to idle after the two-task queue is
+  prepared, preventing stale bootstrap ownership during the first handoff.
+  Hardware validation is pending.
+- V34 aligns process 1/2 initial PS to `0`, matching the process-2 state that
+  successfully executes. Hardware validation is pending.
+- V35 adds a bounded `[Q V1]` scheduler trace for current flags and ready-link
+  ownership to diagnose why process 1 disappears after its first selection.
+- V35 hardware trace showed `cur=1`/`cur=2` alternation with both flags clear;
+  process 1 was selected but its later context reports were rate-limited. V36
+  removes the temporary queue trace.
+
 For every hardware test, record the marker and `r/c/f/s/e`. A regression is
 an exception, stalled counter, nonzero `r` after idle, `c/f/s` mismatch, or
 unexpected `e=1`.
+
+# Known Issues
+
+## Kernel Crash: EXCCAUSE 0x1D / EXCVADDR 0x0
+- **Symptom**: The system crashes with a LoadStore alignment or null pointer exception (`EXCCAUSE: 0x1D`, `EXCVADDR: 0x00000000`) shortly after the first periodic interrupt returns.
+- **Location**: `EPC1: 0x40375A9E` is the `s32i` in `delay()`, storing through the call0 frame pointer `a15`; it is not in `printk`.
+- **Cause**: The raw level-1 handler called `usbj_print_u32` before establishing a call0 frame and again immediately before `rfi`, corrupting interrupted call0 state. It also saved the post-allocation temporary frame address as the interrupted `a1`.
+- **Current State**: Removed both unsafe debug calls, preserve the pre-frame SP, and corrected the `a15 == 0` fallback. Hardware validation passed: 27 periodic IRQs completed with `r=0 c=27 f=27 s=27 e=0`.
+
+## IPC bring-up status
+- The hardware run reached the IPC/MM validation and exercised `mini_send`
+  and `mini_rec` without an exception.
+- This is not yet full MINIX IPC validation: both calls currently exercise the
+  blocking stubs/partial queue path, and the diagnostic process numbers show
+  unsigned representations of negative task numbers. Task 3.1 is next.
+- Task 3.1 core fixes are now implemented: MINIX process-number lookup,
+  deadlock-cycle rejection, correct ready-queue removal, and `mem_copy` error
+  propagation. The rebuilt image passes compilation; hardware IPC validation
+  and message-content verification remain pending.
+- The IPC diagnostic now uses `p_nr` consistently and emits one compact
+  `[IPC B]sender->destination` marker when a sender blocks. Future changes
+  should retain similarly small progress markers while bring-up is active.
+- Hardware validation passed: `send=0`, `receive=0`, `flags=0`, text
+  `Hello IPC!`, and `mem_copy len=36`. Task 3.1 is complete; Task 3.2 is next.
+- Task 3.2 hardware validation passed: invalid syscall returned `EBADCALL`
+  (`-102`), printed as `4294967194`; timer IRQ progress remained stable through
+  160 ticks. Task 3.3 is next.
+- V9 hardware validation passed: `[IMG V9]`, IPC/MM, `[SYS V6]`, and `[CTX V7]`
+  all appeared; timer progress reached 224 IRQs with no exception. The
+  transient counter skew at one sample self-corrected on the next report.
+- V8 context-layout validation passed: `[CTX V8 ... a15ok=1]` appeared and the
+  timer path remained clean through 144 IRQs. The real assembly handoff is
+  still gated and is the next context-switch step.
+- V8 assembly PC probe validated on hardware: `[CTX V8 ... pc=1077348660]`
+  appeared, with IPC/MM and timer checks clean through 112 IRQs. SP/PS probing
+  is the next gated step.
+- V9 SP/PS probe validated on hardware: `sp=1070284720`, `ps=256`,
+  `pc=1077348660`, `a15ok=1`; timer checks remained clean through 192 IRQs.
+  The live register-restore experiment remains gated.
+- V11 hardware validation passed: `a1` matched `sp` (`1070284736`), with valid
+  PC/PS and `a15`; IPC/MM and timer diagnostics remained clean through 192
+  IRQs. Next is the gated live `a1`/`a15` restore experiment.
+- V12 hardware validation passed: `gate=0`, `a1==sp`, `a15ok=1`, valid PC/PS,
+  IPC/MM and syscall checks, and clean timer progress through 256 IRQs. V13
+  will be the first guarded live restore experiment.
+- Post-split restore validation passed: V12 stayed at `gate=0`, IPC/MM and
+  syscall checks passed, and timer progress reached 434 IRQs with no exception.
+- V13 hardware validation passed with `gate=1`: no exception through 320 IRQs;
+  IPC/MM and syscall checks remained valid. The gate currently preserves the
+  complete restore behavior; a distinct reduced restore path is still needed.
+- V14 hardware validation passed: the gated assembly branch ran through 163
+  IRQs without exception, with `a1==sp`, `a15ok=1`, and all existing IPC/MM,
+  syscall, and timer checks valid. The next step is reducing the live branch.
+- V15 hardware validation passed: reduced live `a15` restore with `gate=1`
+  remained stable through 136 IRQs; `a1==sp`, `a15ok=1`, IPC/MM, syscall, PC,
+  and PS checks remained valid. V16 is next.
+- V16 hardware validation passed: `rel=1` confirmed `a1==sp`; `a15ok=1`, IPC/MM,
+  syscall, and timer diagnostics remained stable through 240 IRQs. Further
+  register reduction is unsafe; the next work is real scheduler handoff.
+- V16 extended hardware run passed: `[CTX V16 ... gate=1 rel=1]` appeared;
+  IPC/MM and invalid-syscall checks passed, and timer diagnostics remained
+  clean through 368 IRQs with `c=f=s` and `e=0`. The transient `r=1` samples
+  occurred inside the level-1 handler and returned to `r=0` after return.
+- V36 hardware validation kept the live handoff stable through the supplied
+  run, with `rel=1`, valid `a15`, and no exception. The V35 queue trace showed
+  process 1/process 2 selection alternation, but rate-limited context lines
+  did not independently prove both loop counters advanced.
+- V37 adds `t1`/`t2` to the existing 16-IRQ summary while retaining reduced
+  context output. Hardware validation passed through IRQ 272: `t1` advanced
+  from `292` to `5005`, `t2` from `253` to `4766`, with `rel=1`, `f=1`, and
+  no exception. The context trace still repeatedly samples process 2, so it
+  is not useful as a fairness measure now that the independent counters prove
+  both loops execute.
+- V38 reduces context sampling from every 8th switch to every 32nd switch;
+  the first switch remains visible and the V37 counter summary is unchanged.
+  Hardware validation passed through IRQ 256: `t1=4711`, `t2=4611`,
+  `rel=1`, `f=1`, and no exception. The next work is scheduler lifecycle,
+  not further IRQ-frame diagnostics.
+- The held-interrupt replay path now retains its MINIX queue/replay behavior
+  without printing one multi-line debug record per replay; hardware validation
+  passed through IRQ 208 with both task counters advancing (`t1=3827`,
+  `t2=3740`), `rel=1`, `f=1`, and no exception.
+- V39 aligns `pick_proc()` with MINIX billing semantics: task/server picks
+  preserve the prior user billing target, while user and idle picks update
+  `bill_ptr`. Hardware validation is pending.
+- V40 enabled the existing clock-handler bridge for the first lifecycle test;
+  hardware validation passed through IRQ 256 with `t1=4705`, `t2=4605`,
+  `rel=1`, `f=1`, and no exception. The process handoff gate remained
+  separate.
+- V41 removes the direct per-IRQ scheduler call when the clock bridge is
+  active, allowing `clock_handler()` and its quantum accounting to control
+  rescheduling. Hardware validation is pending.
+- V41 hardware validation showed a policy regression: `t1` advanced to `9948`
+  while `t2` remained `0`. Both stress entries are kernel tasks, so the MINIX
+  user-quantum condition did not request a switch. V42 adds explicit rotation
+  when multiple kernel tasks are ready; hardware validation is pending.
+- V42 hardware validation showed `t1=34` while `t2` advanced to `9910`: the
+  two-entry queue guard stopped scheduling after task 2 was selected and only
+  task 1 remained queued. V43 rotates whenever a task is queued, allowing the
+  current task to be requeued by `sched()`.
+- V43 hardware validation passed through IRQ 192: `t1=3528`, `t2=3447`,
+  `rel=1`, `f=1`, and no exception. Kernel-task rotation is now validated;
+  the next risk is entering a real clock-task lifecycle rather than the
+  diagnostic counter loops.
+- The existing `clock_task()` still assumes blocking `receive()` and `send()`
+  semantics. Do not assign the CLOCK task slot to that entry until the
+  partial CP32 IPC path can block, wake, and return messages safely.
+- The kernel-side `_send()` and `_receive()` wrappers previously called the
+  syslib macro names and could recurse. They now dispatch directly to
+  `mini_send()`/`mini_rec()`, with `_sendrec()` added; build validation is
+  pending hardware blocking/wakeup validation. The supplied V43 log predates
+  this change and still reports `[IPC V5][MM V5]`.
+- The V6 run confirmed the rebuilt image but the test still invoked
+  `mini_send()`/`mini_rec()` directly. V7 changes the test to exercise the
+  kernel-facing wrappers with explicit simulated callers.
+- V7 hardware validation passed: wrapper IPC returned `0/0`, delivered
+  `Hello IPC!`, and timer/context checks remained clean through IRQ 208.
+  V8 changes the test to receiver-first ordering for blocking/wakeup coverage.
+- V8 hardware validation passed: receiver-first ordering produced the expected
+  `mem_copy`, delivery, `0/0`, `Hello IPC!`, and cleared flags; timer/context
+  checks remained clean through IRQ 144. The next IPC gap is task-owned
+  message-loop execution.

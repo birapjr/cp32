@@ -219,7 +219,8 @@ register message *m_ptr;	/* pointer to request message */
   sigemptyset(&rpc->p_pending);
   rpc->p_pendcount = 0;
   rpc->p_pid = m_ptr->PID;	/* install child's pid */
-  rpc->p_reg.retreg = 0;	/* child sees pid = 0 to know it is child */
+  rpc->p_reg.a[1] = 0;        /* child sees pid = 0 to know it is child */
+
 
   rpc->user_time = 0;		/* set all the accounting times to 0 */
   rpc->sys_time = 0;
@@ -578,8 +579,8 @@ message *m_ptr;			/* pointer to request message */
   frp = (struct sigframe *) scp - 1;
   fr.sf_scpcopy = scp;
   fr.sf_retadr2= (void (*)()) rp->p_reg.pc;
-  fr.sf_fp = rp->p_reg.fp;
-  rp->p_reg.fp = (reg_t) &frp->sf_fp;
+  fr.sf_fp = rp->p_reg.a[2];
+  rp->p_reg.a[2] = (reg_t) &frp->sf_fp;
   fr.sf_scp = scp;
   fr.sf_code = 0;	/* XXX - should be used for type of FP exception */
   fr.sf_signo = smsg.sm_signo;
@@ -627,8 +628,10 @@ register message *m_ptr;
    * register variables within functions containing setjmp.
    */
   if (sc.sc_flags & SC_NOREGLOCALS) {
-	rp->p_reg.retreg = sc.sc_retreg;
-	rp->p_reg.fp = sc.sc_fp;
+         rp->p_reg.a[1] = sc.sc_retreg;
+
+         rp->p_reg.a[2] = sc.sc_fp;
+
 	rp->p_reg.pc = sc.sc_pc;
 	rp->p_reg.sp = sc.sc_sp;
 	return (OK);
@@ -1097,19 +1100,8 @@ vir_bytes bytes;		/* # of bytes to be copied */
 /*==========================================================================*
  *				numap					    *
  *==========================================================================*/
-PUBLIC phys_bytes numap(proc_nr, vir_addr, bytes)
-int proc_nr;			/* process number to be mapped */
-vir_bytes vir_addr;		/* virtual address in bytes within D seg */
-vir_bytes bytes;		/* # of bytes required in segment  */
-{
-/* Do umap() starting from a process number instead of a pointer.  This
- * function is used by device drivers, so they need not know about the
- * process table.  To save time, there is no 'seg' parameter. The segment
- * is always D.
- */
+// numap is now implemented in mm.c
 
-  return(umap(proc_addr(proc_nr), D, vir_addr, bytes));
-}
 
 
 #if (CHIP == INTEL)

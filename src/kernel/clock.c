@@ -56,6 +56,11 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
+
+extern volatile uint32_t cp32_task1_ticks;
+extern volatile uint32_t cp32_task2_ticks;
+
+extern void sched(void);
 #include "esp32s3/systimer.h"
 
 /* Constant definitions. */
@@ -424,11 +429,11 @@ int irq;
   if (tty_timeout <= now) tty_wakeup(now);
 
   /* Step 6: Switch to do_clocktick() if:
-   *   (a) an alarm has expired, OR
-   *   (b) the scheduling quantum is up AND the current bill_ptr has not
-   *       changed since last tick AND a user process is waiting to run.
-   * Occasional false positives are harmless (do_clocktick is idempotent).
-   */
+ *   (a) an alarm has expired, OR
+ *   (b) the scheduling quantum is up AND the current bill_ptr has not
+ *       changed since last tick AND a user process is waiting to run.
+ * Occasional false positives are harmless (do_clocktick is idempotent).
+ */
   if (next_alarm <= now ||
       sched_ticks == 1 &&
       bill_ptr == prev_ptr &&
@@ -461,8 +466,32 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
       (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
     cp32_clock_irq_frame_stack_calls++;
+
+  if ((cp32_timer_irq_ticks & 0x0Fu) == 0) {
+    usbj_print("[IRQ "); usbj_print_u32(cp32_timer_irq_ticks);
+    usbj_print(" r="); usbj_print_u32((uint32_t) k_reenter);
+    usbj_print(" f="); usbj_print_u32(cp32_clock_irq_frame_stack_calls);
+    usbj_print(" t1="); usbj_print_u32(cp32_task1_ticks);
+    usbj_print(" t2="); usbj_print_u32(cp32_task2_ticks);
+    usbj_print("]\r\n");
+  }
+  
+  /* Run the MINIX clock path first; the separate handoff gate below controls
+   * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
-    (void) clock_handler(CLOCK_IRQ);
+    clock_handler(0);
+  unhold();
+
+  /* The process handoff is deliberately a second gate.  This keeps the
+   * validated clock/IRQ bridge testable without selecting another process. */
+  extern volatile int cp32_context_handoff_gate;
+  /* MINIX tasks are interrupt-driven and are not covered by the user
+   * quantum test. During the CP32 task-lifecycle test, rotate ready kernel
+   * tasks explicitly; user scheduling remains clock-handler controlled. */
+  if (cp32_context_handoff_gate &&
+      (!cp32_clock_irq_bridge_enabled ||
+       rdy_head[TASK_Q] != NIL_PROC))
+    sched();
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies

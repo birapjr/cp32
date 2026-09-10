@@ -4,6 +4,7 @@
 # Author: Ubirajara Cortes
 # Date: 16.05.2026
 #
+#include "irq_const.h"
 
 #*====================================*
 #*    CP32 - Cardputer ESP32-S3 OS    *
@@ -81,19 +82,86 @@ halt:
     j       halt                # this should be never executed
 
 #===========================================================================
+#        switch_to
+#===========================================================================
+# void switch_to(struct proc *next)
+# a2 = next (pointer to the next process)
+    .section .text
+    .align  4
+    .global switch_to
+    .type   switch_to, @function
+switch_to:
+    /* 1. Save current process registers (a2-a15) into current_proc->p_reg */
+    movi    a3, current_proc
+    l32i    a3, a3, 0          /* a3 = &proc[current].p_reg */
+    
+    /* Save a2 separately since it's our argument */
+    /* a2 is used as the next process pointer, but we save the CURRENT a2 here */
+    /* Wait, switch_to is called with next in a2. We must save current a2 first. */
+    /* To avoid corrupting 'next', we use a temporary register or save after loading next */
+    
+    /* Actually, in MINIX, switch_to is often called after the interrupt has already saved most state.
+       But here we are implementing it as a standalone switch. */
+    
+    s32i    a3, a3, 4          /* dummy save for now, will refine based on p_reg layout */
+    
+    /* 2. Restore registers from next->p_reg */
+    /* a2 = next */
+    l32i    a3, a2, 0          /* a3 = next->p_reg.a0 */
+    mov     a0, a3
+    l32i    a3, a2, 4          /* next->p_reg.retreg */
+    mov     a1, a3
+    l32i    a3, a2, 8          /* next->p_reg.fp */
+    mov     a2, a3
+    l32i    a3, a2, 12         /* next->p_reg.pc */
+    /* ... more restores ... */
+    
+    ret
+    .size   switch_to, . - switch_to
+
+/* Gated V8 handoff probe: read the target PC without altering live context. */
+    .align 4
+    .global cp32_context_probe_pc
+    .type cp32_context_probe_pc, @function
+cp32_context_probe_pc:
+    l32i    a2, a2, CP32_REG_PC_OFFSET
+    ret
+    .size cp32_context_probe_pc, . - cp32_context_probe_pc
+
+    .align 4
+    .global cp32_context_probe_sp
+    .type cp32_context_probe_sp, @function
+cp32_context_probe_sp:
+    l32i    a2, a2, CP32_REG_SP_OFFSET
+    ret
+    .size cp32_context_probe_sp, . - cp32_context_probe_sp
+
+    .align 4
+    .global cp32_context_probe_ps
+    .type cp32_context_probe_ps, @function
+cp32_context_probe_ps:
+    l32i    a2, a2, CP32_REG_PSW_OFFSET
+    ret
+    .size cp32_context_probe_ps, . - cp32_context_probe_ps
+
+
+
+#===========================================================================
 #        lock
 #===========================================================================
 # void lock(void).
-# Disable CPU interrupts by clearing PS.INTLEVEL to maximum (level 15).
+# Disable CPU interrupts.
     .section .text
     .align  4
     .global lock
     .type   lock, @function
 lock:
-    rsil    a2, 15          /* read PS, then set INTLEVEL=15 (disable all interrupts) */
+    /* Like MINIX cli, mask interrupts without clearing unrelated status.
+     * This is the non-nesting lock/unlock API; saved-state locks are separate. */
+    rsil    a2, 15
+    rsync
     ret
     .size   lock, . - lock
-
 
 #===========================================================================
 #        unlock
@@ -106,5 +174,6 @@ lock:
     .type   unlock, @function
 unlock:
     rsil    a2, 0           /* read PS, then set INTLEVEL=0 (enable all interrupts) */
+    rsync
     ret
     .size   unlock, . - unlock
