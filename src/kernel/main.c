@@ -26,6 +26,8 @@ extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
+extern volatile uint32_t cp32_blocked_syscall_count;
+extern volatile uint32_t cp32_sched_handoff_count;
 
 volatile uint32_t cp32_task1_ticks;
 volatile uint32_t cp32_task2_ticks;
@@ -73,8 +75,6 @@ void test_ipc_mm(void) {
     p2->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m2) >> CLICK_SHIFT;
     p2->p_map[D].mem_len = (((vir_bytes)&m2 & (CLICK_SIZE - 1)) + sizeof(m2) + CLICK_SIZE - 1) >> CLICK_SHIFT;
     
-    usbj_print("[TEST] IPC send/receive: ");
-    
     extern int _send(int dest, message *m);
     extern int _receive(int src, message *m);
 
@@ -85,18 +85,11 @@ void test_ipc_mm(void) {
     int blocked = p2->p_flags == RECEIVING;
     proc_ptr = p1;
     int send_res = _send(p2->p_nr, &m1);
-    usbj_print_u32((uint32_t)res);
-    usbj_print("/");
-    usbj_print_u32((uint32_t)send_res);
-    usbj_print(" (send/receive, flags=");
-    usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
-    usbj_print(", text=");
-    usbj_print(m2.m3_ca1);
     int pass = res == OK && send_res == OK && blocked &&
         p1->p_flags == 0 && p2->p_flags == 0 &&
         m2.m_source == p1->p_nr && m2.m_type == 42 &&
         strcmp(m2.m3_ca1, "Hello IPC!") == 0 && m1.m_source == 12345;
-    usbj_print(") [IPC V9 receiver-first pass=");
+    usbj_print("[IPC V9 receiver-first pass=");
     usbj_print_u32(pass);
     usbj_print("][MM V9]\r\n");
     if (!pass) panic("IPC receiver-first", 9);
@@ -257,13 +250,18 @@ void test_ipc_mm(void) {
     usbj_print_u32(pass);
     usbj_print("][MM V12]\r\n");
     if (!pass) panic("IPC translated IRQ", 17);
+    usbj_print("[IPC V19 blocked-count pass=");
+    usbj_print_u32(cp32_blocked_syscall_count == 8);
+    usbj_print(" n=");
+    usbj_print_u32(cp32_blocked_syscall_count);
+    usbj_print("]\r\n");
     proc_ptr = saved_proc;
 
     /* Exercise the dispatcher validation without changing process state. */
     usbj_print("[TEST] syscall invalid-function: ");
     res = sys_call(0, p2->p_nr, &m1);
     usbj_print_u32((uint32_t)res);
-    usbj_print(" [SYS V6]\r\n\r\n");
+    usbj_print(" [SYS V7]\r\n\r\n");
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────────
@@ -413,7 +411,10 @@ void main(void) {
     cp32_context_handoff_gate = 1;
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
    test_ipc_mm();
-   cp32_prepare_two_task_stress();
+  cp32_prepare_two_task_stress();
+  usbj_print("[SCHED V2 handoffs=");
+  usbj_print_u32(cp32_sched_handoff_count);
+  usbj_print("]\r\n");
    usbj_print("[STK V1 p1=");
    usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
    usbj_print(" p2=");
@@ -437,6 +438,30 @@ void main(void) {
    usbj_print_u32(lock_ok);
    usbj_print("]\r\n");
    if (!lock_ok) panic("status preservation", 1);
+   unsigned ps_saved_outer, ps_saved_inner, ps_nested, ps_restored;
+   ps_saved_outer = (unsigned)lock_save();
+   ps_saved_inner = (unsigned)lock_save();
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_nested));
+   restore_lock((int)ps_saved_inner);
+   restore_lock((int)ps_saved_outer);
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_restored));
+   unsigned lock_v2_ok = (ps_saved_outer == ps_before) &&
+       ((ps_saved_inner & 15u) == 15u) && ((ps_nested & 15u) == 15u) &&
+       (ps_restored == ps_saved_outer);
+   usbj_print("[LOCK V4 pass=");
+   usbj_print_u32(lock_v2_ok);
+   usbj_print(" saved=1 nested=1 restored=1 psb=");
+   usbj_print_u32(ps_before);
+   usbj_print(" pso=");
+   usbj_print_u32(ps_saved_outer);
+   usbj_print(" psi=");
+   usbj_print_u32(ps_saved_inner);
+   usbj_print(" psn=");
+   usbj_print_u32(ps_nested);
+   usbj_print(" psr=");
+   usbj_print_u32(ps_restored);
+   usbj_print("]\r\n");
+   if (!lock_v2_ok) panic("saved lock status", 1);
    usbj_print("[CTX V45] restore=1 handoff=1 clock=1 stress=2\r\n");
    systimer_irq_start();
    usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");

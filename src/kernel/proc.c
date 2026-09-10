@@ -43,10 +43,19 @@ void schedule(void)
 
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 PRIVATE unsigned handoff_diag_count;
+volatile uint32_t cp32_blocked_syscall_count;
+volatile uint32_t cp32_sched_handoff_count;
 
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
+
+PRIVATE int proc_queue(struct proc *rp)
+{
+  if (rp->p_nr < 0) return TASK_Q;
+  if (rp->p_nr < LOW_USER) return SERVER_Q;
+  return USER_Q;
+}
 
 /* Process table storage for the CP32 port. */
 struct proc proc[NR_TASKS + NR_PROCS];
@@ -74,11 +83,13 @@ PRIVATE int interrupt_message(struct proc *rp, message *buffer)
 PUBLIC void interrupt(int task)
 {
   struct proc *rp;
+  int saved_ps;
   if (!isokprocn(task) || task >= 0 || isidlehardware(task)) return;
   rp = proc_addr(task);
   if (rp->p_flags & P_SLOT_FREE) return;
   /* CP32 uses 0 at task level and 1 in the outer IRQ (MINIX uses -1/0). */
   if (switching || k_reenter > 1) {
+    saved_ps = lock_save();
     if (rp->p_int_held == 0) {
       rp->p_int_held = 1;
       rp->p_nextheld = NIL_PROC;
@@ -90,6 +101,7 @@ PUBLIC void interrupt(int task)
         held_tail = rp;
       }
     }
+    restore_lock(saved_ps);
     return;
   }
   if ((rp->p_flags & (RECEIVING | SENDING)) != RECEIVING ||
@@ -132,11 +144,14 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
   }
 
 report:
-  usbj_print("[SYS V6 f=");
-  usbj_print_u32((uint32_t)function);
-  usbj_print(" r=");
-  usbj_print_u32((uint32_t)result);
-  usbj_print("]\r\n");
+  if (result == OK && (rp->p_flags & (SENDING | RECEIVING)) != 0) {
+    cp32_blocked_syscall_count++;
+    usbj_print("[IPC V18 blocked-state pass=1 flags=");
+    usbj_print_u32((uint32_t)rp->p_flags);
+    usbj_print(" n=");
+    usbj_print_u32(cp32_blocked_syscall_count);
+    usbj_print("]\r\n");
+  }
   return result;
 }
  
@@ -193,7 +208,6 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     dest_ptr->p_flags &= ~RECEIVING;
     if (dest_ptr->p_flags == 0) ready(dest_ptr);
     
-    usbj_print("[IPC] mini_send: delivered immediately\r\n");
     return OK;
   } else {
     caller_ptr->p_messbuf = m_ptr;
@@ -212,11 +226,6 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     }
     caller_ptr->p_sendlink = NIL_PROC;
     
-    usbj_print("[IPC B]");
-    usbj_print_u32((uint32_t)caller_ptr->p_nr);
-    usbj_print("->");
-    usbj_print_u32((uint32_t)dest);
-    usbj_print("\r\n");
     return OK;
   }
 }
@@ -301,7 +310,7 @@ PRIVATE void pick_proc()
     proc_ptr = rp;
     /* MINIX bills user time only when a user process is selected. Kernel
      * tasks and servers retain the previous user billing target. */
-    if (rp->p_nr >= NR_TASKS + LOW_USER)
+    if (rp->p_nr >= LOW_USER)
       bill_ptr = rp;
 }
 
@@ -314,9 +323,7 @@ PRIVATE void ready(struct proc *rp)
   int q;
 
   if (rp == NIL_PROC) return;
-  if (rp->p_nr < NR_TASKS) q = TASK_Q;
-  else if (rp->p_nr < NR_TASKS + LOW_USER) q = SERVER_Q;
-  else q = USER_Q;
+  q = proc_queue(rp);
   
   if (q < 0 || q >= NQ) return;
 
@@ -338,6 +345,11 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   }
   p1->p_flags = 0;
   p2->p_flags = 0;
+  /* These two table entries are synthetic user tasks for the live context
+   * probe, not MINIX server processes. Give them user-range numbers so the
+   * real queue classifier does not prioritize one as a server. */
+  p1->p_nr = LOW_USER;
+  p2->p_nr = LOW_USER + 1;
   /* Use the same known-good initial PS for both stress entries. The generic
    * task initializer gives process 1 a different value, which prevents its
    * first entry loop from reaching its counter increment. */
@@ -347,6 +359,13 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   p2->p_nextready = NIL_PROC;
   ready(p1);
   ready(p2);
+  usbj_print("[SCHED V1 classify pass=");
+  usbj_print_u32((p1->p_nr >= LOW_USER) && (p2->p_nr >= LOW_USER));
+  usbj_print(" p1=");
+  usbj_print_u32((uint32_t)p1->p_nr);
+  usbj_print(" p2=");
+  usbj_print_u32((uint32_t)p2->p_nr);
+  usbj_print("]\r\n");
   current_proc = proc_addr(IDLE);
   proc_ptr = proc_addr(IDLE);
 }
@@ -359,9 +378,7 @@ PRIVATE void unready(struct proc *rp)
   int q;
   struct proc *prev, *cur;
   if (rp == NIL_PROC) return;
-  if (rp->p_nr < NR_TASKS) q = TASK_Q;
-  else if (rp->p_nr < NR_TASKS + LOW_USER) q = SERVER_Q;
-  else q = USER_Q;
+  q = proc_queue(rp);
   prev = NIL_PROC;
   cur = rdy_head[q];
   while (cur != NIL_PROC) {
@@ -419,6 +436,7 @@ PRIVATE void switch_to(struct proc *next)
  *===========================================================================*/
 void sched()
 {
+    cp32_sched_handoff_count++;
     /* Requeue every runnable non-idle process. Restricting this to users
      * consumes the task queue after its first pick and starves task entries. */
     if (current_proc != NIL_PROC &&
@@ -436,9 +454,11 @@ void sched()
 PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   int result;
+  int saved_ps = lock_save();
   switching = TRUE;
   result = mini_send(caller_ptr, dest, m_ptr);
   switching = FALSE;
+  restore_lock(saved_ps);
   return(result);
 }
  
@@ -488,14 +508,17 @@ PUBLIC void lock_sched()
 PUBLIC void unhold()
 {
   struct proc *rp;
+  int saved_ps;
   if (switching || k_reenter > 1) return;
   while (held_head != NIL_PROC) {
+    saved_ps = lock_save();
     rp = held_head;
     held_head = rp->p_nextheld;
     if (held_head == NIL_PROC)
       held_tail = NIL_PROC;
     rp->p_nextheld = NIL_PROC;
     rp->p_int_held = 0;
+    restore_lock(saved_ps);
     interrupt(rp->p_nr);
   }
 }

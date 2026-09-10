@@ -1,6 +1,22 @@
 
 ## Current handoff — 2026-09-10, LOCK V1 / CTX V45
 
+Latest hardware: cleaned logs passed through IRQ 176 (`t1=3234`, `t2=3157`)
+with IPC V18 blocked count `n=1..8`. The next image adds IPC V19 to summarize
+that count before context-handoff work.
+- [x] Corrected scheduler queue classification to use MINIX process-number
+      ranges: negative numbers are tasks, `0..LOW_USER-1` are servers, and
+      `LOW_USER+` are users. Added `[SCHED V1 classify ...]`.
+- [x] Fixed the synthetic live-context stress pair to use explicit user-range
+      process numbers, preserving round-robin coverage without weakening the
+      production queue classifier.
+- [x] Fixed the timer handoff gate to recognize runnable entries in all
+      scheduler queues; the TASK_Q-only condition had starved the corrected
+      user-range stress pair.
+- [x] Hardware passed restored CTX handoff and task progress through IRQ 240
+      (`t1=4409`, `t2=4318`, `f=1`). Added `[SCHED V2 handoffs=...]` as the
+      baseline for blocked-call context-return work.
+
 - [x] V17 hardware passed translated IRQ delivery; IRQ 144 reached with
       t1=2645, t2=2575 and no reported exception.
 - [x] Replace lock's destructive PS write with rsil 15 / rsync; unlock uses
@@ -33,6 +49,39 @@ Keep debug markers versioned for the next code change. Current markers:
 LOCK V1, CTX V45, IPC V17, MM V12, PANIC V1 (older regression markers remain).
 Physical nested IRQs, concurrent task IPC and the terminal panic path remain
 unvalidated. Existing libgcc ABI mismatch warning remains unresolved.
+
+### LOCK V2 — 2026-09-10
+
+- [x] Added Xtensa `lock_save()` / `restore_lock(saved_ps)` primitives that
+      preserve and restore the complete caller PS value.
+- [x] Applied saved-state exclusion to the held-interrupt queue,
+      `lock_mini_send()`, and `unhold()`; clean build, image generation, ELF
+      symbols, and disassembly passed. The existing libgcc ABI warning remains.
+- [x] Hardware: `[LOCK V4 pass=1 saved=1 nested=1 restored=1]`; sampled
+      `psb=pso=394528`, `psi=psn=394543`, and `psr=394528`. Existing
+      `[CTX V45]`, `[IPC V17]`, and `[MM V12]` checks continued successfully;
+      IRQ 160 reached with `t1=2940`, `t2=2869`, with no panic or exception.
+- [x] Routed `_send()`, `_receive()`, and `_sendrec()` through `sys_call()`;
+      this is the syscall integration step before adding true suspended
+      return/context handoff. Marker bumped from SYS V6 to SYS V7.
+- [x] Hardware: all IPC/MM regressions passed; `[SYS V7]` rejected the
+      invalid syscall with `-102`, and LOCK/CTX continued through IRQ 160
+      (`t1=2939`, `t2=2870`) without an exception.
+- [x] Follow-up hardware run confirmed `[SYS V7 f=...]` on every dispatcher
+      call, all IPC/MM markers, `[LOCK V4 pass=1]`, and CTX/IRQ stability
+      through IRQ 160 (`t1=2940`, `t2=2870`).
+- [x] Added kernel-side blocked-state diagnostics to `sys_call()`; the next
+      hardware run will emit `[IPC V18 blocked-state pass=1 flags=...]` when a
+      syscall successfully enters SENDING or RECEIVING.
+- [x] Hardware confirmed IPC V18 for flags `4`, `8`, and `12`; the supplied
+      run remained healthy through IRQ 112. Added a monotonic blocked-syscall
+      counter (`n=`) for the upcoming context-handoff check.
+- [x] Cleaned repetitive serial output: removed per-call SYS traces, raw
+      `mem_copy` details, immediate-send messages, sender-edge dumps, and the
+      verbose IPC payload line. Versioned pass/fail, error, blocked-state,
+      LOCK, CTX, and IRQ diagnostics remain. Clean build passed.
+- The `LOCK V3` failure was diagnostic ordering only: `ps_restored` was sampled
+      before the outer restore. LOCK V4 now samples after it.
 
 - [x] V16 hardware passed buffers and previous checks; IRQ 128 reached with
       t1=2351, t2=2289. Fatal panic path was not exercised by this success.

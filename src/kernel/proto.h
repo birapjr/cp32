@@ -24,6 +24,8 @@ _PROTOTYPE( int disable_irq, (unsigned irq)				);
 /* mpx32.S */
 _PROTOTYPE( void lock, (void)						);
 _PROTOTYPE( void unlock, (void)						);
+_PROTOTYPE( int lock_save, (void)					);
+_PROTOTYPE( void restore_lock, (int saved_ps)			);
 
 /* start.c */
 _PROTOTYPE( char *k_getenv, (char *name)				);

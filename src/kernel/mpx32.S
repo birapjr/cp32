@@ -177,3 +177,30 @@ unlock:
     rsync
     ret
     .size   unlock, . - unlock
+
+#===========================================================================
+#        lock_save / restore_lock
+#===========================================================================
+# int lock_save(void).
+# Raise INTLEVEL to the maximum and return the caller's complete PS value.
+# Unlike lock()/unlock(), this pair is nestable: the saved value is restored
+# by the matching restore_lock() call instead of unconditionally enabling IRQs.
+    .section .text
+    .align  4
+    .global lock_save
+    .type   lock_save, @function
+lock_save:
+    rsil    a2, 15
+    rsync
+    ret
+    .size   lock_save, . - lock_save
+
+# void restore_lock(int saved_ps).
+# a2 = PS value returned by lock_save().
+    .global restore_lock
+    .type   restore_lock, @function
+restore_lock:
+    wsr     a2, PS
+    rsync
+    ret
+    .size   restore_lock, . - restore_lock

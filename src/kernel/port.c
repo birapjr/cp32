@@ -1,6 +1,7 @@
 /* Minimal ESP32-S3 kernel glue required while process dispatch is being ported. */
 #include "kernel.h"
 #include "proc.h"
+#include <minix/com.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include "tty.h"
@@ -24,19 +25,15 @@ tty_t *tty_timelist;
  * macro names here would recurse back into this file. */
 int _send(int dest, message *m) {
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
-    return mini_send(proc_ptr, dest, m);
+    return sys_call(SEND, dest, m);
 }
 
 int _receive(int src, message *m) {
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
-    return mini_rec(proc_ptr, src, m);
+    return sys_call(RECEIVE, src, m);
 }
 
 int _sendrec(int dest, message *m) {
-    int result;
-
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
-    result = mini_send(proc_ptr, dest, m);
-    if (result != OK) return result;
-    return mini_rec(proc_ptr, dest, m);
+    return sys_call(BOTH, dest, m);
 }
