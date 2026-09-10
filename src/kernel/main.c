@@ -12,6 +12,7 @@
 
 #include "kernel.h"
 #include "proc.h"
+#include "irq_frame.h"
 #include "esp32s3/systimer.h"
 #include <minix/com.h>
 #include <string.h>
@@ -32,6 +33,7 @@ extern volatile struct proc *cp32_blocked_return_proc;
 extern volatile uint32_t cp32_blocked_handoff_count;
 extern volatile uint32_t cp32_blocked_ready_guard_count;
 extern volatile uint32_t cp32_ready_blocked_skip_count;
+extern volatile uint32_t cp32_blocked_frame_mismatch_count;
 extern volatile uint32_t cp32_sched_handoff_count;
 extern volatile uint32_t cp32_handoff_owner_mismatch_count;
 extern volatile uint32_t cp32_handoff_blocked_target_count;
@@ -91,9 +93,14 @@ void test_ipc_mm(void) {
     proc_ptr = p2;
     int res = _receive(p1->p_nr, &m2);
     int blocked = p2->p_flags == RECEIVING;
+    int receiver_frame_saved = p2->p_blocked_frame_valid &&
+        p2->p_blocked_frame_pc == p2->p_reg.pc &&
+        p2->p_blocked_frame_psw == p2->p_reg.psw &&
+        p2->p_blocked_frame_sp == p2->p_reg.sp;
     proc_ptr = p1;
     int send_res = _send(p2->p_nr, &m1);
     int pass = res == OK && send_res == OK && blocked &&
+        receiver_frame_saved && !p2->p_blocked_frame_valid &&
         p1->p_flags == 0 && p2->p_flags == 0 &&
         m2.m_source == p1->p_nr && m2.m_type == 42 &&
         strcmp(m2.m3_ca1, "Hello IPC!") == 0 && m1.m_source == 12345;
@@ -105,9 +112,14 @@ void test_ipc_mm(void) {
     memset(&m2, 0, sizeof(m2));
     res = _send(p2->p_nr, &m1);
     blocked = p1->p_flags == SENDING;
+    int sender_frame_saved = p1->p_blocked_frame_valid &&
+        p1->p_blocked_frame_pc == p1->p_reg.pc &&
+        p1->p_blocked_frame_psw == p1->p_reg.psw &&
+        p1->p_blocked_frame_sp == p1->p_reg.sp;
     proc_ptr = p2;
     int recv_res = _receive(p1->p_nr, &m2);
     pass = res == OK && recv_res == OK && blocked &&
+        sender_frame_saved && !p1->p_blocked_frame_valid &&
         p1->p_flags == 0 && p2->p_flags == 0 &&
         p2->p_callerq == NIL_PROC && m2.m_source == p1->p_nr &&
         m2.m_type == 42 && strcmp(m2.m3_ca1, "Hello IPC!") == 0 &&
@@ -116,6 +128,11 @@ void test_ipc_mm(void) {
     usbj_print_u32(pass);
     usbj_print("]\r\n");
     if (!pass) panic("IPC sender-first", 9);
+    usbj_print("[IPC V22 blocked-frame-wake pass=");
+    usbj_print_u32(receiver_frame_saved && sender_frame_saved);
+    usbj_print("]\r\n");
+    if (!receiver_frame_saved || !sender_frame_saved)
+      panic("IPC blocked frame", 22);
 
     /* Keep proc_ptr on the receiver: the internal gateway must use its
      * explicit caller, not the currently selected process. */
@@ -453,6 +470,43 @@ void main(void) {
   usbj_print("]\r\n");
   usbj_print("[CTX V48 owner-aligned pass=");
   usbj_print_u32(current_proc == proc_ptr);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V52 syscall-frame pass=");
+  usbj_print_u32(sizeof(cp32_syscall_return_contract_t) == 76 &&
+                 __builtin_offsetof(cp32_syscall_return_contract_t, a[2]) == 8 &&
+                 __builtin_offsetof(cp32_syscall_return_contract_t, pc) == 64 &&
+                 __builtin_offsetof(cp32_syscall_return_contract_t, sp) == 72);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V53 blocked-frame-state pass=");
+  usbj_print_u32(proc_addr(1)->p_blocked_frame_valid == 0 &&
+                 proc_addr(1)->p_blocked_frame_result == 0 &&
+                 cp32_blocked_handoff_gate == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V54 wake-result-slot pass=");
+  usbj_print_u32(proc_addr(1)->p_reg.a[2] == 0 &&
+                 proc_addr(1)->p_blocked_frame_result == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V55 wake-contract pass=");
+  usbj_print_u32(proc_addr(1)->p_blocked_frame_valid == 0 &&
+                 proc_addr(2)->p_blocked_frame_valid == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V56 frame-snapshot pass=");
+  usbj_print_u32(proc_addr(1)->p_blocked_frame_valid == 0 &&
+                 proc_addr(1)->p_blocked_frame_pc == proc_addr(1)->p_reg.pc &&
+                 proc_addr(1)->p_blocked_frame_psw == proc_addr(1)->p_reg.psw &&
+                 proc_addr(1)->p_blocked_frame_sp == proc_addr(1)->p_reg.sp);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V57 frame-preservation-mismatch count=");
+  usbj_print_u32(cp32_blocked_frame_mismatch_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V58 restore-guard pass=");
+  usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
+                 cp32_blocked_return_proc == NIL_PROC);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V59 user-frame-contract pass=");
+  usbj_print_u32(sizeof(cp32_user_frame_t) == 76 &&
+                 __builtin_offsetof(cp32_user_frame_t, pc) == 64 &&
+                 __builtin_offsetof(cp32_user_frame_t, sp) == 72);
   usbj_print("]\r\n");
   usbj_print("[CTX V49 owner-mismatch count=");
   usbj_print_u32(cp32_handoff_owner_mismatch_count);

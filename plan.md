@@ -22,14 +22,33 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
 
 ## Immediate next task
 
-- [ ] Define and document the CP32 syscall return-frame contract: saved PC,
-      stack, return register, processor status, and ownership at trap/IRQ exit.
+- [x] Defined and documented the CP32 syscall return-frame contract in
+      `src/kernel/irq_frame.h`: saved `pc/sp/psw`, call0 result in `a2`, and
+      owner preservation across a blocked SEND/RECEIVE.
+- [x] Added `[CTX V52 syscall-frame pass=1]` to expose the contract layout
+      checks in the boot diagnostics.
+- [x] Added blocked-frame validity/result bookkeeping and `[CTX V53
+      blocked-frame-state pass=1]`; the experimental return gate remains off.
+- [x] Finalized the saved `a2` result slot on both sender and receiver wakeup
+      paths and added `[CTX V54 wake-result-slot pass=1]`.
+- [x] Centralized sender/receiver wake completion and added `[CTX V55
+      wake-contract pass=1]` for consistent saved-result bookkeeping.
+- [x] Added blocked-frame `pc/psw/sp` snapshots and `[CTX V56
+      frame-snapshot pass=1]`; restoration remains gated.
 - [ ] Implement blocked SEND/RECEIVE/SENDREC suspension and resumption using
       that contract; do not enable the blocked-return gate until the frame is
       saved and restored end to end.
-- [ ] Replace synthetic blocked-IPC checks with a task-owned two-process
-      exchange that blocks the sender, wakes it from the receiver, verifies
-      message data and return values, and checks queues after each transition.
+- [x] Use the task-owned `p1`/`p2` exchange for blocked sender/receiver
+      transitions, verifying message data, return values, and queues.
+- [x] Extended that task-owned exchange with blocked-frame
+      snapshot and wake-clear assertions (`[IPC V22 blocked-frame-wake]`).
+- [x] Guarded wakeup with saved `pc/psw/sp` preservation checking and added
+      `[CTX V57 frame-preservation-mismatch count=0]`.
+- [x] Centralized blocked-frame restore preconditions and added `[CTX V58
+      restore-guard pass=1]`; the handoff gate remains disabled pending trap
+      entry and end-to-end return validation.
+- [x] Added a distinct user/trap frame contract and `[CTX V59
+      user-frame-contract pass=1]`; trap entry wiring remains pending.
 - [ ] Add hardware markers for blocked-frame save, wake, restore, and resumed
       syscall return.
 

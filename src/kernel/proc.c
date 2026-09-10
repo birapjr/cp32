@@ -54,8 +54,35 @@ volatile struct proc *cp32_irq_saved_owner;
 volatile int cp32_blocked_handoff_gate;
 volatile uint32_t cp32_blocked_ready_guard_count;
 volatile uint32_t cp32_ready_blocked_skip_count;
+volatile uint32_t cp32_blocked_frame_mismatch_count;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
 PRIVATE unsigned char cp32_blocked_probe_active;
+
+PRIVATE int cp32_blocked_frame_restore_ready(struct proc *rp)
+{
+  return rp != NIL_PROC && !rp->p_blocked_frame_valid &&
+         rp->p_blocked_frame_result == OK &&
+         rp->p_blocked_frame_pc == rp->p_reg.pc &&
+         rp->p_blocked_frame_psw == rp->p_reg.psw &&
+         rp->p_blocked_frame_sp == rp->p_reg.sp;
+}
+
+/* Complete the data portion of a blocked syscall wakeup.  Scheduling and
+ * trap return remain separate until the full user-frame path is available. */
+PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
+{
+  if (rp == NIL_PROC) return;
+  if (rp->p_blocked_frame_valid &&
+      (rp->p_blocked_frame_pc != rp->p_reg.pc ||
+       rp->p_blocked_frame_psw != rp->p_reg.psw ||
+       rp->p_blocked_frame_sp != rp->p_reg.sp)) {
+    cp32_blocked_frame_mismatch_count++;
+    return;
+  }
+  rp->p_reg.a[2] = (reg_t)result;
+  rp->p_blocked_frame_result = result;
+  rp->p_blocked_frame_valid = FALSE;
+}
 
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
@@ -77,7 +104,8 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
          proc_ptr == rp && current_proc == rp &&
          cp32_context_probe_sp(rp) != 0 &&
          (cp32_context_probe_sp(rp) & 0x0F) == 0 &&
-         rp->p_reg.a[15] != 0;
+         rp->p_reg.a[15] != 0 &&
+         cp32_blocked_frame_restore_ready(rp);
 }
 
 PRIVATE int proc_is_ready_queued(struct proc *target)
@@ -182,6 +210,11 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 
 report:
   if (result == OK && (rp->p_flags & (SENDING | RECEIVING)) != 0) {
+    rp->p_blocked_frame_valid = TRUE;
+    rp->p_blocked_frame_result = 0;
+    rp->p_blocked_frame_pc = rp->p_reg.pc;
+    rp->p_blocked_frame_psw = rp->p_reg.psw;
+    rp->p_blocked_frame_sp = rp->p_reg.sp;
     cp32_blocked_syscall_count++;
     if (proc_ptr == rp) {
       cp32_blocked_return_proc = rp;
@@ -252,6 +285,7 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     if (result != OK) return result;
     
     dest_ptr->p_flags &= ~RECEIVING;
+    cp32_complete_blocked_frame(dest_ptr, OK);
     if (cp32_blocked_return_proc == dest_ptr)
       cp32_blocked_return_proc = NIL_PROC;
     if (dest_ptr->p_flags == 0) ready(dest_ptr);
@@ -306,6 +340,7 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 
         sender_ptr->p_sendlink = NIL_PROC;
         sender_ptr->p_flags &= ~SENDING;
+        cp32_complete_blocked_frame(sender_ptr, OK);
         if (cp32_blocked_return_proc == sender_ptr)
           cp32_blocked_return_proc = NIL_PROC;
         if (sender_ptr->p_flags == 0) ready(sender_ptr);
@@ -411,6 +446,7 @@ PUBLIC void cp32_prepare_two_task_stress(void)
   cp32_blocked_handoff_count = 0;
   cp32_blocked_ready_guard_count = 0;
   cp32_ready_blocked_skip_count = 0;
+  cp32_blocked_frame_mismatch_count = 0;
   cp32_last_blocked_proc_nr = 0;
   cp32_blocked_handoff_reported = 0;
   cp32_blocked_probe_active = 0;
@@ -454,6 +490,13 @@ PUBLIC int cp32_probe_blocked_handoff(void)
   blocked->p_flags = SENDING;
   blocked->p_sendto = runnable->p_nr;
   blocked->p_nextready = NIL_PROC;
+  /* The probe models a frame that has already been woken and is eligible for
+   * the scheduler guard; the real trap path will populate these fields. */
+  blocked->p_blocked_frame_valid = FALSE;
+  blocked->p_blocked_frame_result = OK;
+  blocked->p_blocked_frame_pc = blocked->p_reg.pc;
+  blocked->p_blocked_frame_psw = blocked->p_reg.psw;
+  blocked->p_blocked_frame_sp = blocked->p_reg.sp;
   runnable->p_flags = 0;
   ready(runnable);
   current_proc = blocked;

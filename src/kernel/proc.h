@@ -71,6 +71,13 @@ struct proc {
   sigset_t p_pending;		/* bit map for pending signals */
   unsigned p_pendcount;		/* count of pending and unfinished signals */
 
+  /* CP32 blocked-call bookkeeping; the experimental return gate stays off. */
+  int p_blocked_frame_valid;
+  int p_blocked_frame_result;
+  reg_t p_blocked_frame_pc;
+  reg_t p_blocked_frame_psw;
+  reg_t p_blocked_frame_sp;
+
   char p_name[16];		/* name of the process */
 };
 

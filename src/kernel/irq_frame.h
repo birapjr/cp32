@@ -40,4 +40,52 @@ typedef char cp32_irq_frame_size_must_be_80[
 typedef char cp32_irq_frame_a15_offset_must_be_60[
     __builtin_offsetof(cp32_irq_frame_t, a15) == 60 ? 1 : -1];
 
+/*
+ * Syscall return contract for the CP32 call0 ABI.
+ *
+ * A syscall entered from a future user/trap path must preserve the complete
+ * process frame in struct stackframe_s (proc.h):
+ *   a[0..15] at offsets 0..60, pc at 64, psw at 68, sp at 72.
+ * The integer result is returned in a2, matching the call0 C ABI.  A blocked
+ * SEND/RECEIVE must leave the saved pc/sp/psw and owner unchanged until the
+ * matching wakeup writes the result into that saved a2 slot and the IRQ/trap
+ * epilogue restores the same frame.
+ *
+ * This is deliberately a contract declaration only.  The blocked-return gate
+ * remains disabled until trap entry, save, wake, and restore are implemented
+ * end to end.
+ */
+typedef struct cp32_syscall_return_contract {
+  uint32_t a[16];
+  uint32_t pc;
+  uint32_t psw;
+  uint32_t sp;
+} cp32_syscall_return_contract_t;
+
+typedef char cp32_syscall_contract_size_must_be_76[
+    sizeof(cp32_syscall_return_contract_t) == 76 ? 1 : -1];
+typedef char cp32_syscall_contract_result_register_must_be_a2[
+    __builtin_offsetof(cp32_syscall_return_contract_t, a[2]) == 8 ? 1 : -1];
+typedef char cp32_syscall_contract_pc_offset_must_be_64[
+    __builtin_offsetof(cp32_syscall_return_contract_t, pc) == 64 ? 1 : -1];
+typedef char cp32_syscall_contract_sp_offset_must_be_72[
+    __builtin_offsetof(cp32_syscall_return_contract_t, sp) == 72 ? 1 : -1];
+
+/* Future user/trap entry contract.  This is intentionally distinct from the
+ * level-1 IRQ frame: trap entry must eventually supply the saved return PC,
+ * PSW, SP, and call0 registers before sys_call can touch user state. */
+typedef struct cp32_user_frame {
+  uint32_t a[16];
+  uint32_t pc;
+  uint32_t psw;
+  uint32_t sp;
+} cp32_user_frame_t;
+
+typedef char cp32_user_frame_size_must_be_76[
+    sizeof(cp32_user_frame_t) == 76 ? 1 : -1];
+typedef char cp32_user_frame_pc_offset_must_be_64[
+    __builtin_offsetof(cp32_user_frame_t, pc) == 64 ? 1 : -1];
+typedef char cp32_user_frame_sp_offset_must_be_72[
+    __builtin_offsetof(cp32_user_frame_t, sp) == 72 ? 1 : -1];
+
 #endif
