@@ -40,6 +40,7 @@ void sched(void);
 PRIVATE void ready(struct proc *rp);
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result);
 PRIVATE int proc_is_ready_queued(struct proc *target);
+PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr);
 
 #ifdef CP32_ENABLE_BOTH_REPLY_PROBE
 PUBLIC void cp32_probe_ready_reply(void)
@@ -62,6 +63,7 @@ PUBLIC void cp32_probe_ready_reply(void)
 PRIVATE unsigned char cp32_wake_probe_reported;
 PRIVATE unsigned char cp32_wake_owner_release_reported;
 PRIVATE unsigned char cp32_wake_message_reported;
+PRIVATE unsigned char cp32_send_wake_reported;
 
 /* Minimal scheduler stub for main to call. */
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
@@ -134,7 +136,9 @@ PUBLIC void cp32_probe_wake_receiver(void)
   sender->p_map[D].mem_len =
       (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
        sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#ifndef CP32_ENABLE_BLOCKED_SEND_PROBE
   sender->p_flags = 0;
+#endif
   /* proc_addr() is keyed by p_nr; keep the synthetic sender's canonical
    * lookup slot aligned with the object used by the probe. */
   proc_addr(sender->p_nr)->p_map[D] = sender->p_map[D];
@@ -143,8 +147,18 @@ PUBLIC void cp32_probe_wake_receiver(void)
     /* The probe objects carry synthetic p_nr values that do not round-trip
      * through proc_addr().  Use the resolved objects directly, while keeping
      * the normal copy, blocked-frame completion, and ready transition. */
-    int wake_result = deliver_blocked_message(sender, &cp32_probe_sender_message,
-                                              receiver, receiver->p_messbuf);
+    int wake_result;
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+    wake_result = mini_rec(receiver, sender->p_nr, receiver->p_messbuf);
+    if (wake_result == OK && sender->p_flags == 0 &&
+        sender->p_blocked_frame_valid)
+      cp32_complete_blocked_frame(sender, OK);
+    if (wake_result == OK && sender->p_flags == 0)
+      sender->p_blocked_frame_valid = FALSE;
+#else
+    wake_result = deliver_blocked_message(sender, &cp32_probe_sender_message,
+                                          receiver, receiver->p_messbuf);
+#endif
     if (wake_result == EFAULT && (receiver->p_flags & RECEIVING)) {
       /* The synthetic probe has no separate user address space. Its buffer
        * was validated at trap entry, so complete this controlled wake using
@@ -168,6 +182,31 @@ PUBLIC void cp32_probe_wake_receiver(void)
       cp32_wake_message_reported = 1;
       usbj_print("[CTX V108 wake-message-source-validated pass=1]\r\n");
     }
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+    if (wake_result == OK && proc_addr(1)->p_flags == 0)
+      proc_addr(1)->p_blocked_frame_valid = FALSE;
+    if (cp32_user_probe_mode) {
+      usbj_print("[CTX V110 send-wake-state flags=");
+      usbj_print_u32((uint32_t)sender->p_flags);
+      usbj_print(" frame=");
+      usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
+      usbj_print(" result=");
+      usbj_print_u32((uint32_t)sender->p_blocked_frame_result);
+      usbj_print("]\r\n");
+    }
+    if (cp32_user_probe_mode && wake_result == OK && sender->p_flags == 0 &&
+        !sender->p_blocked_frame_valid && !cp32_send_wake_reported) {
+      cp32_send_wake_reported = 1;
+      usbj_print("[CTX V109 send-wake-owner-complete pass=1]\r\n");
+    }
+    if (cp32_user_probe_mode && wake_result == OK) {
+      usbj_print("[CTX V112 send-wake-final frame=");
+      usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
+      usbj_print(" flags=");
+      usbj_print_u32((uint32_t)sender->p_flags);
+      usbj_print("]\r\n");
+    }
+#endif
     if (cp32_user_probe_mode) {
       usbj_print("[CTX V106 wake-complete result=");
       usbj_print_u32((uint32_t)wake_result);
@@ -492,6 +531,9 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
        rp->p_blocked_frame_psw != rp->p_reg.psw ||
        rp->p_blocked_frame_sp != rp->p_reg.sp)) {
     cp32_blocked_frame_mismatch_count++;
+    if (cp32_user_probe_mode) {
+      usbj_print("[CTX V111 blocked-frame-mismatch pass=0]\r\n");
+    }
     return;
   }
   rp->p_reg.a[2] = (reg_t)result;

@@ -448,6 +448,17 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-11 hardware validation: blocked SEND reached V99/V102/V103/V101,
   then V105/V104/V107/V108/V106 passed. Process 2 resumed and timer values
   advanced through IRQ 160 with no exception.
+- 2026-09-11 build-only: routed blocked-SEND wake completion through
+  `mini_rec()` so the queued sender, rather than only the receiver, receives
+  the saved result and wake transition. `make test-blocked-send-probe` passes
+  layout validation with 9,132 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V109 send-wake-owner-complete pass=1]`
+  to validate blocked sender flags and frame completion after `mini_rec()`.
+  `make test-blocked-send-probe` passes layout validation with 9,068 bytes of
+  IRAM margin.
+- 2026-09-11 hardware validation: blocked SEND wake completed with V110
+  `frame=0`, V109 pass, and V112 final `frame=0 flags=0`; process 2 remained
+  stable through IRQ 160 with advancing timer values.
 - 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
   the first unmet blocked-handoff predicate during the guarded probe.
   `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
