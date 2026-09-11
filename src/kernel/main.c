@@ -60,6 +60,10 @@ volatile uint32_t cp32_task2_ticks;
 message cp32_probe_message;
 message cp32_probe_sender_message;
 extern void cp32_user_probe_entry(void);
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+extern void cp32_user_reply_entry(void);
+extern void cp32_probe_ready_reply(void);
+#endif
 extern void cp32_enter_initial_user(struct proc *owner);
 extern volatile int cp32_probe_wake_once;
 extern volatile int cp32_user_probe_mode;
@@ -428,10 +432,15 @@ void main(void) {
    * the generic bootstrap table is offset by the task range. */
   proc_addr(1)->p_nr = 1;
   proc_addr(2)->p_nr = 2;
-  (pproc_addr + NR_TASKS)[1] = proc_addr(1);
-  (pproc_addr + NR_TASKS)[2] = proc_addr(2);
   cp32_probe_sender_message.m_type = 0x43503332;
   cp32_probe_message.m_type = 0;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  cp32_user_handoff_gate = 1;
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+  proc_addr(2)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  proc_addr(2)->p_flags = 0;
+#endif
   proc_addr(2)->p_flags = P_SLOT_FREE;
   proc_addr(1)->p_map[D].mem_vir =
       (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
@@ -448,6 +457,20 @@ void main(void) {
   proc_addr(2)->p_map[D].mem_len =
       (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
        sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  proc_addr(1)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
+  proc_addr(1)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
+  proc_addr(1)->p_map[D].mem_len = proc_addr(2)->p_map[D].mem_len;
+  proc_addr(2)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
+  proc_addr(2)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_message) >> CLICK_SHIFT;
+  proc_addr(2)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#endif
   cp32_probe_wake_once = 1;
 #endif
   proc_addr(1)->p_int_blocked = 0;
@@ -505,8 +528,39 @@ void main(void) {
      * the IRQ bridge to invoke the scheduler and select a saved frame. */
     cp32_context_handoff_gate = 1;
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
-   test_ipc_mm();
+  test_ipc_mm();
   cp32_prepare_two_task_stress();
+#if CP32_ENABLE_USER_PROBE
+  /* Stress setup assigns user-range numbers for scheduler diagnostics; the
+   * live syscall probes need stable table identities instead. */
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  cp32_user_handoff_gate = 1;
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+  proc_addr(3)->p_nr = 3;
+  memset(proc_addr(3)->p_reg.a, 0, sizeof(proc_addr(3)->p_reg.a));
+  proc_addr(3)->p_reg.psw = 0;
+  proc_addr(3)->p_reg.a[15] = 0x3FC00000;
+  proc_addr(3)->p_reg.sp = proc_addr(1)->p_reg.sp + 4096;
+  proc_addr(1)->p_reg.a[1] = proc_addr(1)->p_reg.sp;
+  proc_addr(3)->p_reg.a[1] = proc_addr(3)->p_reg.sp;
+  proc_addr(3)->p_map[S].mem_phys = proc_addr(3)->p_reg.sp >> CLICK_SHIFT;
+  proc_addr(3)->p_map[S].mem_len = proc_addr(1)->p_map[S].mem_len;
+  proc_addr(3)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  proc_addr(3)->p_flags = 0;
+  proc_addr(2)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  proc_addr(3)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
+  proc_addr(3)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_message) >> CLICK_SHIFT;
+  proc_addr(3)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  cp32_probe_ready_reply();
+#endif
+#endif
   usbj_print("[SCHED V1 classify pass=1 p1=2 p2=3]\r\n");
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
@@ -535,7 +589,12 @@ void main(void) {
   }
   usbj_print("]\r\n");
   usbj_print("[CTX V64 user-handoff-contract pass=");
-  usbj_print_u32(cp32_user_handoff_gate == 0 &&
+  usbj_print_u32(
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+                 cp32_user_handoff_gate == 1 &&
+#else
+                 cp32_user_handoff_gate == 0 &&
+#endif
                  cp32_user_handoff_reject_count == 0);
   usbj_print(" rejects=");
   usbj_print_u32(cp32_user_handoff_reject_count);
@@ -653,7 +712,21 @@ void main(void) {
   usbj_print(" d=");
   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
   usbj_print("]\r\n");
-   cp32_context_handoff_gate = 1;
+  cp32_context_handoff_gate = 1;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  /* The final stress reset above clears ready queues; restore the canonical
+   * reply receiver after it, immediately before enabling the live probe. */
+  (pproc_addr + NR_TASKS)[1] = cproc_addr(1);
+  (pproc_addr + NR_TASKS)[2] = cproc_addr(2);
+  (pproc_addr + NR_TASKS)[3] = cproc_addr(3);
+  cproc_addr(1)->p_nr = 1;
+  cproc_addr(2)->p_nr = 2;
+  cproc_addr(3)->p_nr = 3;
+  cproc_addr(2)->p_reg.pc = (reg_t)cp32_user_probe_entry;
+  cproc_addr(3)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  cp32_user_handoff_gate = 1;
+  cp32_probe_ready_reply();
+#endif
    unsigned ps_before, ps_locked, ps_unlocked;
    __asm__ volatile("rsr %0, ps" : "=a"(ps_before));
    lock();

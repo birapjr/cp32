@@ -404,7 +404,13 @@ irq_user:
     mov     a3, a0
     rsr     a4, exccause
     mov     a1, a3
+    mov     a15, a1
     call0   cp32_user_trap_dispatch
+    mov     a1, a15
+
+    movi    a3, cp32_user_dispatch_blocked
+    l32i    a3, a3, 0
+    beqz    a3, 2f
 
     /* A successful gated dispatch owns the saved frame and may return to
      * user mode.  Keep the diagnostic path for every rejected frame. */
@@ -482,7 +488,11 @@ irq_user:
 .global cp32_user_probe_entry
 .type   cp32_user_probe_entry, @function
 cp32_user_probe_entry:
-#ifdef CP32_ENABLE_BOTH_PROBE
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+    movi    a2, 3                 /* BOTH / SENDREC */
+    movi    a3, 3                 /* reply process */
+    movi    a4, cp32_probe_sender_message
+#elif defined(CP32_ENABLE_BOTH_PROBE)
     movi    a2, 3                 /* BOTH / SENDREC */
     movi    a3, 999               /* invalid destination: safe rejection */
     movi    a4, 0
@@ -501,6 +511,24 @@ cp32_user_probe_entry:
 cp32_user_probe_done:
     j       cp32_user_probe_done
 .size cp32_user_probe_entry, .-cp32_user_probe_entry
+
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+.align 4
+.global cp32_user_reply_entry
+.type   cp32_user_reply_entry, @function
+cp32_user_reply_entry:
+    movi    a2, 2                 /* RECEIVE */
+    movi    a3, 2                 /* caller runtime p_nr */
+    movi    a4, cp32_probe_message
+    ill
+    movi    a2, 1                 /* SEND */
+    movi    a3, 2                 /* caller process */
+    movi    a4, cp32_probe_message
+    ill
+cp32_user_reply_done:
+    j       cp32_user_reply_done
+.size cp32_user_reply_entry, .-cp32_user_reply_entry
+#endif
 
 .align 4
 .global cp32_enter_initial_user

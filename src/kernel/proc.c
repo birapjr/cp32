@@ -39,6 +39,25 @@ PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
 void sched(void);
 PRIVATE void ready(struct proc *rp);
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result);
+PRIVATE int proc_is_ready_queued(struct proc *target);
+
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+PUBLIC void cp32_probe_ready_reply(void)
+{
+  struct proc *reply = proc_addr(3);
+  struct proc *caller = proc_addr(2);
+  int q;
+  /* Stress setup may have left a stale process-table object with the same
+   * synthetic number in a ready queue.  The reply probe must start with one
+   * canonical receiver, otherwise sched() can select the stale object. */
+  for (q = 0; q < NQ; q++) {
+    rdy_head[q] = NIL_PROC;
+    rdy_tail[q] = NIL_PROC;
+  }
+  if (caller->p_flags == 0) ready(caller);
+  if (reply->p_flags == 0) ready(reply);
+}
+#endif
 
 /* Minimal scheduler stub for main to call. */
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
@@ -69,6 +88,7 @@ volatile uint32_t cp32_blocked_frame_wake_count;
 volatile uint32_t cp32_blocked_resume_count;
 volatile uint32_t cp32_blocked_frame_restore_count;
 volatile uint32_t cp32_user_blocked_return_count;
+volatile int cp32_user_dispatch_blocked;
 volatile int cp32_user_handoff_gate;
 volatile uint32_t cp32_user_handoff_reject_count;
 volatile uint32_t cp32_user_trap_probe_count;
@@ -177,6 +197,13 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   function = (int)frame->a[2];
   src_dest = (int)frame->a[3];
   m_ptr = (message *)(uintptr_t)frame->a[4];
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  if (function == BOTH &&
+      (owner == NIL_PROC || owner == proc_addr(IDLE) || owner->p_nr < 0)) {
+    usbj_print("[CTX V75 both-owner-reject]\r\n");
+    return EBADCALL;
+  }
+#endif
   if (function != SEND && function != RECEIVE && function != BOTH) {
     if (cp32_user_probe_mode) usbj_print("[CTX V68 reject=function]\r\n");
     return EBADCALL;
@@ -189,16 +216,41 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   owner->p_reg.psw = (reg_t)frame->psw;
   owner->p_reg.sp = (reg_t)frame->sp;
 
+  if (cp32_user_probe_mode && function == BOTH) {
+    usbj_print("[CTX V74 both-call owner=");
+    usbj_print_u32((uint32_t)owner->p_nr);
+    usbj_print(" dest="); usbj_print_u32((uint32_t)src_dest);
+    usbj_print(" msg="); usbj_print_u32((uint32_t)(uintptr_t)m_ptr);
+    usbj_print("]\r\n");
+  }
+
   result = sys_call(function, src_dest, m_ptr);
+  cp32_user_dispatch_blocked = 0;
+  if (cp32_user_probe_mode && function == BOTH && result == OK)
+    cp32_user_dispatch_blocked = 1;
+  if (cp32_user_probe_mode && function == BOTH) {
+    usbj_print("[CTX V73 both-state flags=");
+    usbj_print_u32((uint32_t)owner->p_flags);
+    usbj_print(" blocked=");
+    usbj_print_u32((uint32_t)cp32_user_dispatch_blocked);
+    usbj_print(" return=");
+    usbj_print_u32((uint32_t)(cp32_blocked_return_proc == owner));
+    usbj_print("]\r\n");
+  }
   if (cp32_user_probe_mode && function == BOTH) {
     usbj_print("[CTX V70 both-dispatch result=");
     usbj_print_u32((uint32_t)result);
+    usbj_print(" owner="); usbj_print_u32((uint32_t)owner->p_nr);
+    usbj_print(" map=");
+    usbj_print_u32((uint32_t)numap(owner->p_nr, (vir_bytes)m_ptr, MESS_SIZE));
     usbj_print("]\r\n");
   }
   frame->a[2] = (uint32_t)result;
   owner->p_reg.a[2] = (reg_t)result;
   if (cp32_user_probe_mode) frame->pc += 3;
-  if (owner->p_flags & (SENDING | RECEIVING)) {
+  if ((owner->p_flags & (SENDING | RECEIVING)) ||
+      cp32_blocked_return_proc == owner) {
+    cp32_user_dispatch_blocked = 1;
     /* A user exception cannot rfe until a scheduler handoff has selected a
      * different runnable frame. Keep this path fail-closed for now. */
     cp32_user_blocked_return_count++;
@@ -217,15 +269,41 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
                                      cp32_user_frame_t *frame)
 {
   struct proc *next;
+  if (cp32_user_probe_mode) usbj_print("[CTX V76 handoff-enter]\r\n");
+  if (cp32_user_probe_mode) {
+    usbj_print("[CTX V77 handoff ptr owner=");
+    usbj_print_u32((uint32_t)(uintptr_t)owner);
+    usbj_print(" proc="); usbj_print_u32((uint32_t)(uintptr_t)proc_ptr);
+    usbj_print(" frame="); usbj_print_u32((uint32_t)(uintptr_t)frame);
+    usbj_print(" gate="); usbj_print_u32((uint32_t)cp32_user_handoff_gate);
+    usbj_print("]\r\n");
+  }
   if (!cp32_user_handoff_gate || owner == NIL_PROC || frame == (cp32_user_frame_t *)0 ||
       owner != proc_ptr || owner->p_flags == 0 ||
-      cp32_blocked_return_proc != owner || !owner->p_blocked_frame_valid) {
+        cp32_blocked_return_proc != owner || !owner->p_blocked_frame_valid) {
     cp32_user_handoff_reject_count++;
     return EBADCALL;
   }
   current_proc = owner;
+  if (cp32_user_probe_mode) {
+    struct proc *reply_probe = proc_addr(3);
+    usbj_print("[CTX V72 pre-sched reply nr=");
+    usbj_print_u32((uint32_t)reply_probe->p_nr);
+    usbj_print(" flags="); usbj_print_u32((uint32_t)reply_probe->p_flags);
+    usbj_print(" sp="); usbj_print_u32((uint32_t)reply_probe->p_reg.sp);
+    usbj_print(" pc="); usbj_print_u32((uint32_t)reply_probe->p_reg.pc);
+    usbj_print(" queued="); usbj_print_u32((uint32_t)proc_is_ready_queued(reply_probe));
+    usbj_print("]\r\n");
+  }
   sched();
   next = proc_ptr;
+  if (cp32_user_probe_mode) {
+    usbj_print("[CTX V71 handoff-next nr=");
+    usbj_print_u32((uint32_t)(next == NIL_PROC ? 0xFFFFFFFF : next->p_nr));
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)(next == NIL_PROC ? 0 : next->p_reg.pc));
+    usbj_print("]\r\n");
+  }
   if (next == NIL_PROC || next == owner || next->p_flags != 0) {
     cp32_user_handoff_reject_count++;
     return EBADCALL;
@@ -523,6 +601,20 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
       next_ptr->p_sendlink = caller_ptr;
     }
     caller_ptr->p_sendlink = NIL_PROC;
+    if (cp32_user_probe_mode && handoff_diag_count < 10) {
+      usbj_print("[IPC V81 send-queued sender=");
+      usbj_print_u32((uint32_t)caller_ptr->p_nr);
+      usbj_print(" dest=");
+      usbj_print_u32((uint32_t)dest_ptr->p_nr);
+      usbj_print(" dptr=");
+      usbj_print_u32((uint32_t)(uintptr_t)dest_ptr);
+      usbj_print(" dflags=");
+      usbj_print_u32((uint32_t)dest_ptr->p_flags);
+      usbj_print(" callerq=");
+      usbj_print_u32((uint32_t)(dest_ptr->p_callerq == NIL_PROC ?
+                                0xFFFFFFFF : dest_ptr->p_callerq->p_nr));
+      usbj_print("]\r\n");
+    }
     
     return OK;
   }
@@ -539,6 +631,20 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isoksrc_dest(src)) return E_BAD_SRC;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
+  if (cp32_user_probe_mode) {
+    usbj_print("[IPC V80 receive-enter nr=");
+    usbj_print_u32((uint32_t)caller_ptr->p_nr);
+    usbj_print(" flags=");
+    usbj_print_u32((uint32_t)caller_ptr->p_flags);
+    usbj_print(" src=");
+    usbj_print_u32((uint32_t)src);
+    usbj_print(" callerq=");
+    usbj_print_u32((uint32_t)(caller_ptr->p_callerq == NIL_PROC ?
+                              0xFFFFFFFF : caller_ptr->p_callerq->p_nr));
+    usbj_print(" ptr=");
+    usbj_print_u32((uint32_t)(uintptr_t)caller_ptr);
+    usbj_print("]\r\n");
+  }
 
   if (!(caller_ptr->p_flags & SENDING)) {
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
@@ -557,6 +663,17 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
         sender_ptr->p_sendlink = NIL_PROC;
         sender_ptr->p_flags &= ~SENDING;
         cp32_complete_blocked_frame(sender_ptr, OK);
+        if (cp32_user_probe_mode) {
+          usbj_print("[IPC V79 receive-delivery sender=");
+          usbj_print_u32((uint32_t)sender_ptr->p_nr);
+          usbj_print(" flags=");
+          usbj_print_u32((uint32_t)sender_ptr->p_flags);
+          usbj_print(" receiver=");
+          usbj_print_u32((uint32_t)caller_ptr->p_nr);
+          usbj_print(" rflags=");
+          usbj_print_u32((uint32_t)caller_ptr->p_flags);
+          usbj_print("]\r\n");
+        }
         if (cp32_blocked_return_proc == sender_ptr)
           cp32_blocked_return_proc = NIL_PROC;
         if (sender_ptr->p_flags == 0) ready(sender_ptr);
@@ -882,6 +999,21 @@ void sched()
             usbj_print_u32((uint32_t)current_proc->p_flags);
             usbj_print("]\r\n");
         }
+    }
+    if (cp32_user_probe_mode && handoff_diag_count < 10) {
+        usbj_print("[CTX V78 sched current=");
+        usbj_print_u32((uint32_t)(current_proc == NIL_PROC ? 0xFFFFFFFF : current_proc->p_nr));
+        usbj_print(" flags=");
+        usbj_print_u32((uint32_t)(current_proc == NIL_PROC ? 0 : current_proc->p_flags));
+        usbj_print(" q0=");
+        usbj_print_u32((uint32_t)(rdy_head[0] == NIL_PROC ? 0xFFFFFFFF : rdy_head[0]->p_nr));
+        usbj_print(" q1=");
+        usbj_print_u32((uint32_t)(rdy_head[1] == NIL_PROC ? 0xFFFFFFFF : rdy_head[1]->p_nr));
+        usbj_print(" q2=");
+        usbj_print_u32((uint32_t)(rdy_head[2] == NIL_PROC ? 0xFFFFFFFF : rdy_head[2]->p_nr));
+        usbj_print(" q3=");
+        usbj_print_u32((uint32_t)(rdy_head[3] == NIL_PROC ? 0xFFFFFFFF : rdy_head[3]->p_nr));
+        usbj_print("]\r\n");
     }
     pick_proc();
     switch_to(proc_ptr);
