@@ -24,6 +24,8 @@ _PROTOTYPE( int disable_irq, (unsigned irq)				);
 /* mpx32.S */
 _PROTOTYPE( void lock, (void)						);
 _PROTOTYPE( void unlock, (void)						);
+_PROTOTYPE( int lock_save, (void)					);
+_PROTOTYPE( void restore_lock, (int saved_ps)			);
 
 /* start.c */
 _PROTOTYPE( char *k_getenv, (char *name)				);
@@ -40,6 +42,9 @@ _PROTOTYPE( void lock_sched, (void)					);
 _PROTOTYPE( void lock_unready, (struct proc *rp)			);
 _PROTOTYPE( int sys_call, (int function, int src_dest, message *m_ptr)	);
 _PROTOTYPE( void unhold, (void)						);
+_PROTOTYPE( int cp32_probe_blocked_handoff, (void)			);
+_PROTOTYPE( void cp32_reset_handoff_diagnostics, (void)		);
+_PROTOTYPE( int cp32_probe_all_blocked_queue, (void)		);
 
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);

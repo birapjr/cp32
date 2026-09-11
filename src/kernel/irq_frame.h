@@ -40,4 +40,40 @@ typedef char cp32_irq_frame_size_must_be_80[
 typedef char cp32_irq_frame_a15_offset_must_be_60[
     __builtin_offsetof(cp32_irq_frame_t, a15) == 60 ? 1 : -1];
 
+typedef struct cp32_syscall_return_contract {
+  uint32_t a[16];
+  uint32_t pc;
+  uint32_t psw;
+  uint32_t sp;
+} cp32_syscall_return_contract_t;
+
+typedef char cp32_syscall_contract_size_must_be_76[
+    sizeof(cp32_syscall_return_contract_t) == 76 ? 1 : -1];
+typedef char cp32_syscall_contract_result_register_must_be_a2[
+    __builtin_offsetof(cp32_syscall_return_contract_t, a[2]) == 8 ? 1 : -1];
+typedef char cp32_syscall_contract_pc_offset_must_be_64[
+    __builtin_offsetof(cp32_syscall_return_contract_t, pc) == 64 ? 1 : -1];
+typedef char cp32_syscall_contract_sp_offset_must_be_72[
+    __builtin_offsetof(cp32_syscall_return_contract_t, sp) == 72 ? 1 : -1];
+
+typedef struct cp32_user_frame {
+  uint32_t a[16];
+  uint32_t pc;
+  uint32_t psw;
+  uint32_t sp;
+} cp32_user_frame_t;
+
+typedef char cp32_user_frame_size_must_be_76[
+    sizeof(cp32_user_frame_t) == 76 ? 1 : -1];
+typedef char cp32_user_frame_pc_offset_must_be_64[
+    __builtin_offsetof(cp32_user_frame_t, pc) == 64 ? 1 : -1];
+typedef char cp32_user_frame_sp_offset_must_be_72[
+    __builtin_offsetof(cp32_user_frame_t, sp) == 72 ? 1 : -1];
+
+static inline int cp32_user_frame_contract_valid(const cp32_user_frame_t *frame)
+{
+  return frame != (const cp32_user_frame_t *)0 && frame->pc != 0 &&
+         frame->sp != 0 && (frame->sp & 0x0F) == 0;
+}
+
 #endif

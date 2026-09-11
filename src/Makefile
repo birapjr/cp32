@@ -9,9 +9,9 @@ LD      = xtensa-esp32s3-elf-gcc
 OBJCOPY = xtensa-esp32s3-elf-objcopy
 
 # Flags
-CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
+CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
-LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
+LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
 C_SRCS = start.c main.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c
@@ -72,6 +72,7 @@ $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
 	  --flash-freq 40m \
 	  --flash-size 8MB \
 	  $(BUILD_DIR)/$(TARGET).elf
+	python3 ../tools/check_image_layout.py $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin
 	
 
 # Flash to ESP32-S3
@@ -83,6 +84,26 @@ flash: $(BUILD_DIR)/$(TARGET).bin
 test-exception:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_TEST_EXCEPTION=1" all
+
+# Hardware test: select the real Xtensa syscall probe as process 1.
+test-user-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1" all
+
+# Hardware test: route BOTH/SENDREC through the user trap gate with an
+# invalid destination so the frame decode and rejection are bounded.
+test-both-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BOTH_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BOTH_PROBE=1" all
+
+test-both-reply-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BOTH_REPLY_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BOTH_REPLY_PROBE=1" all
+
+# Hardware test: exercise blocked RECEIVE; it must stop at the guard.
+test-blocked-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_PROBE=1" all
 
 # Clean build artifacts
 clean:

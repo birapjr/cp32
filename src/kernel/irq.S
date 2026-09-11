@@ -150,11 +150,17 @@ irq_nmi:
 .type   irq_kernel, @function
 irq_kernel:
     wsr     a0, excsave1        /* save a0; excsave1 is the level-1 scratch */
-    rsr     a2, exccause        /* arg0: exception cause                    */
+    rsr     a6, exccause        /* keep user a2/a3 intact for the probe frame */
+    movi    a4, cp32_user_probe_mode
+    l32i    a4, a4, 0
+    beqz    a4, 0f
+    movi    a5, 0
+    beq     a6, a5, irq_user   /* probe syscall gate: software user ABI */
+0:
     /* CPU interrupt line 2 is Xtensa level 1 on ESP32-S3.  Level-1
      * interrupts share this kernel-exception vector. */
-    movi    a3, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
-    beq     a2, a3, irq_level1
+    movi    a2, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
+    beq     a6, a2, irq_level1
     rsr     a3, excvaddr        /* arg1: faulting address                   */
     rsr     a4, epc1            /* arg2: saved program counter              */
     rsr     a5, ps              /* arg3: current processor status             */
@@ -199,6 +205,8 @@ irq_level1:
     /* 2. Now load the base pointer to p_reg */
     movi    a2, proc_ptr
     l32i    a2, a2, 0          /* a2 = &proc[current].p_reg */
+    movi    a3, cp32_irq_saved_owner
+    s32i    a2, a3, 0          /* preserve interrupted owner across dispatch */
     
     /* 3. Copy from stack frame to p_reg */
     mov     a3, a1
@@ -276,7 +284,15 @@ irq_level1:
     s32i    a3, a2, 0
     
     /* Restore registers from p_reg */
+    /* Only a gated scheduler handoff may replace the interrupted owner. */
+    movi    a3, cp32_context_handoff_gate
+    l32i    a3, a3, 0
+    beqz    a3, 1f
     movi    a15, proc_ptr
+    j       2f
+1:
+    movi    a15, cp32_irq_saved_owner
+2:
     l32i    a15, a15, 0
     
     /* Restore general registers first, using a15 as the frame base. */
@@ -326,7 +342,12 @@ irq_level1:
     /* Restore PC and PS for rfi */
     l32i    a14, a14, 64
     wsr     a14, epc1
-    
+    movi    a3, proc_ptr
+    l32i    a3, a3, 0
+    l32i    a14, a3, 68
+    /* Xtensa EPS1 (SR 192) is consumed by rfi/rfe. */
+    wsr     a14, 192
+
     rsync
     rfi 1
 
@@ -339,9 +360,120 @@ irq_level1:
 .type   irq_user, @function
 irq_user:
     wsr     a0, excsave1
+    rsr     a5, exccause
+    movi    a6, 0x04             /* EXCCAUSE_LEVEL1_INTERRUPT */
+    beq     a5, a6, 1f
+    j       2f
+1:
+    rsr     a0, excsave1
+    j       irq_level1
+2:
+    /* Build the frame before reading exception CSRs.  In particular, the
+     * original user a2 is the syscall number and must not be replaced by
+     * EXCCAUSE.  a0 is used as the temporary frame base; original a0 is
+     * recovered from EXCSAVE1 after original a1 has been saved. */
+    movi    a0, _stack_top
+    addi    a0, a0, -128
+    s32i    a1, a0, 4
+    s32i    a2, a0, 8
+    s32i    a3, a0, 12
+    s32i    a4, a0, 16
+    s32i    a5, a0, 20
+    s32i    a6, a0, 24
+    s32i    a7, a0, 28
+    s32i    a8, a0, 32
+    s32i    a9, a0, 36
+    s32i    a10, a0, 40
+    s32i    a11, a0, 44
+    s32i    a12, a0, 48
+    s32i    a13, a0, 52
+    s32i    a14, a0, 56
+    s32i    a15, a0, 60
+    rsr     a1, excsave1
+    s32i    a1, a0, 0
+    rsr     a1, exccause
+    rsr     a1, epc1
+    s32i    a1, a0, 64
+    rsr     a1, ps
+    s32i    a1, a0, 68
+    l32i    a1, a0, 4
+    s32i    a1, a0, 72
+
+    movi    a2, proc_ptr
+    l32i    a2, a2, 0
+    mov     a3, a0
+    rsr     a4, exccause
+    mov     a1, a3
+    mov     a15, a1
+    call0   cp32_user_trap_dispatch
+    mov     a1, a15
+
+    movi    a3, cp32_user_dispatch_blocked
+    l32i    a3, a3, 0
+    beqz    a3, 2f
+
+    /* A successful gated dispatch owns the saved frame and may return to
+     * user mode.  Keep the diagnostic path for every rejected frame. */
+    movi    a3, 0
+    bne     a2, a3, 1f
+    /* Immediate syscall: restore the same frame and return to user mode. */
+    j       2f
+
+1:
+    /* A blocked syscall cannot rfe its owner.  Give the guarded scheduler
+     * handoff a chance to replace the frame with another runnable process. */
+    movi    a2, proc_ptr
+    l32i    a2, a2, 0
+    mov     a3, a1
+    call0   cp32_user_blocked_handoff
+    movi    a3, 0
+    bne     a2, a3, 3f
+    mov     a15, a1
+    j       2f
+
+3:
+    j       4f
+
+2:
+    mov     a15, a1
+    l32i    a0, a15, 0
+    l32i    a1, a15, 72
+    l32i    a2, a15, 8
+    l32i    a3, a15, 12
+    l32i    a4, a15, 16
+    l32i    a5, a15, 20
+    l32i    a6, a15, 24
+    l32i    a7, a15, 28
+    l32i    a8, a15, 32
+    l32i    a9, a15, 36
+    l32i    a10, a15, 40
+    l32i    a11, a15, 44
+    l32i    a12, a15, 48
+    l32i    a13, a15, 52
+    l32i    a14, a15, 64
+    movi    a3, cp32_user_rfe_epc
+    s32i    a14, a3, 0
+    wsr     a14, epc1
+    l32i    a3, a15, 68
+    movi    a2, cp32_user_rfe_ps
+    s32i    a3, a2, 0
+    /* Xtensa LX7 assembler does not name EPS1; SR 192 is EPS1. */
+    wsr     a3, 192
+    l32i    a2, a15, 72
+    movi    a3, cp32_user_rfe_sp
+    s32i    a2, a3, 0
+    movi    a3, cp32_user_rfe_count
+    l32i    a2, a3, 0
+    addi    a2, a2, 1
+    s32i    a2, a3, 0
+    l32i    a14, a15, 56
+    l32i    a15, a15, 60
+    rsync
+    rfe
+
+4:
+
     rsr     a2, exccause
-    movi    a3, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
-    beq     a2, a3, irq_level1
     rsr     a3, excvaddr
     rsr     a4, epc1
     rsr     a5, ps
@@ -349,6 +481,82 @@ irq_user:
     addi    a1, a1, -16
     call0   exception_dump
 .size irq_user, .-irq_user
+
+/* Controlled user-mode trap probe. The process table does not select this
+ * entry yet; it is enabled only by a targeted hardware experiment. */
+.align 4
+.global cp32_user_probe_entry
+.type   cp32_user_probe_entry, @function
+cp32_user_probe_entry:
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+    movi    a2, 3                 /* BOTH / SENDREC */
+    movi    a3, 3                 /* reply process */
+    movi    a4, cp32_probe_sender_message
+#elif defined(CP32_ENABLE_BOTH_PROBE)
+    movi    a2, 3                 /* BOTH / SENDREC */
+    movi    a3, 999               /* invalid destination: safe rejection */
+    movi    a4, 0
+#elif defined(CP32_ENABLE_BLOCKED_PROBE)
+    movi    a2, 2                 /* RECEIVE */
+    movi    a3, -1                /* ANY */
+    movi    a4, cp32_probe_message
+#else
+    movi    a2, 1                 /* SEND */
+    movi    a3, 999               /* invalid destination: immediate EINVAL */
+    movi    a4, 0
+#endif
+    ill                         /* ESP32-S3 lacks a user syscall opcode;
+                                 * this is the controlled exception probe. */
+    j       cp32_user_probe_done
+cp32_user_probe_done:
+    j       cp32_user_probe_done
+.size cp32_user_probe_entry, .-cp32_user_probe_entry
+
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+.align 4
+.global cp32_user_reply_entry
+.type   cp32_user_reply_entry, @function
+cp32_user_reply_entry:
+    movi    a2, 2                 /* RECEIVE */
+    movi    a3, 2                 /* caller runtime p_nr */
+    movi    a4, cp32_probe_message
+    ill
+    movi    a2, 1                 /* SEND */
+    movi    a3, 2                 /* caller process */
+    movi    a4, cp32_probe_message
+    ill
+cp32_user_reply_done:
+    j       cp32_user_reply_done
+.size cp32_user_reply_entry, .-cp32_user_reply_entry
+#endif
+
+.align 4
+.global cp32_enter_initial_user
+.type   cp32_enter_initial_user, @function
+cp32_enter_initial_user:
+    mov     a3, a2
+    l32i    a0, a3, 0
+    l32i    a1, a3, 4
+    l32i    a4, a3, 16
+    l32i    a5, a3, 20
+    l32i    a6, a3, 24
+    l32i    a7, a3, 28
+    l32i    a8, a3, 32
+    l32i    a9, a3, 36
+    l32i    a10, a3, 40
+    l32i    a11, a3, 44
+    l32i    a12, a3, 48
+    l32i    a13, a3, 52
+    l32i    a14, a3, 56
+    l32i    a2, a3, 64
+    mov     a4, a2
+    l32i    a2, a3, 68
+    wsr     a2, ps
+    l32i    a1, a3, 72
+    l32i    a15, a3, 60
+    rsync
+    jx      a4
+.size cp32_enter_initial_user, .-cp32_enter_initial_user
 
 /* ── Double exception ─────────────────────────────────────────────────── */
 /*

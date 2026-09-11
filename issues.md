@@ -1,5 +1,52 @@
 # CP32 Port – Current Issues and Handoff
 
+Latest cleaned-log hardware run passed through IRQ 176 (`t1=3234`, `t2=3157`);
+IPC V18 counted `n=1..8`, and LOCK/CTX remained healthy. IPC V19 will report
+the final blocked-call census before handoff work.
+
+## LOCK V2 build-only / LOCK V1 hardware baseline
+
+Added `lock_save()` / `restore_lock(saved_ps)` using Xtensa `rsil` and PS
+restore. IPC held-queue mutations, `lock_mini_send()`, and `unhold()` now
+restore the caller's original interrupt level instead of unconditionally
+enabling interrupts. Clean build, image generation, ELF symbols, and
+disassembly passed; the existing libgcc ABI warning remains. Hardware
+validation is pending, including nested/previous-mask behavior and regression
+coverage for LOCK/CTX/IPC markers. The first hardware run reported
+`[LOCK V2 pass=0 saved=1 nested=1 restored=1]` and halted in the diagnostic
+check. `LOCK V3` showed `psb=pso=394528`, nested `psn=394543` (level 15),
+and `psr=394543`; the diagnostic sampled `psr` before the outer restore.
+`LOCK V4` samples after the outer restore. Hardware then passed
+`[LOCK V4 pass=1 saved=1 nested=1 restored=1]`, with IRQ 160 at
+`t1=2940`, `t2=2869`; CTX/IPC/MM markers remained healthy and no exception
+was reported.
+
+## SYS V7 — syscall dispatcher integration
+
+`_send()`, `_receive()`, and `_sendrec()` now route through `sys_call()`.
+Hardware passed all existing IPC/MM checks and showed `[SYS V7]` invalid-call
+rejection (`-102`), with LOCK V4 and CTX V45 continuing through IRQ 160
+(`t1=2939`, `t2=2870`) without an exception. The dispatcher still returns
+after setting blocked flags; true suspended execution remains the next task.
+
+Follow-up hardware output confirmed `[SYS V7 f=...]` consistently across the
+IPC validation, `[LOCK V4 pass=1]`, and CTX/IRQ stability through IRQ 160
+(`t1=2940`, `t2=2870`) with no exception.
+
+The next kernel change adds `[IPC V18 blocked-state pass=1 flags=...]` from
+`sys_call()` to verify blocked state through the dispatcher before context
+handoff is enabled.
+
+Hardware confirmed IPC V18 blocked transitions for flags `4`, `8`, and `12`;
+the supplied output remained healthy through IRQ 112. The next marker adds a
+monotonic `n=` count so a future handoff can correlate each blocked syscall
+with scheduler/context activity.
+
+Debug-log cleanup removed repetitive transport details while retaining
+versioned regression markers, blocked-state counts, MM error markers, LOCK/CTX
+state, IRQ counters, and panic diagnostics. Build passed; hardware regression
+after cleanup remains pending.
+
 ## LOCK V1 / CTX V45
 
 V17 passed on hardware through IRQ 144 (2645/2575). lock previously overwrote

@@ -25,6 +25,7 @@
 #define USBJ_WR_DONE          (1u << 0)
 #define USBJ_IN_EP_DATA_FREE  (1u << 1)
 
+
 /* ── System clock ─────────────────────────────────────────────────────────────
  * These two registers select the CPU and system bus clock sources/dividers.
  * We do not currently change the clock — the ROM bootloader leaves the CPU

@@ -93,10 +93,19 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 
 /* Incremented by the temporary level-2 SYSTIMER probe handler. */
 volatile uint32_t cp32_timer_irq_ticks;
+extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
 volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 volatile uint32_t cp32_clock_irq_frame_stack_calls;
+volatile uint32_t cp32_handoff_owner_mismatch_count;
+volatile uint32_t cp32_handoff_blocked_target_count;
+
+PUBLIC void cp32_reset_handoff_diagnostics(void)
+{
+  cp32_handoff_owner_mismatch_count = 0;
+  cp32_handoff_blocked_target_count = 0;
+}
 extern char _stack_bottom[];
 extern char _stack_top[];
 
@@ -461,6 +470,9 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
+#ifdef CP32_ENABLE_BLOCKED_PROBE
+  if (cp32_timer_irq_ticks == 16) cp32_probe_wake_receiver();
+#endif
   if ((((uintptr_t) frame) & 0x0Fu) == 0)
     cp32_clock_irq_frame_aligned_calls++;
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
@@ -485,12 +497,25 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   /* The process handoff is deliberately a second gate.  This keeps the
    * validated clock/IRQ bridge testable without selecting another process. */
   extern volatile int cp32_context_handoff_gate;
-  /* MINIX tasks are interrupt-driven and are not covered by the user
-   * quantum test. During the CP32 task-lifecycle test, rotate ready kernel
-   * tasks explicitly; user scheduling remains clock-handler controlled. */
+  extern struct proc *current_proc;
+  /* During the CP32 handoff probe, any runnable queue is eligible. The
+   * previous TASK_Q-only gate starved synthetic user-range stress entries
+   * after scheduler queue classification was corrected. */
   if (cp32_context_handoff_gate &&
+      (current_proc == NIL_PROC || proc_ptr == NIL_PROC ||
+       current_proc != proc_ptr))
+    cp32_handoff_owner_mismatch_count++;
+  if (cp32_context_handoff_gate && current_proc != NIL_PROC &&
+      proc_ptr != NIL_PROC && current_proc == proc_ptr &&
+      proc_ptr->p_flags != 0)
+    cp32_handoff_blocked_target_count++;
+  if (cp32_context_handoff_gate && current_proc != NIL_PROC &&
+      proc_ptr != NIL_PROC && current_proc == proc_ptr &&
+      proc_ptr->p_flags == 0 &&
       (!cp32_clock_irq_bridge_enabled ||
-       rdy_head[TASK_Q] != NIL_PROC))
+       rdy_head[TASK_Q] != NIL_PROC ||
+       rdy_head[SERVER_Q] != NIL_PROC ||
+       rdy_head[USER_Q] != NIL_PROC))
     sched();
 }
 
@@ -613,6 +638,23 @@ struct milli_state *msp;
 /*===========================================================================*
  *                              milli_elapsed                                 *
  *===========================================================================*/
+PRIVATE uint64_t cp32_u64_div_u32(uint64_t value, uint32_t divisor)
+{
+  uint64_t quotient = 0;
+  uint64_t remainder = 0;
+  int bit;
+
+  if (divisor == 0) return 0;
+  for (bit = 63; bit >= 0; bit--) {
+    remainder = (remainder << 1) | ((value >> bit) & 1u);
+    if (remainder >= divisor) {
+      remainder -= divisor;
+      quotient |= ((uint64_t)1 << bit);
+    }
+  }
+  return quotient;
+}
+
 PUBLIC unsigned milli_elapsed(msp)
 struct milli_state *msp;
 {
@@ -629,7 +671,7 @@ struct milli_state *msp;
  */
   uint64_t now   = systimer_unit0_read();
   uint64_t delta = now - msp->start_count;
-  return (unsigned)(delta / (SYSTIMER_CLK_HZ / 1000));
+  return (unsigned)cp32_u64_div_u32(delta, SYSTIMER_CLK_HZ / 1000);
 }
 
 /*===========================================================================*

@@ -33,6 +33,7 @@ SECTIONS {
         _vectors_end = .;
     } > iram AT > irom
 
+
     /* --------------------------------------------------
        STARTUP — entry point, must run from IRAM
        Runtime sections are already loaded at their VMAs by the image loader.
@@ -80,10 +81,6 @@ SECTIONS {
     /* --------------------------------------------------
        READ-ONLY DATA — kept in DRAM for speed. The image loader places it
        at its DRAM VMA together with .data.
-       (avoids flash D-cache latency on kernel strings
-       and lookup tables — costs DRAM, worth it here)
-       The LMA is retained for esptool image generation; no startup copy is
-       performed by CP32.
     -------------------------------------------------- */
     .rodata : ALIGN(4) {
         _rodata_start = .;
@@ -141,6 +138,8 @@ SECTIONS {
     -------------------------------------------------- */
     ASSERT(_iram_end <= 0x403C0000,
         "ERROR: kernel code overflows IRAM (320 KB limit)")
+    ASSERT(_iram_end <= 0x40378000,
+        "ERROR: IRAM image crossed the validated loader boundary; reduce or refactor code")
     ASSERT(_stack_top <= 0x3FD00000,
         "ERROR: DRAM overflow — reduce heap or stack")
     ASSERT(_heap_end <= _stack_bottom,

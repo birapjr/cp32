@@ -51,14 +51,6 @@ PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst
         return EFAULT;
     }
 
-    usbj_print("[MM] mem_copy: src=");
-    usbj_print_u32(src_phys);
-    usbj_print(" dst=");
-    usbj_print_u32(dst_phys);
-    usbj_print(" len=");
-    usbj_print_u32(len);
-    usbj_print("\r\n");
-
     phys_copy(src_phys, dst_phys, len);
     return OK;
 }

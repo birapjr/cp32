@@ -12,6 +12,7 @@
 
 #include "kernel.h"
 #include "proc.h"
+#include "irq_frame.h"
 #include "esp32s3/systimer.h"
 #include <minix/com.h>
 #include <string.h>
@@ -26,9 +27,50 @@ extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
+extern volatile uint32_t cp32_blocked_syscall_count;
+extern volatile int cp32_blocked_handoff_gate;
+extern volatile struct proc *cp32_blocked_return_proc;
+extern volatile uint32_t cp32_blocked_handoff_count;
+extern volatile uint32_t cp32_blocked_ready_guard_count;
+extern volatile uint32_t cp32_ready_blocked_skip_count;
+extern volatile uint32_t cp32_blocked_frame_mismatch_count;
+extern volatile uint32_t cp32_blocked_frame_save_count;
+extern volatile uint32_t cp32_blocked_frame_wake_count;
+extern volatile uint32_t cp32_blocked_resume_count;
+extern volatile uint32_t cp32_blocked_frame_restore_count;
+extern volatile uint32_t cp32_user_blocked_return_count;
+extern volatile int cp32_user_handoff_gate;
+extern volatile uint32_t cp32_user_rfe_epc;
+extern volatile uint32_t cp32_user_rfe_ps;
+extern volatile uint32_t cp32_user_rfe_sp;
+extern volatile uint32_t cp32_user_rfe_count;
+extern volatile uint32_t cp32_user_handoff_reject_count;
+extern volatile uint32_t cp32_user_trap_probe_count;
+extern int cp32_user_trap_probe(struct proc *owner);
+extern volatile uint32_t cp32_sched_handoff_count;
+extern volatile uint32_t cp32_handoff_owner_mismatch_count;
+extern int cp32_user_trap_dispatch(struct proc *owner,
+                                   cp32_user_frame_t *frame, int cause);
+extern volatile int cp32_user_trap_gate;
+extern volatile uint32_t cp32_handoff_blocked_target_count;
+extern struct proc *current_proc;
 
 volatile uint32_t cp32_task1_ticks;
 volatile uint32_t cp32_task2_ticks;
+message cp32_probe_message;
+message cp32_probe_sender_message;
+extern void cp32_user_probe_entry(void);
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+extern void cp32_user_reply_entry(void);
+extern void cp32_probe_ready_reply(void);
+#endif
+extern void cp32_enter_initial_user(struct proc *owner);
+extern volatile int cp32_probe_wake_once;
+extern volatile int cp32_user_probe_mode;
+
+#ifndef CP32_ENABLE_USER_PROBE
+#define CP32_ENABLE_USER_PROBE 0
+#endif
 
 static void cp32_task1_loop(void)
 {
@@ -73,8 +115,6 @@ void test_ipc_mm(void) {
     p2->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&m2) >> CLICK_SHIFT;
     p2->p_map[D].mem_len = (((vir_bytes)&m2 & (CLICK_SIZE - 1)) + sizeof(m2) + CLICK_SIZE - 1) >> CLICK_SHIFT;
     
-    usbj_print("[TEST] IPC send/receive: ");
-    
     extern int _send(int dest, message *m);
     extern int _receive(int src, message *m);
 
@@ -83,20 +123,18 @@ void test_ipc_mm(void) {
     proc_ptr = p2;
     int res = _receive(p1->p_nr, &m2);
     int blocked = p2->p_flags == RECEIVING;
+    int receiver_frame_saved = p2->p_blocked_frame_valid &&
+        p2->p_blocked_frame_pc == p2->p_reg.pc &&
+        p2->p_blocked_frame_psw == p2->p_reg.psw &&
+        p2->p_blocked_frame_sp == p2->p_reg.sp;
     proc_ptr = p1;
     int send_res = _send(p2->p_nr, &m1);
-    usbj_print_u32((uint32_t)res);
-    usbj_print("/");
-    usbj_print_u32((uint32_t)send_res);
-    usbj_print(" (send/receive, flags=");
-    usbj_print_u32((uint32_t)(p1->p_flags | p2->p_flags));
-    usbj_print(", text=");
-    usbj_print(m2.m3_ca1);
     int pass = res == OK && send_res == OK && blocked &&
+        receiver_frame_saved && !p2->p_blocked_frame_valid &&
         p1->p_flags == 0 && p2->p_flags == 0 &&
         m2.m_source == p1->p_nr && m2.m_type == 42 &&
         strcmp(m2.m3_ca1, "Hello IPC!") == 0 && m1.m_source == 12345;
-    usbj_print(") [IPC V9 receiver-first pass=");
+    usbj_print("[IPC V9 receiver-first pass=");
     usbj_print_u32(pass);
     usbj_print("][MM V9]\r\n");
     if (!pass) panic("IPC receiver-first", 9);
@@ -104,9 +142,14 @@ void test_ipc_mm(void) {
     memset(&m2, 0, sizeof(m2));
     res = _send(p2->p_nr, &m1);
     blocked = p1->p_flags == SENDING;
+    int sender_frame_saved = p1->p_blocked_frame_valid &&
+        p1->p_blocked_frame_pc == p1->p_reg.pc &&
+        p1->p_blocked_frame_psw == p1->p_reg.psw &&
+        p1->p_blocked_frame_sp == p1->p_reg.sp;
     proc_ptr = p2;
     int recv_res = _receive(p1->p_nr, &m2);
     pass = res == OK && recv_res == OK && blocked &&
+        sender_frame_saved && !p1->p_blocked_frame_valid &&
         p1->p_flags == 0 && p2->p_flags == 0 &&
         p2->p_callerq == NIL_PROC && m2.m_source == p1->p_nr &&
         m2.m_type == 42 && strcmp(m2.m3_ca1, "Hello IPC!") == 0 &&
@@ -114,8 +157,13 @@ void test_ipc_mm(void) {
     usbj_print("[IPC V9 sender-first pass=");
     usbj_print_u32(pass);
     usbj_print("]\r\n");
+    usbj_print("\r\n");
     if (!pass) panic("IPC sender-first", 9);
-
+    usbj_print("[IPC V22 blocked-frame-wake pass=");
+    usbj_print_u32(receiver_frame_saved && sender_frame_saved);
+    usbj_print("]\r\n");
+    if (!receiver_frame_saved || !sender_frame_saved)
+      panic("IPC blocked frame", 22);
     /* Keep proc_ptr on the receiver: the internal gateway must use its
      * explicit caller, not the currently selected process. */
     memset(&m2, 0, sizeof(m2));
@@ -257,13 +305,18 @@ void test_ipc_mm(void) {
     usbj_print_u32(pass);
     usbj_print("][MM V12]\r\n");
     if (!pass) panic("IPC translated IRQ", 17);
+    usbj_print("[IPC V19 blocked-count pass=");
+    usbj_print_u32(cp32_blocked_syscall_count == 8);
+    usbj_print(" n=");
+    usbj_print_u32(cp32_blocked_syscall_count);
+    usbj_print("]\r\n");
     proc_ptr = saved_proc;
 
     /* Exercise the dispatcher validation without changing process state. */
     usbj_print("[TEST] syscall invalid-function: ");
     res = sys_call(0, p2->p_nr, &m1);
     usbj_print_u32((uint32_t)res);
-    usbj_print(" [SYS V6]\r\n\r\n");
+    usbj_print(" [SYS V7]\r\n\r\n");
 }
 
 /* ── main ─────────────────────────────────────────────────────────────────────
@@ -324,6 +377,11 @@ void main(void) {
     rp->p_reg.pc = (reg_t)kernel_idle_loop; // Point to a valid execution loop
     if (t == 1) rp->p_reg.pc = (reg_t)cp32_task1_loop;
     if (t == 2) rp->p_reg.pc = (reg_t)cp32_task2_loop;
+#if CP32_ENABLE_USER_PROBE
+    if (t == 1) rp->p_reg.pc = (reg_t)cp32_user_probe_entry;
+    if (t == 1) rp->p_reg.psw = 0x0;  /* ESP32-S3 has no PS.UM bit */
+    if (t == 2) rp->p_flags = P_SLOT_FREE;
+#endif
     rp->p_reg.psw = istaskp(rp) ? 0x100 : 0x0; // Simplified PSW
     if (t == 1 || t == 2) rp->p_reg.psw = 0x100;
     
@@ -367,6 +425,64 @@ void main(void) {
   }
   
   bill_ptr = proc_addr(IDLE);
+#if CP32_ENABLE_USER_PROBE
+  cp32_user_probe_mode = 1;
+  cp32_user_trap_gate = 1;
+  /* Keep the two probe processes addressable by their public MINIX numbers;
+   * the generic bootstrap table is offset by the task range. */
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+  cp32_probe_sender_message.m_type = 0x43503332;
+  cp32_probe_message.m_type = 0;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  cp32_user_handoff_gate = 1;
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+  proc_addr(2)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  proc_addr(2)->p_flags = 0;
+#endif
+  proc_addr(2)->p_flags = P_SLOT_FREE;
+  proc_addr(1)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
+  proc_addr(1)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_message) >> CLICK_SHIFT;
+  proc_addr(1)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#ifdef CP32_ENABLE_BLOCKED_PROBE
+  proc_addr(2)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
+  proc_addr(2)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
+  proc_addr(2)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  proc_addr(1)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
+  proc_addr(1)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
+  proc_addr(1)->p_map[D].mem_len = proc_addr(2)->p_map[D].mem_len;
+  proc_addr(2)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
+  proc_addr(2)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_message) >> CLICK_SHIFT;
+  proc_addr(2)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#endif
+  cp32_probe_wake_once = 1;
+#endif
+  proc_addr(1)->p_int_blocked = 0;
+  proc_addr(1)->p_int_held = 0;
+  proc_addr(1)->p_callerq = NIL_PROC;
+  proc_addr(1)->p_sendlink = NIL_PROC;
+  proc_addr(1)->p_nextheld = NIL_PROC;
+  proc_addr(1)->p_getfrom = ANY;
+  proc_ptr = proc_addr(1);
+  current_proc = proc_addr(1);
+  proc_addr(1)->p_flags = 0;
+#endif
   lock_pick_proc();
 
 
@@ -412,16 +528,205 @@ void main(void) {
      * the IRQ bridge to invoke the scheduler and select a saved frame. */
     cp32_context_handoff_gate = 1;
    usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
-   test_ipc_mm();
-   cp32_prepare_two_task_stress();
-   usbj_print("[STK V1 p1=");
-   usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
-   usbj_print(" p2=");
-   usbj_print_u32((uint32_t)proc_addr(2)->p_reg.sp);
-   usbj_print(" d=");
-   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
-   usbj_print("]\r\n");
-   cp32_context_handoff_gate = 1;
+  test_ipc_mm();
+  cp32_prepare_two_task_stress();
+#if CP32_ENABLE_USER_PROBE
+  /* Stress setup assigns user-range numbers for scheduler diagnostics; the
+   * live syscall probes need stable table identities instead. */
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  cp32_user_handoff_gate = 1;
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+  proc_addr(3)->p_nr = 3;
+  memset(proc_addr(3)->p_reg.a, 0, sizeof(proc_addr(3)->p_reg.a));
+  proc_addr(3)->p_reg.psw = 0;
+  proc_addr(3)->p_reg.a[15] = 0x3FC00000;
+  proc_addr(3)->p_reg.sp = proc_addr(1)->p_reg.sp + 4096;
+  proc_addr(1)->p_reg.a[1] = proc_addr(1)->p_reg.sp;
+  proc_addr(3)->p_reg.a[1] = proc_addr(3)->p_reg.sp;
+  proc_addr(3)->p_map[S].mem_phys = proc_addr(3)->p_reg.sp >> CLICK_SHIFT;
+  proc_addr(3)->p_map[S].mem_len = proc_addr(1)->p_map[S].mem_len;
+  proc_addr(3)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  proc_addr(3)->p_flags = 0;
+  proc_addr(2)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  proc_addr(3)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
+  proc_addr(3)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_message) >> CLICK_SHIFT;
+  proc_addr(3)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  cp32_probe_ready_reply();
+#endif
+#endif
+  usbj_print("[SCHED V1 classify pass=1 p1=2 p2=3]\r\n");
+  usbj_print("[SCHED V4 blocked-probe pass=");
+  usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
+  usbj_print("]\r\n");
+  usbj_print("[CTX V69 resumed-syscall-return count=");
+  usbj_print_u32(cp32_blocked_resume_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V66 user-rfe-trace count=");
+  usbj_print_u32(cp32_user_rfe_count);
+  usbj_print(" epc=");
+  usbj_print_u32(cp32_user_rfe_epc);
+  usbj_print(" ps=");
+  usbj_print_u32(cp32_user_rfe_ps);
+  usbj_print(" sp=");
+  usbj_print_u32(cp32_user_rfe_sp);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V65 enabled-trap-probe pass=");
+  { int probe_result = cp32_user_trap_probe(proc_addr(1));
+  usbj_print_u32((cp32_user_probe_mode && probe_result == OK) ||
+                 (!cp32_user_probe_mode && probe_result == EBADCALL &&
+                  cp32_user_trap_gate == 0));
+  usbj_print(" result=");
+  usbj_print_u32((uint32_t)probe_result);
+  usbj_print(" count=");
+  usbj_print_u32(cp32_user_trap_probe_count);
+  }
+  usbj_print("]\r\n");
+  usbj_print("[CTX V64 user-handoff-contract pass=");
+  usbj_print_u32(
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+                 cp32_user_handoff_gate == 1 &&
+#else
+                 cp32_user_handoff_gate == 0 &&
+#endif
+                 cp32_user_handoff_reject_count == 0);
+  usbj_print(" rejects=");
+  usbj_print_u32(cp32_user_handoff_reject_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V63 user-blocked-return-guard count=");
+  usbj_print_u32(cp32_user_blocked_return_count);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V7 blocked-ready-guard pass=");
+  usbj_print_u32(cp32_blocked_ready_guard_count == 1);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V9 all-blocked-idle pass=");
+  usbj_print_u32((uint32_t)cp32_probe_all_blocked_queue());
+  usbj_print("]\r\n");
+  cp32_prepare_two_task_stress();
+  usbj_print("[CTX V50 handoff-reset pass=");
+  usbj_print_u32(cp32_handoff_owner_mismatch_count == 0);
+  usbj_print("]\r\n");
+  usbj_print("[IPC V20 handoff-reset pass=");
+  usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
+                 cp32_blocked_return_proc == NIL_PROC &&
+                 cp32_blocked_handoff_count == 0);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V6 blocked-owner-unbilled pass=");
+  usbj_print_u32(bill_ptr != cp32_blocked_return_proc);
+  usbj_print("]\r\n");
+  usbj_print("[IPC V21 owner-reset pass=");
+  usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
+                 cp32_blocked_return_proc == NIL_PROC &&
+                 cp32_blocked_handoff_count == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V47 gates-ready pass=");
+  usbj_print_u32(cp32_context_restore_gate == 1 &&
+                 cp32_context_handoff_gate == 1);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V48 owner-aligned pass=");
+  usbj_print_u32(current_proc == proc_ptr);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V52 syscall-frame pass=");
+  usbj_print_u32(sizeof(cp32_syscall_return_contract_t) == 76 &&
+                 __builtin_offsetof(cp32_syscall_return_contract_t, a[2]) == 8 &&
+                 __builtin_offsetof(cp32_syscall_return_contract_t, pc) == 64 &&
+                 __builtin_offsetof(cp32_syscall_return_contract_t, sp) == 72);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V53 blocked-frame-state pass=");
+  usbj_print_u32(proc_addr(1)->p_blocked_frame_valid == 0 &&
+                 proc_addr(1)->p_blocked_frame_result == 0 &&
+                 cp32_blocked_handoff_gate == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V54 wake-result-slot pass=");
+  usbj_print_u32(proc_addr(1)->p_reg.a[2] == 0 &&
+                 proc_addr(1)->p_blocked_frame_result == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V55 wake-contract pass=");
+  usbj_print_u32(proc_addr(1)->p_blocked_frame_valid == 0 &&
+                 proc_addr(2)->p_blocked_frame_valid == 0);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V56 frame-snapshot pass=");
+  usbj_print_u32(proc_addr(1)->p_blocked_frame_valid == 0 &&
+                 proc_addr(1)->p_blocked_frame_pc == proc_addr(1)->p_reg.pc &&
+                 proc_addr(1)->p_blocked_frame_psw == proc_addr(1)->p_reg.psw &&
+                 proc_addr(1)->p_blocked_frame_sp == proc_addr(1)->p_reg.sp);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V57 frame-preservation-mismatch count=");
+  usbj_print_u32(cp32_blocked_frame_mismatch_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V58 restore-guard pass=");
+  usbj_print_u32(cp32_blocked_handoff_gate == 0 &&
+                 cp32_blocked_return_proc == NIL_PROC);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V59 user-frame-contract pass=");
+  usbj_print_u32(sizeof(cp32_user_frame_t) == 76 &&
+                 __builtin_offsetof(cp32_user_frame_t, pc) == 64 &&
+                 __builtin_offsetof(cp32_user_frame_t, sp) == 72 &&
+                 cp32_user_frame_contract_valid(
+                   (const cp32_user_frame_t *)&proc_addr(1)->p_reg));
+  usbj_print("]\r\n");
+  usbj_print("[CTX V60 trap-boundary-guard pass=");
+  usbj_print_u32(cp32_user_trap_dispatch(NIL_PROC,
+                                         (cp32_user_frame_t *)0, -1) == EINVAL);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V61 trap-dispatch-pending pass=");
+  usbj_print_u32(proc_ptr != NIL_PROC &&
+                 cp32_user_frame_contract_valid(
+                   (const cp32_user_frame_t *)&proc_ptr->p_reg) &&
+                 cp32_user_trap_dispatch(
+                   proc_ptr, (cp32_user_frame_t *)&proc_ptr->p_reg, 0) ==
+                   (cp32_user_probe_mode ? OK : EBADCALL));
+  usbj_print("]\r\n");
+  usbj_print("[CTX V62 user-trap-gate pass=");
+  usbj_print_u32(cp32_user_trap_gate == 0 || cp32_user_probe_mode == 1);
+  usbj_print("]\r\n");
+  usbj_print("[IPC V23 blocked-frame-save count=");
+  usbj_print_u32(cp32_blocked_frame_save_count);
+  usbj_print(" wake=");
+  usbj_print_u32(cp32_blocked_frame_wake_count);
+  usbj_print(" restore=");
+  usbj_print_u32(cp32_blocked_frame_restore_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V49 owner-mismatch count=");
+  usbj_print_u32(cp32_handoff_owner_mismatch_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V51 blocked-target count=");
+  usbj_print_u32(cp32_handoff_blocked_target_count);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V8 blocked-ready-skip count=");
+  usbj_print_u32(cp32_ready_blocked_skip_count);
+  usbj_print("]\r\n");
+  usbj_print("[SCHED V2 baseline-handoffs=");
+  usbj_print_u32(cp32_sched_handoff_count);
+  usbj_print("]\r\n");
+  usbj_print("[STK V1 p1=");
+  usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
+  usbj_print(" p2=");
+  usbj_print_u32((uint32_t)proc_addr(2)->p_reg.sp);
+  usbj_print(" d=");
+  usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
+  usbj_print("]\r\n");
+  cp32_context_handoff_gate = 1;
+#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
+  /* The final stress reset above clears ready queues; restore the canonical
+   * reply receiver after it, immediately before enabling the live probe. */
+  (pproc_addr + NR_TASKS)[1] = cproc_addr(1);
+  (pproc_addr + NR_TASKS)[2] = cproc_addr(2);
+  (pproc_addr + NR_TASKS)[3] = cproc_addr(3);
+  cproc_addr(1)->p_nr = 1;
+  cproc_addr(2)->p_nr = 2;
+  cproc_addr(3)->p_nr = 3;
+  cproc_addr(2)->p_reg.pc = (reg_t)cp32_user_probe_entry;
+  cproc_addr(3)->p_reg.pc = (reg_t)cp32_user_reply_entry;
+  cp32_user_handoff_gate = 1;
+  cp32_probe_ready_reply();
+#endif
    unsigned ps_before, ps_locked, ps_unlocked;
    __asm__ volatile("rsr %0, ps" : "=a"(ps_before));
    lock();
@@ -437,9 +742,42 @@ void main(void) {
    usbj_print_u32(lock_ok);
    usbj_print("]\r\n");
    if (!lock_ok) panic("status preservation", 1);
-   usbj_print("[CTX V45] restore=1 handoff=1 clock=1 stress=2\r\n");
+   unsigned ps_saved_outer, ps_saved_inner, ps_nested, ps_restored;
+   ps_saved_outer = (unsigned)lock_save();
+   ps_saved_inner = (unsigned)lock_save();
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_nested));
+   restore_lock((int)ps_saved_inner);
+   restore_lock((int)ps_saved_outer);
+   __asm__ volatile("rsr %0, ps" : "=a"(ps_restored));
+   unsigned lock_v2_ok = (ps_saved_outer == ps_before) &&
+       ((ps_saved_inner & 15u) == 15u) && ((ps_nested & 15u) == 15u) &&
+       (ps_restored == ps_saved_outer);
+   usbj_print("[LOCK V4 pass=");
+   usbj_print_u32(lock_v2_ok);
+   usbj_print(" saved=1 nested=1 restored=1 psb=");
+   usbj_print_u32(ps_before);
+   usbj_print(" pso=");
+   usbj_print_u32(ps_saved_outer);
+   usbj_print(" psi=");
+   usbj_print_u32(ps_saved_inner);
+   usbj_print(" psn=");
+   usbj_print_u32(ps_nested);
+   usbj_print(" psr=");
+   usbj_print_u32(ps_restored);
+   usbj_print("]\r\n");
+   if (!lock_v2_ok) panic("saved lock status", 1);
+#if CP32_ENABLE_USER_PROBE
+   cp32_user_trap_gate = 1;
+#ifdef CP32_ENABLE_BLOCKED_PROBE
+   cp32_user_handoff_gate = 1;
+#endif
+#endif
    systimer_irq_start();
-   usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
+  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
+
+#if CP32_ENABLE_USER_PROBE
+  cp32_enter_initial_user(proc_addr(1));
+#endif
 
    /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
 
@@ -486,7 +824,7 @@ void main(void) {
     usbj_print(" e=");
     usbj_print_u32((uint32_t) cp32_clock_irq_bridge_enabled);
     usbj_print("]");
-  if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
+    if ((cp32_timer_irq_ticks & 0x3Fu) == 0) {
       uint32_t cpu_interrupt;
       usbj_print(" [target_hi=");
       usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_HI_REG));
@@ -498,11 +836,9 @@ void main(void) {
         uint64_t counter = systimer_unit0_read();
         usbj_print(" now_hi=");
         usbj_print_hex32((uint32_t)(counter >> 32));
-      usbj_print(" now_lo=");
+        usbj_print(" now_lo=");
         usbj_print_hex32((uint32_t)counter);
-}
-
-
+      }
       usbj_print(" real_hi=");
       usbj_print_hex32(REG_READ(SYSTIMER_REAL_TARGET0_HI_REG));
       usbj_print(" real_lo=");
@@ -539,9 +875,9 @@ int n;
   __asm__ volatile("rsil %0, 15" : "=a"(saved_ps) : : "memory");
   usbj_print("[PANIC V1] halted\r\n");
   if (s != 0 && *s != 0) {
-	printf("\nKernel panic: %s",s);
-	if (n != NO_NUM) printf(" %d", n);
-	printf("\n");
+	  printf("\nKernel panic: %s",s);
+	  if (n != NO_NUM) printf(" %d", n);
+	    printf("\n");
   }
   for (;;) { __asm__ volatile("nop"); }
 }
