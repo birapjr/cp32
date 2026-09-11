@@ -60,18 +60,6 @@ volatile int cp32_user_trap_gate;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
 PRIVATE unsigned char cp32_blocked_probe_active;
 
-PRIVATE int cp32_blocked_frame_restore_ready(struct proc *rp)
-{
-  return rp != NIL_PROC && !rp->p_blocked_frame_valid &&
-         rp->p_blocked_frame_result == OK &&
-         rp->p_blocked_frame_pc == rp->p_reg.pc &&
-         rp->p_blocked_frame_psw == rp->p_reg.psw &&
-         rp->p_blocked_frame_sp == rp->p_reg.sp;
-}
-
-/* C-side boundary for the future user exception handler.  Until irq_user
- * supplies a trusted owner/cause and a real saved frame, dispatch is refused
- * deliberately rather than treating an IRQ frame as a user syscall frame. */
 PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
                                    cp32_user_frame_t *frame, int cause)
 {
@@ -82,8 +70,15 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   return EBADCALL;
 }
 
-/* Complete the data portion of a blocked syscall wakeup.  Scheduling and
- * trap return remain separate until the full user-frame path is available. */
+PRIVATE int cp32_blocked_frame_restore_ready(struct proc *rp)
+{
+  return rp != NIL_PROC && !rp->p_blocked_frame_valid &&
+         rp->p_blocked_frame_result == OK &&
+         rp->p_blocked_frame_pc == rp->p_reg.pc &&
+         rp->p_blocked_frame_psw == rp->p_reg.psw &&
+         rp->p_blocked_frame_sp == rp->p_reg.sp;
+}
+
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
   if (rp == NIL_PROC) return;
@@ -506,8 +501,6 @@ PUBLIC int cp32_probe_blocked_handoff(void)
   blocked->p_flags = SENDING;
   blocked->p_sendto = runnable->p_nr;
   blocked->p_nextready = NIL_PROC;
-  /* The probe models a frame that has already been woken and is eligible for
-   * the scheduler guard; the real trap path will populate these fields. */
   blocked->p_blocked_frame_valid = FALSE;
   blocked->p_blocked_frame_result = OK;
   blocked->p_blocked_frame_pc = blocked->p_reg.pc;

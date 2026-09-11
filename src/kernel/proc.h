@@ -71,7 +71,6 @@ struct proc {
   sigset_t p_pending;		/* bit map for pending signals */
   unsigned p_pendcount;		/* count of pending and unfinished signals */
 
-  /* CP32 blocked-call bookkeeping; the experimental return gate stays off. */
   int p_blocked_frame_valid;
   int p_blocked_frame_result;
   reg_t p_blocked_frame_pc;
@@ -119,9 +118,6 @@ struct proc {
 
 void schedule(void);
 void cp32_prepare_two_task_stress(void);
-struct cp32_user_frame;
-int cp32_user_trap_dispatch(struct proc *owner,
-                            struct cp32_user_frame *frame, int cause);
 extern phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len);
 extern void phys_copy(phys_bytes src, phys_bytes dst, phys_bytes len);
 extern int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len);

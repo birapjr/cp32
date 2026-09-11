@@ -355,24 +355,23 @@ irq_user:
     rsr     a3, excvaddr
     rsr     a4, epc1
     rsr     a5, ps
-    /* Preserve the interrupted user SP and a0 before switching to the
-     * kernel diagnostic stack.  The frame is terminal-only until the user
-     * trap gate and rfe path are validated end to end. */
+    /* Capture the interrupted user register frame before switching to the
+     * kernel diagnostic stack.  The C gate remains fail-closed for now. */
     mov     a6, a1
     mov     a7, a0
-    mov     a9, a2             /* exception cause */
+    mov     a9, a2
     movi    a1, _stack_top
-    addi    a1, a1, -128       /* 16-byte aligned 76-byte user frame */
-    s32i    a7, a1, 0          /* a0 */
-    s32i    a6, a1, 4          /* interrupted user a1/sp */
-    s32i    a9, a1, 8          /* a2 carries cause until C boundary */
-    s32i    a3, a1, 12         /* a3 */
-    s32i    a4, a1, 16         /* a4 */
-    s32i    a5, a1, 20         /* a5 */
-    s32i    a6, a1, 24         /* a6 */
-    s32i    a7, a1, 28         /* a7 */
-    s32i    a8, a1, 32         /* a8 */
-    s32i    a9, a1, 36         /* a9 */
+    addi    a1, a1, -128
+    s32i    a7, a1, 0
+    s32i    a6, a1, 4
+    s32i    a9, a1, 8
+    s32i    a3, a1, 12
+    s32i    a4, a1, 16
+    s32i    a5, a1, 20
+    s32i    a6, a1, 24
+    s32i    a7, a1, 28
+    s32i    a8, a1, 32
+    s32i    a9, a1, 36
     s32i    a10, a1, 40
     s32i    a11, a1, 44
     s32i    a12, a1, 48
@@ -380,19 +379,47 @@ irq_user:
     s32i    a14, a1, 56
     s32i    a15, a1, 60
     rsr     a4, epc1
-    s32i    a4, a1, 64         /* saved PC */
+    s32i    a4, a1, 64
     rsr     a5, ps
-    s32i    a5, a1, 68         /* saved PS */
-    s32i    a6, a1, 72         /* saved user SP */
+    s32i    a5, a1, 68
+    s32i    a6, a1, 72
 
-    /* call0 arguments: owner, frame, exception cause. */
     movi    a2, proc_ptr
     l32i    a2, a2, 0
     mov     a3, a1
     mov     a4, a9
     call0   cp32_user_trap_dispatch
 
-    /* The boundary is currently fail-closed; retain the established dump. */
+    /* A successful gated dispatch owns the saved frame and may return to
+     * user mode.  Keep the diagnostic path for every rejected frame. */
+    movi    a3, 0
+    bne     a2, a3, 1f
+    mov     a15, a1
+    l32i    a0, a15, 0
+    l32i    a1, a15, 72
+    l32i    a2, a15, 8
+    l32i    a3, a15, 12
+    l32i    a4, a15, 16
+    l32i    a5, a15, 20
+    l32i    a6, a15, 24
+    l32i    a7, a15, 28
+    l32i    a8, a15, 32
+    l32i    a9, a15, 36
+    l32i    a10, a15, 40
+    l32i    a11, a15, 44
+    l32i    a12, a15, 48
+    l32i    a13, a15, 52
+    l32i    a14, a15, 64
+    wsr     a14, epc1
+    l32i    a3, a15, 68
+    wsr     a3, ps
+    l32i    a14, a15, 56
+    l32i    a15, a15, 60
+    rsync
+    rfe
+
+1:
+
     rsr     a2, exccause
     rsr     a3, excvaddr
     rsr     a4, epc1

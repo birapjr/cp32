@@ -34,9 +34,11 @@ extern volatile uint32_t cp32_blocked_handoff_count;
 extern volatile uint32_t cp32_blocked_ready_guard_count;
 extern volatile uint32_t cp32_ready_blocked_skip_count;
 extern volatile uint32_t cp32_blocked_frame_mismatch_count;
-extern volatile int cp32_user_trap_gate;
 extern volatile uint32_t cp32_sched_handoff_count;
 extern volatile uint32_t cp32_handoff_owner_mismatch_count;
+extern int cp32_user_trap_dispatch(struct proc *owner,
+                                   cp32_user_frame_t *frame, int cause);
+extern volatile int cp32_user_trap_gate;
 extern volatile uint32_t cp32_handoff_blocked_target_count;
 extern struct proc *current_proc;
 
@@ -128,13 +130,13 @@ void test_ipc_mm(void) {
     usbj_print("[IPC V9 sender-first pass=");
     usbj_print_u32(pass);
     usbj_print("]\r\n");
+    usbj_print("\r\n");
     if (!pass) panic("IPC sender-first", 9);
     usbj_print("[IPC V22 blocked-frame-wake pass=");
     usbj_print_u32(receiver_frame_saved && sender_frame_saved);
     usbj_print("]\r\n");
     if (!receiver_frame_saved || !sender_frame_saved)
       panic("IPC blocked frame", 22);
-
     /* Keep proc_ptr on the receiver: the internal gateway must use its
      * explicit caller, not the currently selected process. */
     memset(&m2, 0, sizeof(m2));
@@ -512,8 +514,8 @@ void main(void) {
                    (const cp32_user_frame_t *)&proc_addr(1)->p_reg));
   usbj_print("]\r\n");
   usbj_print("[CTX V60 trap-boundary-guard pass=");
-  usbj_print_u32(cp32_user_trap_dispatch(NIL_PROC, (cp32_user_frame_t *)0,
-                                         -1) == EINVAL);
+  usbj_print_u32(cp32_user_trap_dispatch(NIL_PROC,
+                                         (cp32_user_frame_t *)0, -1) == EINVAL);
   usbj_print("]\r\n");
   usbj_print("[CTX V61 trap-dispatch-pending pass=");
   usbj_print_u32(proc_ptr != NIL_PROC &&
@@ -538,13 +540,13 @@ void main(void) {
   usbj_print("[SCHED V2 baseline-handoffs=");
   usbj_print_u32(cp32_sched_handoff_count);
   usbj_print("]\r\n");
-   usbj_print("[STK V1 p1=");
-   usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
-   usbj_print(" p2=");
-   usbj_print_u32((uint32_t)proc_addr(2)->p_reg.sp);
-   usbj_print(" d=");
-   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
-   usbj_print("]\r\n");
+  usbj_print("[STK V1 p1=");
+  usbj_print_u32((uint32_t)proc_addr(1)->p_reg.sp);
+  usbj_print(" p2=");
+  usbj_print_u32((uint32_t)proc_addr(2)->p_reg.sp);
+  usbj_print(" d=");
+  usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
+  usbj_print("]\r\n");
    cp32_context_handoff_gate = 1;
    unsigned ps_before, ps_locked, ps_unlocked;
    __asm__ volatile("rsr %0, ps" : "=a"(ps_before));

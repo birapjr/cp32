@@ -47,6 +47,7 @@ void start() {
     print_diagnostics();
     status_line("\r\n => CP32 OS kernel booting", 2);
 
+
     status_line("checking initialized memory", 0);
     usbj_print(".data sentinel: ");
     usbj_print_hex32(cp32_data_sentinel);
