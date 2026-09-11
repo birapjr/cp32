@@ -59,6 +59,10 @@ PUBLIC void cp32_probe_ready_reply(void)
 }
 #endif
 
+PRIVATE unsigned char cp32_wake_probe_reported;
+PRIVATE unsigned char cp32_wake_owner_release_reported;
+PRIVATE unsigned char cp32_wake_message_reported;
+
 /* Minimal scheduler stub for main to call. */
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 
@@ -105,6 +109,14 @@ PUBLIC void cp32_probe_wake_receiver(void)
 {
   struct proc *receiver = proc_addr(1);
   struct proc *sender = proc_addr(2);
+  if (cp32_user_probe_mode && !cp32_wake_probe_reported) {
+    cp32_wake_probe_reported = 1;
+    usbj_print("[CTX V105 wake-hook flags=");
+    usbj_print_u32((uint32_t)receiver->p_flags);
+    usbj_print(" armed=");
+    usbj_print_u32((uint32_t)cp32_probe_wake_once);
+    usbj_print("]\r\n");
+  }
   if (!cp32_probe_wake_once || !(receiver->p_flags & RECEIVING)) return;
   cp32_probe_wake_once = 0;
   /* Preserve the receiver buffer validated at RECEIVE time. */
@@ -137,6 +149,28 @@ PUBLIC void cp32_probe_wake_receiver(void)
       if (receiver->p_flags == 0) ready(receiver);
       wake_result = OK;
     }
+    if (cp32_user_probe_mode && wake_result == OK &&
+        receiver->p_flags == 0 && !receiver->p_blocked_frame_valid &&
+        cp32_blocked_return_proc != receiver &&
+        !cp32_wake_owner_release_reported) {
+      cp32_wake_owner_release_reported = 1;
+      usbj_print("[CTX V107 wake-owner-released pass=1]\r\n");
+    }
+    if (cp32_user_probe_mode && wake_result == OK &&
+        cp32_probe_message.m_source == sender->p_nr &&
+        !cp32_wake_message_reported) {
+      cp32_wake_message_reported = 1;
+      usbj_print("[CTX V108 wake-message-source-validated pass=1]\r\n");
+    }
+    if (cp32_user_probe_mode) {
+      usbj_print("[CTX V106 wake-complete result=");
+      usbj_print_u32((uint32_t)wake_result);
+      usbj_print(" flags=");
+      usbj_print_u32((uint32_t)receiver->p_flags);
+      usbj_print(" count=");
+      usbj_print_u32(cp32_blocked_frame_wake_count);
+      usbj_print("]\r\n");
+    }
   }
 }
 volatile int cp32_user_trap_gate;
@@ -158,6 +192,7 @@ PRIVATE unsigned char cp32_user_pointer_reject_marker_reported;
 PRIVATE unsigned char cp32_user_owner_pc_marker_reported;
 PRIVATE unsigned char cp32_blocked_handoff_ready_reported;
 PRIVATE unsigned char cp32_blocked_handoff_reason_reported;
+PRIVATE unsigned char cp32_blocked_wake_result_reported;
 
 /* ESP32-S3 has no dedicated software syscall instruction in this port. The
  * guarded user ABI enters through the illegal-instruction exception instead.
@@ -371,6 +406,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   /* Keep diagnostics aligned with the frame that the probe is about to rfe. */
   proc_ptr = next;
   current_proc = next;
+  cp32_irq_saved_owner = next;
 #endif
   if (cp32_user_probe_mode) {
     usbj_print("[CTX V101 handoff-frame nr=");
@@ -397,6 +433,7 @@ PUBLIC int cp32_user_trap_probe(struct proc *owner)
   reg_t saved_pc = owner->p_reg.pc;
   cp32_user_frame_t bad_pointer_frame;
   if (owner == NIL_PROC) return EINVAL;
+  cp32_blocked_wake_result_reported = 0;
   for (int i = 0; i < 16; ++i) frame.a[i] = (uint32_t)owner->p_reg.a[i];
   frame.pc = (uint32_t)owner->p_reg.pc;
   frame.psw = (uint32_t)owner->p_reg.psw;
@@ -456,6 +493,12 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
   cp32_blocked_resume_count++;
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
+  if (cp32_user_probe_mode && result == OK &&
+      rp->p_reg.a[2] == (reg_t)rp->p_blocked_frame_result &&
+      !cp32_blocked_wake_result_reported) {
+    cp32_blocked_wake_result_reported = 1;
+    usbj_print("[CTX V104 blocked-wake-result-slot pass=1]\r\n");
+  }
 }
 
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );

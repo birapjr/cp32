@@ -387,6 +387,35 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-11 hardware validation: V102, V103, and V101 confirmed the process-2
   replacement frame at the pre-rfe boundary; execution remained stable through
   IRQ 128 with no exception.
+- 2026-09-11 build-only: synchronized the probe's saved IRQ owner with the
+  process-2 replacement frame for post-rfe timer diagnostics. `make
+  test-blocked-probe` passes layout validation with 9,564 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V104 blocked-wake-result-slot pass=1]`
+  to validate wake completion's saved `a2` result slot. `make
+  test-blocked-probe` passes layout validation with 9,496 bytes of IRAM margin.
+- 2026-09-11 build-only: added V106 after the wake attempt to report delivery
+  result, receiver flags, and wake count. `make test-blocked-probe` passes
+  layout validation with 9,288 bytes of IRAM margin.
+- 2026-09-11 build-only: reset the one-shot V104 flag at user-probe start so
+  the hardware wake completion is reported independently of earlier wake
+  tests. `make test-blocked-probe` passes layout validation with 9,280 bytes
+  of IRAM margin.
+- 2026-09-11 hardware validation: V105 observed the blocked receiver, V104
+  confirmed the saved `a2` wake result, and V106 confirmed successful wake with
+  flags cleared. The replacement frame remained stable through IRQ 160.
+- 2026-09-11 build-only: added `[CTX V107 wake-owner-released pass=1]` for
+  post-wake runnable-state and blocked-owner release validation. `make
+  test-blocked-probe` passes layout validation with 9,204 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V104, V106, and V107 passed; the blocked
+  receiver's result slot was restored, flags cleared, and blocked-owner state
+  released. Execution remained stable through IRQ 160 with no exception.
+- 2026-09-11 build-only: added `[CTX V108 wake-message-source-validated
+  pass=1]` to validate the sender identity copied into the awakened message.
+  `make test-blocked-probe` passes layout validation with 9,144 bytes of IRAM
+  margin.
+- 2026-09-11 hardware validation: V108 passed; the awakened message source
+  matched the synthetic sender, with V104/V106/V107 also passing. Execution
+  remained stable through IRQ 128 with no exception.
 - 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
   the first unmet blocked-handoff predicate during the guarded probe.
   `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
