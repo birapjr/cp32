@@ -516,3 +516,76 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-11 hardware validation: V128 passed; `current_proc` and `proc_ptr`
   were aligned to process 1, with the user rejection probe stable through IRQ
   128 and no exception.
+- 2026-09-11 build-only: added `[CTX V129 handoff-frame-copy pass=1]` after
+  blocked handoff frame construction to validate copied PC, PSW, SP, and
+  `a15` against the selected process. `make clean && make
+  test-blocked-send-probe` passes image layout validation with 7,272 bytes of
+  IRAM margin.
+- 2026-09-11 hardware validation: V129 passed on blocked SEND; process 2 was
+  selected with a matching frame, wake completed with `frame=0`, and execution
+  remained stable through IRQ 160.
+- 2026-09-11 build-only: added `[CTX V130 handoff-owner-selected pass=1]`
+  after installing the selected process as `proc_ptr`, `current_proc`, and
+  saved IRQ owner. `make clean && make test-blocked-send-probe` passes image
+  layout validation with 7,160 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V131 handoff-owner-runnable pass=1]` to
+  verify the selected handoff owner has no blocking flags before return-frame
+  use. `make clean && make test-blocked-send-probe` passes image layout
+  validation with 7,096 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V131 passed on blocked SEND; the selected
+  process 2 was runnable, wake completed with cleared frame state, and timer
+  execution remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V132 handoff-entry-pc-aligned pass=1]`
+  to require a nonzero, instruction-aligned replacement PC before `rfe`.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 7,004 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V132 passed on SENDREC; process 2 resumed
+  with the validated handoff and remained stable through IRQ 128.
+- 2026-09-11 build-only: added `[CTX V133 handoff-entry-psw-ready pass=1]`
+  to require the expected kernel-mode PSW (`0x10`) in the replacement frame.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,932 bytes of IRAM margin.
+- 2026-09-11 hardware correction: V133 rejected the incorrect `0x10` saved
+  PSW assumption; the user frame contract initializes the saved PSW to `0`.
+  V133 now validates that established value. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 6,940 bytes
+  of IRAM margin.
+- 2026-09-11 hardware validation: corrected V133 passed on SENDREC; process 2
+  resumed and remained stable through IRQ 128.
+- 2026-09-11 build-only: added `[CTX V134 handoff-entry-sp-aligned pass=1]`
+  to require a nonzero, 16-byte-aligned replacement stack pointer. `make
+  clean && make test-blocked-sendrec-probe` passes image layout validation
+  with 6,856 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V134 passed on SENDREC; the replacement
+  stack remained aligned and execution stayed stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V135 handoff-call0-registers-ready
+  pass=1]` to validate the replacement frame's `a0` and `a1` call0 values.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,772 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V135 passed on SENDREC; process 2 resumed
+  and remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V136 handoff-a15-ready pass=1]` to
+  require a nonzero saved `a15` in the replacement frame. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 6,708 bytes
+  of IRAM margin.
+- 2026-09-11 hardware validation: V136 passed on SENDREC; process 2 resumed
+  and remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V137 handoff-call-args-ready pass=1]`
+  to validate the replacement frame's initial `a2–a4` call argument slots.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,620 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V137 passed on SENDREC; process 2 remained
+  stable through IRQ 160 with wake state cleared.
+- 2026-09-11 build-only: added `[CTX V138 handoff-owner-number-ready pass=1]`
+  to verify the selected process number resolves back to its canonical table
+  object. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,508 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V138 passed on SENDREC; process 2 resumed
+  and remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V139 handoff-stack-map-ready pass=1]`
+  to require a nonempty stack mapping for the selected replacement process.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,432 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V139 passed on SENDREC; the replacement
+  stack mapping was present, wake completed, and process 2 remained stable
+  through IRQ 128.

@@ -447,11 +447,81 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   frame->pc = (uint32_t)next->p_reg.pc;
   frame->psw = (uint32_t)next->p_reg.psw;
   frame->sp = (uint32_t)next->p_reg.sp;
+  if (cp32_user_probe_mode) {
+    int frame_copy_ok = frame->pc == (uint32_t)next->p_reg.pc &&
+        frame->psw == (uint32_t)next->p_reg.psw &&
+        frame->sp == (uint32_t)next->p_reg.sp &&
+        frame->a[15] == (uint32_t)next->p_reg.a[15];
+    usbj_print("[CTX V129 handoff-frame-copy pass=");
+    usbj_print_u32((uint32_t)frame_copy_ok);
+    usbj_print("]\r\n");
+    if (!frame_copy_ok) {
+      cp32_user_handoff_reject_count++;
+      return EBADCALL;
+    }
+  }
 #if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
   /* Keep diagnostics aligned with the frame that the probe is about to rfe. */
   proc_ptr = next;
   current_proc = next;
   cp32_irq_saved_owner = next;
+  if (cp32_user_probe_mode) {
+    int owner_switch_ok = proc_ptr == next && current_proc == next &&
+        cp32_irq_saved_owner == next;
+    usbj_print("[CTX V130 handoff-owner-selected pass=");
+    usbj_print_u32((uint32_t)owner_switch_ok);
+    usbj_print("]\r\n");
+    if (!owner_switch_ok) {
+      cp32_user_handoff_reject_count++;
+      return EBADCALL;
+    }
+    usbj_print("[CTX V131 handoff-owner-runnable pass=");
+    usbj_print_u32((uint32_t)(next->p_flags == 0));
+    usbj_print("]\r\n");
+    if (next->p_flags != 0) return EBADCALL;
+    usbj_print("[CTX V132 handoff-entry-pc-aligned pass=");
+    usbj_print_u32((uint32_t)(next->p_reg.pc != 0 &&
+                              (next->p_reg.pc & 0x03) == 0));
+    usbj_print("]\r\n");
+    if (next->p_reg.pc == 0 || (next->p_reg.pc & 0x03) != 0)
+      return EBADCALL;
+    usbj_print("[CTX V133 handoff-entry-psw-ready pass=");
+    usbj_print_u32((uint32_t)(next->p_reg.psw == 0));
+    usbj_print("]\r\n");
+    if (next->p_reg.psw != 0) return EBADCALL;
+    usbj_print("[CTX V134 handoff-entry-sp-aligned pass=");
+    usbj_print_u32((uint32_t)(next->p_reg.sp != 0 &&
+                              (next->p_reg.sp & 0x0F) == 0));
+    usbj_print("]\r\n");
+    if (next->p_reg.sp == 0 || (next->p_reg.sp & 0x0F) != 0)
+      return EBADCALL;
+    usbj_print("[CTX V135 handoff-call0-registers-ready pass=");
+    usbj_print_u32((uint32_t)(next->p_reg.a[0] == 0 &&
+                              next->p_reg.a[1] == next->p_reg.sp));
+    usbj_print("]\r\n");
+    if (next->p_reg.a[0] != 0 || next->p_reg.a[1] != next->p_reg.sp)
+      return EBADCALL;
+    usbj_print("[CTX V136 handoff-a15-ready pass=");
+    usbj_print_u32((uint32_t)(next->p_reg.a[15] != 0));
+    usbj_print("]\r\n");
+    if (next->p_reg.a[15] == 0) return EBADCALL;
+    usbj_print("[CTX V137 handoff-call-args-ready pass=");
+    usbj_print_u32((uint32_t)(next->p_reg.a[2] == 0 &&
+                              next->p_reg.a[3] == 0 &&
+                              next->p_reg.a[4] == 0));
+    usbj_print("]\r\n");
+    if (next->p_reg.a[2] != 0 || next->p_reg.a[3] != 0 ||
+        next->p_reg.a[4] != 0) return EBADCALL;
+    usbj_print("[CTX V138 handoff-owner-number-ready pass=");
+    usbj_print_u32((uint32_t)(next->p_nr >= 0 &&
+                              proc_addr(next->p_nr) == next));
+    usbj_print("]\r\n");
+    if (next->p_nr < 0 || proc_addr(next->p_nr) != next) return EBADCALL;
+    usbj_print("[CTX V139 handoff-stack-map-ready pass=");
+    usbj_print_u32((uint32_t)(next->p_map[S].mem_len != 0));
+    usbj_print("]\r\n");
+    if (next->p_map[S].mem_len == 0) return EBADCALL;
+  }
 #endif
   if (cp32_user_probe_mode) {
     usbj_print("[CTX V101 handoff-frame nr=");
