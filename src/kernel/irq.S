@@ -497,7 +497,7 @@ cp32_user_probe_entry:
 #elif defined(CP32_ENABLE_BOTH_PROBE)
     movi    a2, 3                 /* BOTH / SENDREC */
     movi    a3, 999               /* invalid destination: safe rejection */
-    movi    a4, 0
+    movi    a4, cp32_probe_message
 #elif defined(CP32_ENABLE_BLOCKED_PROBE)
     movi    a2, 2                 /* RECEIVE */
     movi    a3, -1                /* ANY */
@@ -505,7 +505,7 @@ cp32_user_probe_entry:
 #else
     movi    a2, 1                 /* SEND */
     movi    a3, 999               /* invalid destination: immediate EINVAL */
-    movi    a4, 0
+    movi    a4, cp32_probe_message
 #endif
     ill                         /* ESP32-S3 lacks a user syscall opcode;
                                  * this is the controlled exception probe. */

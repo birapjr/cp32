@@ -17,6 +17,146 @@ The obsolete `[IMG V8]` startup banner was also removed; the rebuilt image
 has 10,384 bytes of IRAM margin.
 The remaining obsolete timer/startup banners were removed; the rebuilt image
 has 10,496 bytes of IRAM margin.
+Added `[CTX V82 user-frame-save-ready]` immediately before the gated user
+probe entry for the next hardware run; no hardware result is claimed yet.
+Normal-image hardware validation then passed through IRQ 96: memory, vectors,
+stack, IPC/MM, lock, invalid-syscall, and live context checks passed, with
+`a1==sp`, `a15ok=1`, `rel=1`, and no exception. V82 was correctly absent
+because `CP32_ENABLE_USER_PROBE` was disabled.
+The dedicated `test-user-probe` image also builds and passes the layout check;
+its IRAM margin is 10,184 bytes and awaits hardware validation of V82.
+The guarded BOTH/SENDREC reply-probe image also builds and passes the layout
+check, with 9,580 bytes of IRAM margin; it is ready for the next hardware run.
+Added the function/destination contract guard: `ANY` is accepted only for
+RECEIVE, while SEND and BOTH require a concrete destination. V92 marks the
+accepted contract; the reply-probe image builds and passes layout validation
+with 10,588 bytes of IRAM margin.
+Hardware validation passed through IRQ 128 with V92 following the frame,
+cause, owner, message, and destination markers; process 3 remained selected
+and no exception occurred.
+The high-frequency `CTX V78` scheduler trace was removed after probe
+validation; the normal image now has 10,744 bytes of IRAM margin.
+Removed the redundant high-frequency IPC V18/V24/V79/V80/V81 trace output;
+the normal image now has 11,308 bytes of IRAM margin.
+Removed redundant user-dispatch V67 entry/result messages; the user-probe
+image now has 11,072 bytes of IRAM margin.
+Removed the obsolete V68/V70–V77 probe trace family; the user-probe image now
+has 12,068 bytes of IRAM margin, with V82/V83 retained.
+Latest hardware output validated initialization, IPC/MM, syscall rejection,
+lock nesting, V83 C-boundary entry, aligned context restoration, and periodic
+IRQs through IRQ 112 with no exception. V82 was not observed in this capture,
+so its hardware validation remains unconfirmed.
+Hardware validation of that image passed through IRQ 80 with V82/V83 present,
+the reduced diagnostic output, valid context invariants, and no exception.
+The subsequent user-probe run reached V82 and V83 and remained stable through
+IRQ 96 with no exception; `a1==sp`, `a15ok=1`, and `rel=1` held. In this
+probe image `t1/t2=0` and `f=0` are expected because process 1 is the probe.
+The cleaned image then remained stable through IRQ 160 with V82/V83 present,
+reduced IPC output, valid frame alignment, and no exception.
+Added the production trap-cause gate: only the documented illegal-instruction
+cause (`EXCCAUSE=0`) reaches syscall dispatch; other user exception causes now
+fail closed. V84 marks the accepted cause in the probe image.
+Added the guarded non-syscall-cause probe and V85 marker; the rejected-cause
+path now has explicit coverage before production return handling is enabled.
+The latest live probe reached V82/V84/V83 and remained stable through IRQ 96,
+but did not emit V85 because `cp32_user_trap_probe()` is no longer called by
+the live path after the one-shot diagnostic block was disabled. V85 remains
+build-only until that probe is wired into the active test path.
+The invalid-cause probe is now wired into the active `test-user-probe` boot
+sequence; the image passes layout validation with 11,652 bytes of IRAM margin
+and awaits hardware validation of V85.
+Hardware validation completed through IRQ 96: V82, V84, V83, and V85 appeared
+in order, confirming accepted-cause dispatch and rejected-cause fail-closed
+behavior with stable context/IRQ operation and no exception.
+Added pre-dispatch destination validation and V89 for invalid destinations;
+the user-probe image builds and passes layout validation with 11,384 bytes of
+IRAM margin. Hardware validation is pending.
+Synchronized the owner saved PC after trap-PC advancement, including early
+rejection paths, and added V97 for that scheduler-visible contract. The
+user-probe image builds and passes layout validation with 10,776 bytes of IRAM
+margin; hardware validation is pending.
+Hardware validation passed through IRQ 112 with V84, V83, V87, V86, V94, V97,
+V88, V89, and V95 observed in order; owner-PC synchronization and rejection
+return remained stable with no exception.
+Added V90 for accepted destinations; the guarded BOTH/SENDREC reply-probe
+image builds and passes layout validation with 10,760 bytes of IRAM margin.
+Added V93 to mark syscall result propagation into both the trap frame and
+owner register state; the reply-probe image builds and passes layout
+validation with 10,544 bytes of IRAM margin.
+Syscall return PC advancement is now unconditional for accepted user syscalls;
+V94 marks the three-byte trap instruction skip. The reply-probe image builds
+and passes layout validation with 10,508 bytes of IRAM margin.
+Moved return-PC advancement before `sys_call` so blocked-frame snapshots retain
+the post-trap PC and do not re-execute the syscall on wake. V94 remains the
+hardware marker; the reply-probe image builds with 10,500 bytes of IRAM margin.
+Early invalid-destination returns now record `E_BAD_DEST` in the user frame
+before restoration, with V95 marking that error-result path. The user-probe
+image builds and passes layout validation with 10,984 bytes of IRAM margin.
+Hardware validation passed through IRQ 80: V82, V84, V83, V87, V85, V86, V88,
+V89, and V95 appeared in order; the rejection result was recorded and no
+exception occurred.
+Moved return-PC advancement ahead of all syscall argument validation, so
+invalid pointer/destination calls also resume past the trap instruction. V94
+marks this path; the user-probe image builds with 10,828 bytes of IRAM margin.
+Hardware validation passed through IRQ 80 with V94 preceding V96/V85/V88/V89/V95;
+rejected syscalls advanced past the trap and returned recorded errors without
+an exception.
+Extended early error-result propagation to invalid message pointers, with V96
+marking `EFAULT` recorded in the frame. The user-probe image builds and passes
+layout validation with 10,856 bytes of IRAM margin; hardware validation is
+pending.
+Hardware validation passed through IRQ 80: V96, V85, V88, V89, and V95 all
+appeared in the active rejection probe, confirming pointer, cause, destination,
+and error-result handling with no exception.
+Hardware validation passed through IRQ 80 with V94 present after V93;
+return-PC advancement, process-3 handoff, context, and IRQ operation remained
+stable with no exception.
+The follow-up run confirmed the corrected order V94 before V93, then remained
+stable through IRQ 64 with process 3 selected and no exception.
+Hardware validation passed through IRQ 144 with V93 present after V92;
+the result-recording path and process-3 handoff remained stable with valid
+context invariants and no exception.
+Added V91 for range-valid but free destination rejection; the reply-probe
+image builds and passes layout validation with 10,660 bytes of IRAM margin.
+Hardware validation of the valid-destination reply probe passed through IRQ
+64: V82, V84, V83, V87, V85, V86, V88, and V90 appeared, process 3 was
+selected, and no exception occurred. V91 was correctly absent.
+The latest invalid-destination probe validated V82, V84, V83, V87, V85, V86,
+V88, and V89 through IRQ 64 with no exception. V90 was correctly absent from
+this rejection-only image and remains reserved for the reply probe.
+The latest probe run observed V84, V83, V87, V86, V88, and V89, then remained
+stable through IRQ 80 with no exception. V89 safely rejected the invalid
+destination after mapped-message validation; V82/V85 were not present in this
+capture.
+Added unconditional user-trap owner/state validation and V86 for the accepted
+owner contract; the probe image builds and passes layout validation with
+11,616 bytes of IRAM margin. Hardware validation is pending.
+Strengthened the user-frame contract to enforce `a1 == sp` and nonzero `a15`,
+with V87 marking the validated shape. The probe image builds and passes layout
+validation with 11,552 bytes of IRAM margin; hardware validation is pending.
+Hardware validation completed through IRQ 80: V82, V84, V83, V87, V85, and V86
+appeared in order, confirming frame shape, cause, and owner validation with
+stable context/IRQ operation and no exception.
+Added pre-dispatch user message-pointer validation and V88; the active probe
+now supplies a mapped message buffer before exercising its invalid destination
+path. The probe image builds and passes layout validation with 11,460 bytes of
+IRAM margin; hardware validation is pending.
+Hardware validation completed through IRQ 64: V88 appeared after the frame,
+cause, and owner markers, confirming mapped message-pointer validation; context
+and IRQ operation remained stable with no exception.
+Hardware validation completed through IRQ 112: V82, V84, V83, V85, and V86
+appeared in order, with owner validation, cause rejection, context, and IRQ
+operation stable and no exception.
+Hardware validation passed through IRQ 112 with V82, V84, and V83 appearing in
+order, followed by stable context/IRQ diagnostics and no exception.
+Added one-shot `[CTX V83 user-frame-c-boundary]` at the C trap boundary. The
+user-probe image builds and passes layout validation with 10,136 bytes of IRAM
+margin; hardware validation is pending.
+Hardware validation of the user-probe image passed through IRQ 192: V82/V83
+were reached, the corrected frame crossed the C boundary, and the immediate
+probe return completed without exception. `a1==sp`, `a15ok=1`, and `rel=1`
+remained valid. The zero stress counters are expected because process 1 is
+occupied by the terminal user-probe entry in this image.
 
 Latest hardware runs pass IPC/MM, lock, scheduler, and context probes. The
 live IRQ/context loop is stable through the latest reported IRQ samples, with

@@ -519,3 +519,165 @@ unexpected `e=1`.
 - 2026-09-11 cleanup: removed the obsolete SYSTIMER/BOOT/image startup
   banners and timer probe build label. Build and image-layout validation pass;
   IRAM margin is now 10,496 bytes.
+- 2026-09-11 marker: added `[CTX V82 user-frame-save-ready]` before the gated
+  user probe entry. Hardware validation is pending.
+- 2026-09-11 hardware validation: normal image passed through IRQ 96 with
+  memory/vector/stack, IPC/MM, lock, invalid-syscall, and context checks
+  passing. `a1==sp`, `a15ok=1`, and `rel=1` remained valid; no exception was
+  observed. V82 was absent as expected because the user probe was disabled.
+- 2026-09-11 build-only: `make test-user-probe` passed the image-layout check
+  with 10,184 bytes of IRAM margin. The V82 probe marker awaits hardware
+  validation.
+- 2026-09-11 build-only: `make test-both-reply-probe` passed the image-layout
+  check with 9,580 bytes of IRAM margin. The guarded reply path and V82 marker
+  await hardware validation.
+- 2026-09-11 marker/build-only: added one-shot `[CTX V83 user-frame-c-boundary]`
+  after structural validation at the C trap boundary. `make test-user-probe`
+  and image-layout validation pass with 10,136 bytes of IRAM margin.
+- 2026-09-11 hardware validation: user-probe image reached V82/V83 and ran
+  cleanly through IRQ 192 with no exception. The corrected frame reached the
+  C boundary; `a1==sp`, `a15ok=1`, and `rel=1` remained valid. `t1/t2=0` is
+  expected for this image because process 1 is the terminal user probe.
+- 2026-09-11 cleanup: removed the high-frequency `CTX V78` scheduler trace.
+  Normal build and image-layout validation pass with 10,744 bytes of IRAM
+  margin; compact V46/IRQ diagnostics remain enabled.
+- 2026-09-11 cleanup: removed redundant high-frequency IPC V18/V24/V79/V80/V81
+  trace output. Normal build and image-layout validation pass with 11,308
+  bytes of IRAM margin; one-shot IPC pass/fail markers remain.
+- 2026-09-11 cleanup: removed redundant user-dispatch V67 entry/result
+  messages. `make test-user-probe` and image-layout validation pass with
+  11,072 bytes of IRAM margin; V83 remains as the C-boundary marker.
+- 2026-09-11 cleanup: removed obsolete V68/V70–V77 user-probe trace output.
+  `make test-user-probe` and image-layout validation pass with 12,068 bytes
+  of IRAM margin; V82/V83 remain enabled.
+- 2026-09-11 hardware validation: output passed initialization, IPC/MM,
+  syscall rejection, lock, V83 C-boundary, context, and IRQ checks through
+  IRQ 112 with no exception. V82 was absent from this capture despite being
+  present in source; do not mark V82 hardware validation complete yet.
+- 2026-09-11 hardware validation: cleaned user-probe image passed through IRQ
+  80 with V82/V83 appearing once, IPC/MM and lock checks passing, valid
+  context invariants, and no exception.
+- 2026-09-11 hardware validation: user-probe image reached `[CTX V82]` and
+  `[CTX V83]` and ran cleanly through IRQ 96. Frame alignment, `a15ok=1`, and
+  `rel=1` remained valid with no exception. `t1/t2=0` and `f=0` are expected
+  because process 1 is occupied by the user probe.
+- 2026-09-11 hardware validation: cleaned user-probe image remained stable
+  through IRQ 160 with V82/V83 present, reduced IPC output, valid frame
+  alignment, and no exception.
+- 2026-09-11 build-only: added the user trap-cause gate and V84 accepted-cause
+  marker. `make test-user-probe` and image-layout validation pass with 12,016
+  bytes of IRAM margin; hardware validation is pending.
+- 2026-09-11 hardware validation: V82, V84, and V83 appeared in the expected
+  order; IPC/MM and lock checks passed, context invariants remained valid, and
+  periodic IRQ delivery was stable through IRQ 112 with no exception.
+- 2026-09-11 build-only: added the guarded invalid-cause probe and
+  `[CTX V85 trap-cause-reject pass=1]`. `make test-user-probe` and image-layout
+  validation pass with 12,016 bytes of IRAM margin; hardware validation is
+  pending.
+- 2026-09-11 hardware validation: live user probe reached V82/V84/V83 and ran
+  cleanly through IRQ 96 with no exception. V85 was absent because its helper
+  is not currently invoked by the active live path; do not mark V85 hardware
+  validation complete.
+- 2026-09-11 build-only: wired the invalid-cause probe into the active user
+  probe sequence. `make test-user-probe` and image-layout validation pass with
+  11,652 bytes of IRAM margin; V85 hardware validation is pending.
+- 2026-09-11 hardware validation: V82, V84, V83, and V85 appeared in order
+  through IRQ 96. Accepted-cause dispatch and rejected-cause handling passed;
+  context/IRQ checks remained stable with no exception.
+- 2026-09-11 build-only: user-trap owner/state validation is now enforced for
+  probe and production paths, with `[CTX V86 user-owner-validated]`. The probe
+  image passes layout validation with 11,616 bytes of IRAM margin; hardware
+  validation is pending.
+- 2026-09-11 build-only: strengthened user-frame validation with `a1 == sp`
+  and nonzero `a15`, adding `[CTX V87 user-frame-shape-validated]`.
+  `make test-user-probe` and image-layout validation pass with 11,552 bytes of
+  IRAM margin; hardware validation is pending.
+- 2026-09-11 hardware validation: V82, V84, V83, V87, V85, and V86 appeared in
+  order through IRQ 80. Frame shape, cause, and owner validation passed with
+  stable context/IRQ operation and no exception.
+- 2026-09-11 build-only: added pre-dispatch message-pointer validation and
+  `[CTX V88 user-message-validated]`; the active invalid-destination probe now
+  uses a mapped message buffer. `make test-user-probe` and image-layout
+  validation pass with 11,460 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V88 appeared after the frame/cause/owner
+  markers through IRQ 64, confirming mapped message-pointer validation.
+  IPC/MM, syscall, lock, context, and IRQ checks passed with no exception.
+- 2026-09-11 hardware validation: V82, V84, V83, V85, and V86 appeared in
+  order through IRQ 112. Owner validation, cause rejection, context, and IRQ
+  checks passed with no exception.
+- 2026-09-11 build-only: added pre-dispatch destination validation and
+  `[CTX V89 user-destination-reject]`. `make test-user-probe` and image-layout
+  validation pass with 11,384 bytes of IRAM margin; hardware validation is
+  pending.
+- 2026-09-11 build-only: synchronized the owner saved PC after trap-PC
+  advancement, including early rejection paths, and added
+  `[CTX V97 owner-return-pc-synchronized]`. `make test-user-probe` and
+  image-layout validation pass with 10,776 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V84, V83, V87, V86, V94, V97, V88, V89, and
+  V95 appeared in order through IRQ 112. Owner-PC synchronization and
+  rejection return passed with stable context/IRQ operation and no exception.
+- 2026-09-11 build-only: added `[CTX V90 user-destination-validated]` for the
+  accepted destination path. `make test-both-reply-probe` and image-layout
+  validation pass with 10,760 bytes of IRAM margin; hardware validation is
+  pending.
+- 2026-09-11 build-only: added `[CTX V93 syscall-result-recorded]` after
+  recording the syscall result in the trap frame and owner register state.
+  `make test-both-reply-probe` and image-layout validation pass with 10,544
+  bytes of IRAM margin; hardware validation is pending.
+- 2026-09-11 build-only: made syscall return-PC advancement unconditional and
+  added `[CTX V94 syscall-return-pc-advanced]`. `make test-both-reply-probe`
+  and image-layout validation pass with 10,508 bytes of IRAM margin.
+- 2026-09-11 build-only: moved return-PC advancement before `sys_call` so
+  blocked-frame snapshots retain the post-trap PC. `make test-both-reply-probe`
+  and image-layout validation pass with 10,500 bytes of IRAM margin.
+- 2026-09-11 build-only: early invalid-destination returns now write
+  `E_BAD_DEST` into the user frame before restore and emit V95. `make
+  test-user-probe` and image-layout validation pass with 10,984 bytes of IRAM
+  margin; hardware validation is pending.
+- 2026-09-11 hardware validation: rejection probe reached V82, V84, V83, V87,
+  V85, V86, V88, V89, and V95 through IRQ 80. `E_BAD_DEST` was recorded in
+  the user frame before restore; context/IRQ checks passed with no exception.
+- 2026-09-11 build-only: moved syscall return-PC advancement before argument
+  validation so rejected calls cannot re-execute the trap. `make
+  test-user-probe` and image-layout validation pass with 10,828 bytes of IRAM
+  margin; V94 remains the marker.
+- 2026-09-11 hardware validation: V94 preceded V96, V85, V88, V89, and V95
+  through IRQ 80. Rejected syscalls advanced past the trap and returned their
+  recorded errors; context/IRQ checks passed with no exception.
+- 2026-09-11 build-only: extended early error-result propagation to invalid
+  message pointers and added `[CTX V96 pointer-reject-result-recorded]`.
+  `make test-user-probe` and image-layout validation pass with 10,856 bytes of
+  IRAM margin; hardware validation is pending.
+- 2026-09-11 hardware validation: active rejection probe reached V96, V85, V88,
+  V89, and V95 through IRQ 80. Invalid pointer, cause, and destination results
+  were recorded safely; no exception occurred.
+- 2026-09-11 hardware validation: V94 appeared after V93 and the reply probe
+  remained stable through IRQ 80. Return-PC advancement, process-3 handoff,
+  context, and IRQ checks passed with no exception.
+- 2026-09-11 hardware validation: follow-up output showed V94 before V93, as
+  expected after moving PC advancement before `sys_call`; process 3 remained
+  selected and the system stayed clean through IRQ 64 with no exception.
+- 2026-09-11 hardware validation: valid BOTH/SENDREC reply probe reached V93
+  after V92 and remained stable through IRQ 144. Result recording, process-3
+  handoff, context, and IRQ checks passed with no exception.
+- 2026-09-11 build-only: added the SEND/RECEIVE/BOTH destination contract
+  guard and `[CTX V92 user-call-contract-validated]`. The reply-probe image
+  passes layout validation with 10,588 bytes of IRAM margin; hardware
+  validation is pending.
+- 2026-09-11 hardware validation: valid BOTH/SENDREC reply probe reached V92
+  after the frame/cause/owner/message/destination markers and remained stable
+  through IRQ 128. Process 3 stayed selected and no exception occurred.
+- 2026-09-11 build-only: added free-process destination rejection and
+  `[CTX V91 user-free-destination-reject]`. `make test-both-reply-probe` and
+  image-layout validation pass with 10,660 bytes of IRAM margin.
+- 2026-09-11 hardware validation: valid-destination reply probe reached V82,
+  V84, V83, V87, V85, V86, V88, and V90 through IRQ 64; process 3 was
+  selected and no exception occurred. V91 was absent as expected.
+- 2026-09-11 hardware validation: invalid-destination probe reached V82, V84,
+  V83, V87, V85, V86, V88, and V89, then remained stable through IRQ 64 with
+  no exception. V90 was absent as expected because this image exercises only
+  destination rejection.
+- 2026-09-11 hardware validation: V84, V83, V87, V86, V88, and V89 appeared;
+  V89 rejected the invalid destination after message validation. Context and
+  IRQ checks remained stable through IRQ 80 with no exception. V82/V85 were
+  absent from this capture and remain unconfirmed for this run.

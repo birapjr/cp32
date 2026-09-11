@@ -771,6 +771,9 @@ void main(void) {
    systimer_irq_start();
 
 #if CP32_ENABLE_USER_PROBE
+  usbj_print("[CTX V82 user-frame-save-ready]\r\n");
+  if (cp32_user_trap_probe(proc_addr(1)) != OK)
+    panic("user trap cause probe", 1);
   cp32_enter_initial_user(proc_addr(1));
 #endif
 
