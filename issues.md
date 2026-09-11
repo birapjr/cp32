@@ -1035,3 +1035,18 @@ unexpected `e=1`.
   and CPU-time charging. `make clean && make test-blocked-sendrec-probe`
   passes image layout validation with 7,692 bytes of IRAM margin. Hardware
   validation is pending.
+- 2026-09-11 build-only clock feature: added alarm expiry counting and compact
+  nearest-alarm state output around `do_clocktick()`. The build passes image
+  layout validation with 7,616 bytes of IRAM margin; hardware alarm-expiry
+  validation is pending.
+- 2026-09-11 clock correction: fixed uninitialized alarm state by setting
+  `next_alarm = LONG_MAX` and resetting clock accounting state during clock
+  initialization. Build passes with 7,616 bytes of IRAM margin; hardware must
+  confirm `[CLOCK V2] next=4294967295` while no alarm is armed.
+- 2026-09-11 clock bring-up correction: initialized alarm/accounting state in
+  the SYSTIMER probe startup path, not only in the not-yet-running clock task.
+  Build passes with 7,580 bytes of IRAM margin; hardware must confirm
+  `[CLOCK V2] next=4294967295` while no alarm is armed.
+- 2026-09-11 hardware validation: the SYSTIMER probe confirms the corrected
+  unarmed alarm state (`next=2147483647`, `expiries=0`) through IRQ 160.
+  Tick accounting remained monotonic and no exception occurred.

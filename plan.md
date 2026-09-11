@@ -1,5 +1,15 @@
 # CP32 implementation plan
 
+## Current implementation approach
+
+Development now proceeds feature-by-feature rather than marker-by-marker.
+Each iteration implements one coherent MINIX feature slice, adds only the
+critical aggregate validation markers, builds the complete image, and then
+uses hardware output to identify any failures before starting the next slice.
+This keeps the port moving faster while preserving a clear validation boundary
+for every completed feature. Detailed field diagnostics remain available only
+when a focused failure investigation requires them.
+
 ## Current state — 2026-09-11
 
 The production user exception entry was tightened after review: the user
@@ -677,3 +687,23 @@ of importing the incompatible libgcc `__udivdi3` routine.
   175 SYSTIMER ticks; accumulated and pending ticks matched at every sample,
   with no exception and stable process-2 context/IRQ operation through IRQ
   176.
+- 2026-09-11 build-only clock feature: added compact `[CLOCK V2
+  alarm-state]` reporting and expiry accounting to the MINIX alarm scan,
+  preserving nearest-alarm recomputation and deferred tick processing. `make
+  clean && make test-blocked-sendrec-probe` passes image layout validation
+  with 7,616 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 clock correction: initialized `realtime`, `pending_ticks`,
+  `sched_ticks`, and `next_alarm` in `init_clock()`; an unarmed clock must
+  report `next=LONG_MAX`, not an immediately expired zero deadline. Rebuild
+  with `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 7,616 bytes of IRAM margin. Hardware revalidation is
+  pending.
+- 2026-09-11 clock bring-up correction: initialized shared clock state in
+  `systimer_irq_start()` because the probe runs before `clock_task`; the
+  unarmed alarm deadline now starts at `LONG_MAX` on the active path. `make
+  clean && make test-blocked-sendrec-probe` passes image layout validation
+  with 7,580 bytes of IRAM margin. Hardware revalidation is pending.
+- 2026-09-11 hardware validation: active SYSTIMER startup now reports
+  `[CLOCK V2] expiries=0 next=2147483647` consistently through IRQ 160;
+  `[CLOCK V1]` reached 159 ticks monotonically and context/handoff checks
+  remained stable with no exception.
