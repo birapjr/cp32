@@ -93,6 +93,7 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 
 /* Incremented by the temporary level-2 SYSTIMER probe handler. */
 volatile uint32_t cp32_timer_irq_ticks;
+extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
 volatile uint32_t cp32_clock_irq_frame_aligned_calls;
@@ -469,6 +470,9 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
+#ifdef CP32_ENABLE_BLOCKED_PROBE
+  if (cp32_timer_irq_ticks == 16) cp32_probe_wake_receiver();
+#endif
   if ((((uintptr_t) frame) & 0x0Fu) == 0)
     cp32_clock_irq_frame_aligned_calls++;
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&

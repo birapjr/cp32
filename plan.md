@@ -52,7 +52,8 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
 - [x] Added the shared runtime user-frame validator used by V59; the user
       exception vector remains terminal until trap restore is implemented.
 - [x] Added a guarded C-side user-trap dispatch boundary; it validates owner,
-      cause, and frame shape but returns `EBADCALL` until `irq_user` is wired.
+      cause, and frame shape; the enabled path now decodes the call0 frame and
+      routes SEND/RECEIVE/BOTH through `sys_call` while the gate remains off.
 - [x] Added `[CTX V60 trap-boundary-guard pass=1]` to verify invalid trap
       inputs fail closed before syscall dispatch.
 - [x] Added `[CTX V61 trap-dispatch-pending pass=1]` to verify valid frames
@@ -60,8 +61,30 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
 - [x] Added an explicit disabled user-trap gate and `[CTX V62
       user-trap-gate pass=1]`; it will remain off until `irq_user` constructs
       and validates a real frame.
+- [x] Added `[CTX V63 user-blocked-return-guard]` so a blocked user syscall
+      cannot accidentally execute `rfe`; scheduler handoff is still pending.
+- [x] Added the gated user-frame scheduler-handoff contract and `[CTX V64
+      user-handoff-contract]`; selection and frame copy remain disabled until
+      a targeted hardware probe.
+- [x] Wired `irq_user` to attempt the guarded handoff on blocked returns;
+      immediate returns still use the validated frame restore, and rejected
+      handoffs fall back to the terminal diagnostic path.
+- [x] Added `[CTX V65 enabled-trap-probe]` to exercise the enabled C trap
+      boundary with a complete frame while leaving the production gate off.
+- [x] Added an isolated `cp32_user_probe_entry` containing a real Xtensa
+      exception instruction (`ill`) for hardware vector-entry validation; it
+      is not selected by boot until the hardware experiment is enabled.
+- [x] Added explicit `CP32_ENABLE_USER_PROBE` build-time activation, keeping
+      the normal image unchanged while making the real probe selectable.
+- [x] Added the `make -C src test-user-probe` hardware-test target so probe
+      activation cannot be accidentally omitted by an ordinary build.
+- [x] Initialized the probe task with a kernel-mode frame; ESP32-S3 has no
+      hardware `PS.UM`, so syscall isolation uses the software gate.
+- [x] Replaced unavailable `PS.UM` usage on ESP32-S3 with a kernel-mode
+      software syscall gate routed through the same validated user frame.
 - [ ] Add hardware markers for blocked-frame save, wake, restore, and resumed
-      syscall return.
+- [x] Add hardware counters/markers for blocked-frame save, wake, and restore
+      eligibility; the actual resumed syscall return remains gated.
 
 ## Remaining kernel work
 

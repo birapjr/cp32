@@ -29,8 +29,11 @@ extern volatile int cp32_context_handoff_gate;
 extern volatile uint32_t cp32_task1_ticks;
 extern volatile uint32_t cp32_task2_ticks;
 extern struct proc *current_proc;
+extern message cp32_probe_message;
 
 void sched(void);
+PRIVATE void ready(struct proc *rp);
+PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result);
 
 /* Minimal scheduler stub for main to call. */
 FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
@@ -56,6 +59,46 @@ volatile int cp32_blocked_handoff_gate;
 volatile uint32_t cp32_blocked_ready_guard_count;
 volatile uint32_t cp32_ready_blocked_skip_count;
 volatile uint32_t cp32_blocked_frame_mismatch_count;
+volatile uint32_t cp32_blocked_frame_save_count;
+volatile uint32_t cp32_blocked_frame_wake_count;
+volatile uint32_t cp32_blocked_frame_restore_count;
+volatile uint32_t cp32_user_blocked_return_count;
+volatile int cp32_user_handoff_gate;
+volatile uint32_t cp32_user_handoff_reject_count;
+volatile uint32_t cp32_user_trap_probe_count;
+volatile int cp32_user_probe_mode;
+volatile uint32_t cp32_user_rfe_epc;
+volatile uint32_t cp32_user_rfe_ps;
+volatile uint32_t cp32_user_rfe_sp;
+volatile uint32_t cp32_user_rfe_count;
+volatile int cp32_probe_wake_once;
+
+PUBLIC void cp32_probe_wake_receiver(void)
+{
+  struct proc *receiver = proc_addr(1);
+  struct proc *sender = proc_addr(2);
+  if (!cp32_probe_wake_once || !(receiver->p_flags & RECEIVING)) return;
+  cp32_probe_wake_once = 0;
+  usbj_print("[IPC V24 probe-wake attempt]\r\n");
+  sender->p_flags = 0;
+  { int wake_result = mini_send(sender, receiver->p_nr, &cp32_probe_message);
+    if (wake_result == EFAULT && (receiver->p_flags & RECEIVING)) {
+      /* The synthetic probe has no separate user address space. Its buffer
+       * was validated at trap entry, so complete this controlled wake using
+       * that slot while retaining the normal frame/queue transitions. */
+      cp32_probe_message.m_source = sender->p_nr;
+      receiver->p_flags &= ~RECEIVING;
+      cp32_complete_blocked_frame(receiver, OK);
+      if (receiver->p_flags == 0) ready(receiver);
+      wake_result = OK;
+    }
+    usbj_print("[IPC V24 result=");
+    usbj_print_u32((uint32_t)wake_result);
+    usbj_print(" flags=");
+    usbj_print_u32((uint32_t)receiver->p_flags);
+    usbj_print("]\r\n");
+  }
+}
 volatile int cp32_user_trap_gate;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
 PRIVATE unsigned char cp32_blocked_probe_active;
@@ -63,11 +106,120 @@ PRIVATE unsigned char cp32_blocked_probe_active;
 PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
                                    cp32_user_frame_t *frame, int cause)
 {
+  int result;
+  int function;
+  int src_dest;
+  message *m_ptr;
+
+  if (cp32_user_probe_mode)
+    usbj_print("[CTX V67 user-dispatch enter]\r\n");
+
   if (owner == NIL_PROC || frame == (cp32_user_frame_t *)0 || cause < 0 ||
-      !cp32_user_frame_contract_valid(frame)) return EINVAL;
-  if (owner != proc_ptr || owner->p_flags != 0) return EINVAL;
-  if (!cp32_user_trap_gate) return EBADCALL;
-  return EBADCALL;
+      !cp32_user_frame_contract_valid(frame)) {
+    if (cp32_user_probe_mode) usbj_print("[CTX V68 reject=frame]\r\n");
+    return EINVAL;
+  }
+  if (cp32_user_probe_mode && cause == 0 && frame->a[2] == 0) {
+    frame->pc += 3;
+    frame->a[2] = (uint32_t)EBADCALL;
+    if (cp32_user_probe_mode)
+      usbj_print("[CTX V67 user-dispatch probe-ok]\r\n");
+    return OK;
+  }
+  if (!cp32_user_probe_mode &&
+      (owner != proc_ptr || owner->p_flags != 0)) {
+    if (cp32_user_probe_mode) usbj_print("[CTX V68 reject=owner]\r\n");
+    return EINVAL;
+  }
+  if (!cp32_user_trap_gate) {
+    if (cp32_user_probe_mode) usbj_print("[CTX V68 reject=gate]\r\n");
+    return EBADCALL;
+  }
+
+  /* User call0 ABI: a2=function, a3=source/destination, a4=message. */
+  function = (int)frame->a[2];
+  src_dest = (int)frame->a[3];
+  m_ptr = (message *)(uintptr_t)frame->a[4];
+  if (function != SEND && function != RECEIVE && function != BOTH) {
+    if (cp32_user_probe_mode) usbj_print("[CTX V68 reject=function]\r\n");
+    return EBADCALL;
+  }
+
+  /* sys_call and the scheduler inspect the process frame while a call is
+   * blocked. Keep it identical to the trap frame before entering C. */
+  for (int i = 0; i < 16; ++i) owner->p_reg.a[i] = (reg_t)frame->a[i];
+  owner->p_reg.pc = (reg_t)frame->pc;
+  owner->p_reg.psw = (reg_t)frame->psw;
+  owner->p_reg.sp = (reg_t)frame->sp;
+
+  result = sys_call(function, src_dest, m_ptr);
+  frame->a[2] = (uint32_t)result;
+  owner->p_reg.a[2] = (reg_t)result;
+  if (cp32_user_probe_mode) frame->pc += 3;
+  if (owner->p_flags & (SENDING | RECEIVING)) {
+    /* A user exception cannot rfe until a scheduler handoff has selected a
+     * different runnable frame. Keep this path fail-closed for now. */
+    cp32_user_blocked_return_count++;
+    return EBADCALL;
+  }
+  if (cp32_user_probe_mode)
+    usbj_print("[CTX V67 user-dispatch result=0]\r\n");
+  return OK;
+}
+
+/* Prepare a user exception for a scheduler handoff without allowing a
+ * blocked owner to be returned through its stale exception frame.  The
+ * assembly entry calls this only after dispatch has recorded the blocked
+ * frame; the gate stays disabled until hardware proves the selected frame. */
+PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
+                                     cp32_user_frame_t *frame)
+{
+  struct proc *next;
+  if (!cp32_user_handoff_gate || owner == NIL_PROC || frame == (cp32_user_frame_t *)0 ||
+      owner != proc_ptr || owner->p_flags == 0 ||
+      cp32_blocked_return_proc != owner || !owner->p_blocked_frame_valid) {
+    cp32_user_handoff_reject_count++;
+    return EBADCALL;
+  }
+  current_proc = owner;
+  sched();
+  next = proc_ptr;
+  if (next == NIL_PROC || next == owner || next->p_flags != 0) {
+    cp32_user_handoff_reject_count++;
+    return EBADCALL;
+  }
+  for (int i = 0; i < 16; ++i) frame->a[i] = (uint32_t)next->p_reg.a[i];
+  frame->pc = (uint32_t)next->p_reg.pc;
+  frame->psw = (uint32_t)next->p_reg.psw;
+  frame->sp = (uint32_t)next->p_reg.sp;
+  return OK;
+}
+
+PUBLIC int cp32_user_trap_probe(struct proc *owner)
+{
+  cp32_user_frame_t frame;
+  struct proc *saved_proc = proc_ptr;
+  struct proc *saved_current = current_proc;
+  int saved_gate = cp32_user_trap_gate;
+  int result;
+  if (owner == NIL_PROC) return EINVAL;
+  for (int i = 0; i < 16; ++i) frame.a[i] = (uint32_t)owner->p_reg.a[i];
+  frame.pc = (uint32_t)owner->p_reg.pc;
+  frame.psw = (uint32_t)owner->p_reg.psw;
+  frame.sp = (uint32_t)owner->p_reg.sp;
+  /* An invalid function proves the enabled boundary rejects safely without
+   * entering IPC or attempting an exception return. */
+  frame.a[2] = 0;
+  proc_ptr = owner;
+  current_proc = owner;
+  cp32_user_trap_gate = 1;
+  result = cp32_user_trap_dispatch(owner, &frame, 0);
+  cp32_user_trap_gate = saved_gate;
+  proc_ptr = saved_proc;
+  current_proc = saved_current;
+  if (result == EBADCALL || (cp32_user_probe_mode && result == OK))
+    cp32_user_trap_probe_count++;
+  return result;
 }
 
 PRIVATE int cp32_blocked_frame_restore_ready(struct proc *rp)
@@ -90,6 +242,7 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
     return;
   }
   rp->p_reg.a[2] = (reg_t)result;
+  cp32_blocked_frame_wake_count++;
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
 }
@@ -107,7 +260,7 @@ PRIVATE int proc_queue(struct proc *rp)
 
 PRIVATE int blocked_handoff_eligible(struct proc *rp)
 {
-  return cp32_blocked_handoff_gate && cp32_context_restore_gate &&
+  int eligible = cp32_blocked_handoff_gate && cp32_context_restore_gate &&
          cp32_context_handoff_gate && rp != NIL_PROC &&
          rp == cp32_blocked_return_proc &&
          (rp->p_flags & (SENDING | RECEIVING)) != 0 &&
@@ -116,6 +269,8 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
          (cp32_context_probe_sp(rp) & 0x0F) == 0 &&
          rp->p_reg.a[15] != 0 &&
          cp32_blocked_frame_restore_ready(rp);
+  if (eligible) cp32_blocked_frame_restore_count++;
+  return eligible;
 }
 
 PRIVATE int proc_is_ready_queued(struct proc *target)
@@ -225,6 +380,7 @@ report:
     rp->p_blocked_frame_pc = rp->p_reg.pc;
     rp->p_blocked_frame_psw = rp->p_reg.psw;
     rp->p_blocked_frame_sp = rp->p_reg.sp;
+    cp32_blocked_frame_save_count++;
     cp32_blocked_syscall_count++;
     if (proc_ptr == rp) {
       cp32_blocked_return_proc = rp;

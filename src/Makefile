@@ -85,6 +85,16 @@ test-exception:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_TEST_EXCEPTION=1" all
 
+# Hardware test: select the real Xtensa syscall probe as process 1.
+test-user-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1" all
+
+# Hardware test: exercise blocked RECEIVE; it must stop at the guard.
+test-blocked-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_PROBE=1" all
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)

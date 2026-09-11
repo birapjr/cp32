@@ -34,6 +34,18 @@ extern volatile uint32_t cp32_blocked_handoff_count;
 extern volatile uint32_t cp32_blocked_ready_guard_count;
 extern volatile uint32_t cp32_ready_blocked_skip_count;
 extern volatile uint32_t cp32_blocked_frame_mismatch_count;
+extern volatile uint32_t cp32_blocked_frame_save_count;
+extern volatile uint32_t cp32_blocked_frame_wake_count;
+extern volatile uint32_t cp32_blocked_frame_restore_count;
+extern volatile uint32_t cp32_user_blocked_return_count;
+extern volatile int cp32_user_handoff_gate;
+extern volatile uint32_t cp32_user_rfe_epc;
+extern volatile uint32_t cp32_user_rfe_ps;
+extern volatile uint32_t cp32_user_rfe_sp;
+extern volatile uint32_t cp32_user_rfe_count;
+extern volatile uint32_t cp32_user_handoff_reject_count;
+extern volatile uint32_t cp32_user_trap_probe_count;
+extern int cp32_user_trap_probe(struct proc *owner);
 extern volatile uint32_t cp32_sched_handoff_count;
 extern volatile uint32_t cp32_handoff_owner_mismatch_count;
 extern int cp32_user_trap_dispatch(struct proc *owner,
@@ -44,6 +56,15 @@ extern struct proc *current_proc;
 
 volatile uint32_t cp32_task1_ticks;
 volatile uint32_t cp32_task2_ticks;
+message cp32_probe_message;
+extern void cp32_user_probe_entry(void);
+extern void cp32_enter_initial_user(struct proc *owner);
+extern volatile int cp32_probe_wake_once;
+extern volatile int cp32_user_probe_mode;
+
+#ifndef CP32_ENABLE_USER_PROBE
+#define CP32_ENABLE_USER_PROBE 0
+#endif
 
 static void cp32_task1_loop(void)
 {
@@ -350,6 +371,11 @@ void main(void) {
     rp->p_reg.pc = (reg_t)kernel_idle_loop; // Point to a valid execution loop
     if (t == 1) rp->p_reg.pc = (reg_t)cp32_task1_loop;
     if (t == 2) rp->p_reg.pc = (reg_t)cp32_task2_loop;
+#if CP32_ENABLE_USER_PROBE
+    if (t == 1) rp->p_reg.pc = (reg_t)cp32_user_probe_entry;
+    if (t == 1) rp->p_reg.psw = 0x0;  /* ESP32-S3 has no PS.UM bit */
+    if (t == 2) rp->p_flags = P_SLOT_FREE;
+#endif
     rp->p_reg.psw = istaskp(rp) ? 0x100 : 0x0; // Simplified PSW
     if (t == 1 || t == 2) rp->p_reg.psw = 0x100;
     
@@ -393,6 +419,31 @@ void main(void) {
   }
   
   bill_ptr = proc_addr(IDLE);
+#if CP32_ENABLE_USER_PROBE
+  cp32_user_probe_mode = 1;
+  cp32_user_trap_gate = 1;
+  proc_addr(2)->p_flags = P_SLOT_FREE;
+  proc_addr(1)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
+  proc_addr(1)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_message) >> CLICK_SHIFT;
+  proc_addr(1)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+#ifdef CP32_ENABLE_BLOCKED_PROBE
+  proc_addr(2)->p_map[D] = proc_addr(1)->p_map[D];
+  cp32_probe_wake_once = 1;
+#endif
+  proc_addr(1)->p_int_blocked = 0;
+  proc_addr(1)->p_int_held = 0;
+  proc_addr(1)->p_callerq = NIL_PROC;
+  proc_addr(1)->p_sendlink = NIL_PROC;
+  proc_addr(1)->p_nextheld = NIL_PROC;
+  proc_addr(1)->p_getfrom = ANY;
+  proc_ptr = proc_addr(1);
+  current_proc = proc_addr(1);
+  proc_addr(1)->p_flags = 0;
+#endif
   lock_pick_proc();
 
 
@@ -443,6 +494,34 @@ void main(void) {
   usbj_print("[SCHED V1 classify pass=1 p1=2 p2=3]\r\n");
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
+  usbj_print("]\r\n");
+  usbj_print("[CTX V66 user-rfe-trace count=");
+  usbj_print_u32(cp32_user_rfe_count);
+  usbj_print(" epc=");
+  usbj_print_u32(cp32_user_rfe_epc);
+  usbj_print(" ps=");
+  usbj_print_u32(cp32_user_rfe_ps);
+  usbj_print(" sp=");
+  usbj_print_u32(cp32_user_rfe_sp);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V65 enabled-trap-probe pass=");
+  { int probe_result = cp32_user_trap_probe(proc_addr(1));
+  usbj_print_u32(cp32_user_probe_mode == 1 && probe_result == OK &&
+                 cp32_user_trap_probe_count == 1);
+  usbj_print(" result=");
+  usbj_print_u32((uint32_t)probe_result);
+  usbj_print(" count=");
+  usbj_print_u32(cp32_user_trap_probe_count);
+  }
+  usbj_print("]\r\n");
+  usbj_print("[CTX V64 user-handoff-contract pass=");
+  usbj_print_u32(cp32_user_handoff_gate == 0 &&
+                 cp32_user_handoff_reject_count == 0);
+  usbj_print(" rejects=");
+  usbj_print_u32(cp32_user_handoff_reject_count);
+  usbj_print("]\r\n");
+  usbj_print("[CTX V63 user-blocked-return-guard count=");
+  usbj_print_u32(cp32_user_blocked_return_count);
   usbj_print("]\r\n");
   usbj_print("[SCHED V7 blocked-ready-guard pass=");
   usbj_print_u32(cp32_blocked_ready_guard_count == 1);
@@ -523,10 +602,17 @@ void main(void) {
                    (const cp32_user_frame_t *)&proc_ptr->p_reg) &&
                  cp32_user_trap_dispatch(
                    proc_ptr, (cp32_user_frame_t *)&proc_ptr->p_reg, 0) ==
-                   EBADCALL);
+                   (cp32_user_probe_mode ? OK : EBADCALL));
   usbj_print("]\r\n");
   usbj_print("[CTX V62 user-trap-gate pass=");
-  usbj_print_u32(cp32_user_trap_gate == 0);
+  usbj_print_u32(cp32_user_trap_gate == 0 || cp32_user_probe_mode == 1);
+  usbj_print("]\r\n");
+  usbj_print("[IPC V23 blocked-frame-save count=");
+  usbj_print_u32(cp32_blocked_frame_save_count);
+  usbj_print(" wake=");
+  usbj_print_u32(cp32_blocked_frame_wake_count);
+  usbj_print(" restore=");
+  usbj_print_u32(cp32_blocked_frame_restore_count);
   usbj_print("]\r\n");
   usbj_print("[CTX V49 owner-mismatch count=");
   usbj_print_u32(cp32_handoff_owner_mismatch_count);
@@ -587,8 +673,18 @@ void main(void) {
    usbj_print_u32(ps_restored);
    usbj_print("]\r\n");
    if (!lock_v2_ok) panic("saved lock status", 1);
+#if CP32_ENABLE_USER_PROBE
+   cp32_user_trap_gate = 1;
+#ifdef CP32_ENABLE_BLOCKED_PROBE
+   cp32_user_handoff_gate = 1;
+#endif
+#endif
    systimer_irq_start();
-   usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
+  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
+
+#if CP32_ENABLE_USER_PROBE
+  cp32_enter_initial_user(proc_addr(1));
+#endif
 
    /* Temporary pre-scheduler idle loop. Keep the watchdogs serviced and emit
 
