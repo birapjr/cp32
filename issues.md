@@ -500,3 +500,22 @@ unexpected `e=1`.
   `mem_copy`, delivery, `0/0`, `Hello IPC!`, and cleared flags; timer/context
   checks remained clean through IRQ 144. The next IPC gap is task-owned
   message-loop execution.
+- 2026-09-11 build-only: reordered `irq_user` frame construction so all
+  interrupted call0 registers, including `a5`, are saved before reading
+  `EXCCAUSE`. `make clean && make` and the image-layout check passed. No
+  hardware validation has been performed for this change yet.
+- 2026-09-11 hardware validation: guarded trap/scheduler image passed through
+  IRQ 112. `[CTX V65]` returned `4294967194` (`EBADCALL=-102`), with
+  `[CTX V66]` user-rfe count `0`, `[CTX V64]` handoff rejects `0`, and
+  `[CTX V46]` showing aligned `sp`/`a1`, `a15ok=1`, and `rel=1`; IRQ samples
+  reported `r=1`, `f=1`, and no exception.
+- 2026-09-11 cleanup: excluded the completed one-shot V1–V64 diagnostic
+  transcript from `main.c`. Build and image-layout validation pass; IRAM
+  margin increased to 10,372 bytes. The compact periodic IRQ/context checks
+  remain enabled.
+- 2026-09-11 cleanup: removed the obsolete `[IMG V8] CP32 diagnostic image`
+  startup banner. Build and image-layout validation pass; IRAM margin is now
+  10,384 bytes.
+- 2026-09-11 cleanup: removed the obsolete SYSTIMER/BOOT/image startup
+  banners and timer probe build label. Build and image-layout validation pass;
+  IRAM margin is now 10,496 bytes.

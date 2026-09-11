@@ -334,7 +334,6 @@ void kernel_idle_loop(void) {
 }
 
 void main(void) {
-  usbj_print("[IMG V8] CP32 diagnostic image\r\n");
   status_line("main() starting", 0);
 
   register struct proc *rp;
@@ -511,23 +510,18 @@ void main(void) {
     usbj_print("FATAL: systimer counter is not advancing\r\n");
     for (;;) { }
   }
-  usbj_print("systimer UNIT0 advancing (TARGET0 IRQ disabled)\r\n");
   status_line("checking systimer interrupt route", 0);
   if (systimer_route_probe() != OK) {
     usbj_print("FATAL: systimer interrupt route rejected\r\n");
     for (;;) { }
   }
-  usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
-    usbj_print("[IMG V8] pre-IRQ setup complete\r\n");
     status_line("starting systimer interrupt probe", 0);
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
     cp32_clock_irq_bridge_enabled = 1;
-    usbj_print("[IMG V10] timer bridge enabled for clock lifecycle\r\n");
     cp32_context_restore_gate = 1;
     /* First live handoff experiment: keep clock_handler disabled, but allow
      * the IRQ bridge to invoke the scheduler and select a saved frame. */
     cp32_context_handoff_gate = 1;
-   usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
   test_ipc_mm();
   cp32_prepare_two_task_stress();
 #if CP32_ENABLE_USER_PROBE
@@ -561,6 +555,7 @@ void main(void) {
   cp32_probe_ready_reply();
 #endif
 #endif
+#if 0 /* Retained in history only; one-shot bring-up checks are complete. */
   usbj_print("[SCHED V1 classify pass=1 p1=2 p2=3]\r\n");
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
@@ -712,6 +707,7 @@ void main(void) {
   usbj_print(" d=");
   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
   usbj_print("]\r\n");
+#endif
   cp32_context_handoff_gate = 1;
 #ifdef CP32_ENABLE_BOTH_REPLY_PROBE
   /* The final stress reset above clears ready queues; restore the canonical
@@ -773,7 +769,6 @@ void main(void) {
 #endif
 #endif
    systimer_irq_start();
-  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
 #if CP32_ENABLE_USER_PROBE
   cp32_enter_initial_user(proc_addr(1));
@@ -784,7 +779,6 @@ void main(void) {
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
-  usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-2\r\n");
   /* With live handoff enabled, leave proc_ptr on the current idle frame.
    * Calling schedule() here would assign main()'s live frame to process 1
    * before the first IRQ and overwrite its task entry PC. */

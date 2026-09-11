@@ -360,18 +360,12 @@ irq_level1:
 .type   irq_user, @function
 irq_user:
     wsr     a0, excsave1
-    rsr     a5, exccause
-    movi    a6, 0x04             /* EXCCAUSE_LEVEL1_INTERRUPT */
-    beq     a5, a6, 1f
-    j       2f
-1:
-    rsr     a0, excsave1
-    j       irq_level1
-2:
     /* Build the frame before reading exception CSRs.  In particular, the
      * original user a2 is the syscall number and must not be replaced by
      * EXCCAUSE.  a0 is used as the temporary frame base; original a0 is
-     * recovered from EXCSAVE1 after original a1 has been saved. */
+     * recovered from EXCSAVE1 after original a1 has been saved.  Save every
+     * general register before using one as the exception-cause scratch; this
+     * preserves the interrupted user a5 as well as the other call0 state. */
     movi    a0, _stack_top
     addi    a0, a0, -128
     s32i    a1, a0, 4
@@ -398,6 +392,14 @@ irq_user:
     s32i    a1, a0, 68
     l32i    a1, a0, 4
     s32i    a1, a0, 72
+
+    /* A level-1 interrupt can arrive through either exception vector. */
+    rsr     a5, exccause
+    movi    a6, 0x04             /* EXCCAUSE_LEVEL1_INTERRUPT */
+    bne     a5, a6, 2f
+    rsr     a0, excsave1
+    j       irq_level1
+2:
 
     movi    a2, proc_ptr
     l32i    a2, a2, 0

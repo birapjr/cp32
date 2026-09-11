@@ -1,6 +1,22 @@
 # CP32 implementation plan
 
-## Current state — 2026-09-10
+## Current state — 2026-09-11
+
+The production user exception entry was tightened after review: the user
+frame now saves all interrupted call0 registers before reading `EXCCAUSE`,
+preserving the interrupted `a5` across non-level-1 traps. The normal image
+build and image-layout check pass. Hardware validation of the guarded image
+then passed through IRQ 112: `CTX V65` returned `EBADCALL` (`-102`), user-rfe
+count remained zero, handoff rejects remained zero, and `CTX V46` preserved
+aligned `sp`/`a1`, `a15`, and `rel=1`.
+
+The completed one-shot V1–V64 bring-up transcript is now excluded from the
+image; only compact live IRQ/context diagnostics remain enabled. The normal
+image layout check passes with 10,372 bytes of IRAM margin.
+The obsolete `[IMG V8]` startup banner was also removed; the rebuilt image
+has 10,384 bytes of IRAM margin.
+The remaining obsolete timer/startup banners were removed; the rebuilt image
+has 10,496 bytes of IRAM margin.
 
 Latest hardware runs pass IPC/MM, lock, scheduler, and context probes. The
 live IRQ/context loop is stable through the latest reported IRQ samples, with
@@ -16,9 +32,23 @@ Validated marker families retained in the current image:
   reset state, and rejected-handoff counters.
 - `LOCK V1/V4`, `IPC V9–V17`, and `MM V9/V11/V12` remain passing.
 
-The current image safely selects validated runnable frames. It does not yet
-resume a blocked SEND/RECEIVE syscall: wrappers still return after marking the
-process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
+The current probe image now exercises a complete guarded user BOTH/SENDREC
+request/reply path. Process 2 queues a request to process 3, process 3 receives
+it, the blocked process 2 is completed and made runnable, and both processes
+continue scheduling without an idle handoff or exception. The normal image
+also builds and passes the image-layout check. The production blocked-return
+path remains guarded until the probe logic is reduced to the real process and
+address-space setup.
+
+Latest validated reply-probe markers:
+
+- `[IPC V81 send-queued sender=2 dest=3]`
+- `[IPC V79 receive-delivery sender=2 flags=8 receiver=3 rflags=0]`
+- `[CTX V67 user-dispatch probe-ok]` after reply delivery
+- stable `CTX V46` and IRQ output through at least IRQ 240
+- no idle selection (`nr=4294967289`) or CP32 exception after reply wake
+
+Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
 
 ## Immediate next task
 
@@ -93,13 +123,25 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
       stable post-wake IRQ/context stream.
 - [x] Shared blocked-message delivery between normal `mini_send` and the
       mapped probe, preserving copy, frame completion, and ready-queue rules.
+- [x] Added the guarded BOTH/SENDREC reply probe, including a real request
+      queue, receiver delivery, blocked-frame completion, reply wake, and
+      resumed scheduling.
+- [x] Stabilized reply-probe process identities by restoring canonical
+      `pproc_addr` mappings and clearing stale ready-queue entries after stress
+      setup.
+- [x] Added reply-path diagnostics V70/V72/V73/V74/V75/V76/V77/V78/V79/V80/V81
+      to distinguish trap dispatch, queue insertion, receive delivery, handoff,
+      and scheduler state.
+- [x] Verified both the reply-probe image and the normal image compile with
+      the image-layout check passing.
 
 ## Remaining kernel work
 
-- [ ] Complete Xtensa user exception/trap entry and separate user-frame layout
-      from the level-1 interrupt frame.
-- [ ] Route SEND, RECEIVE, and BOTH from the trap frame through `sys_call`,
-      copy results back to the caller frame, and validate privilege/cause.
+- [ ] Complete production Xtensa user exception/trap entry and separate
+      user-frame layout from the level-1 interrupt frame.
+- [ ] Generalize the validated probe path into production SEND, RECEIVE, and
+      BOTH syscall routing with real process/address-space ownership and
+      privilege/cause validation.
 - [ ] Complete MINIX interrupt delivery, held-interrupt replay, lock nesting,
       and nested-entry policy against the reference `proc.c` behavior.
 - [ ] Port clock tick accounting, lost ticks, alarms, TTY timers, quantum
