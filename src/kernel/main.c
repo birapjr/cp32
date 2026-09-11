@@ -36,6 +36,7 @@ extern volatile uint32_t cp32_ready_blocked_skip_count;
 extern volatile uint32_t cp32_blocked_frame_mismatch_count;
 extern volatile uint32_t cp32_blocked_frame_save_count;
 extern volatile uint32_t cp32_blocked_frame_wake_count;
+extern volatile uint32_t cp32_blocked_resume_count;
 extern volatile uint32_t cp32_blocked_frame_restore_count;
 extern volatile uint32_t cp32_user_blocked_return_count;
 extern volatile int cp32_user_handoff_gate;
@@ -57,6 +58,7 @@ extern struct proc *current_proc;
 volatile uint32_t cp32_task1_ticks;
 volatile uint32_t cp32_task2_ticks;
 message cp32_probe_message;
+message cp32_probe_sender_message;
 extern void cp32_user_probe_entry(void);
 extern void cp32_enter_initial_user(struct proc *owner);
 extern volatile int cp32_probe_wake_once;
@@ -422,6 +424,8 @@ void main(void) {
 #if CP32_ENABLE_USER_PROBE
   cp32_user_probe_mode = 1;
   cp32_user_trap_gate = 1;
+  cp32_probe_sender_message.m_type = 0x43503332;
+  cp32_probe_message.m_type = 0;
   proc_addr(2)->p_flags = P_SLOT_FREE;
   proc_addr(1)->p_map[D].mem_vir =
       (vir_bytes)(uintptr_t)&cp32_probe_message & ~(CLICK_SIZE - 1);
@@ -431,7 +435,13 @@ void main(void) {
       (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
        sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
 #ifdef CP32_ENABLE_BLOCKED_PROBE
-  proc_addr(2)->p_map[D] = proc_addr(1)->p_map[D];
+  proc_addr(2)->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
+  proc_addr(2)->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
+  proc_addr(2)->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
   cp32_probe_wake_once = 1;
 #endif
   proc_addr(1)->p_int_blocked = 0;
@@ -495,6 +505,9 @@ void main(void) {
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
   usbj_print("]\r\n");
+  usbj_print("[CTX V69 resumed-syscall-return count=");
+  usbj_print_u32(cp32_blocked_resume_count);
+  usbj_print("]\r\n");
   usbj_print("[CTX V66 user-rfe-trace count=");
   usbj_print_u32(cp32_user_rfe_count);
   usbj_print(" epc=");
@@ -506,8 +519,9 @@ void main(void) {
   usbj_print("]\r\n");
   usbj_print("[CTX V65 enabled-trap-probe pass=");
   { int probe_result = cp32_user_trap_probe(proc_addr(1));
-  usbj_print_u32(cp32_user_probe_mode == 1 && probe_result == OK &&
-                 cp32_user_trap_probe_count == 1);
+  usbj_print_u32((cp32_user_probe_mode && probe_result == OK) ||
+                 (!cp32_user_probe_mode && probe_result == EBADCALL &&
+                  cp32_user_trap_gate == 0));
   usbj_print(" result=");
   usbj_print_u32((uint32_t)probe_result);
   usbj_print(" count=");

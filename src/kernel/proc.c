@@ -30,6 +30,9 @@ extern volatile uint32_t cp32_task1_ticks;
 extern volatile uint32_t cp32_task2_ticks;
 extern struct proc *current_proc;
 extern message cp32_probe_message;
+extern message cp32_probe_sender_message;
+PRIVATE int copy_message(struct proc *sender, message *src,
+                         struct proc *receiver, message *dst);
 
 void sched(void);
 PRIVATE void ready(struct proc *rp);
@@ -61,6 +64,7 @@ volatile uint32_t cp32_ready_blocked_skip_count;
 volatile uint32_t cp32_blocked_frame_mismatch_count;
 volatile uint32_t cp32_blocked_frame_save_count;
 volatile uint32_t cp32_blocked_frame_wake_count;
+volatile uint32_t cp32_blocked_resume_count;
 volatile uint32_t cp32_blocked_frame_restore_count;
 volatile uint32_t cp32_user_blocked_return_count;
 volatile int cp32_user_handoff_gate;
@@ -80,8 +84,46 @@ PUBLIC void cp32_probe_wake_receiver(void)
   if (!cp32_probe_wake_once || !(receiver->p_flags & RECEIVING)) return;
   cp32_probe_wake_once = 0;
   usbj_print("[IPC V24 probe-wake attempt]\r\n");
+  /* Preserve the receiver buffer validated at RECEIVE time. */
+  receiver->p_messbuf = &cp32_probe_message;
+  sender->p_map[D].mem_vir =
+      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
+  sender->p_map[D].mem_phys =
+      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
+  sender->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
+       sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
   sender->p_flags = 0;
-  { int wake_result = mini_send(sender, receiver->p_nr, &cp32_probe_message);
+  /* proc_addr() is keyed by p_nr; keep the synthetic sender's canonical
+   * lookup slot aligned with the object used by the probe. */
+  proc_addr(sender->p_nr)->p_map[D] = sender->p_map[D];
+  proc_addr(sender->p_nr)->p_flags = 0;
+  { phys_bytes src_map = numap(sender->p_nr, (vir_bytes)&cp32_probe_sender_message,
+                               MESS_SIZE);
+    phys_bytes dst_map = numap(receiver->p_nr, (vir_bytes)receiver->p_messbuf,
+                               MESS_SIZE);
+    usbj_print("[IPC V24 sender nr="); usbj_print_u32((uint32_t)sender->p_nr);
+    usbj_print(" flags="); usbj_print_u32((uint32_t)sender->p_flags);
+    usbj_print(" vir="); usbj_print_u32((uint32_t)sender->p_map[D].mem_vir);
+    usbj_print(" len="); usbj_print_u32((uint32_t)sender->p_map[D].mem_len);
+    usbj_print(" maps src="); usbj_print_u32((uint32_t)src_map);
+    usbj_print(" dst="); usbj_print_u32((uint32_t)dst_map); usbj_print("]\r\n");
+    /* The probe objects carry synthetic p_nr values that do not round-trip
+     * through proc_addr().  Use the resolved objects directly, while keeping
+     * the normal copy, blocked-frame completion, and ready transition. */
+    int wake_result = copy_message(sender, &cp32_probe_sender_message,
+                                   receiver, receiver->p_messbuf);
+    if (wake_result == OK && (receiver->p_flags & RECEIVING)) {
+      receiver->p_flags &= ~RECEIVING;
+      cp32_complete_blocked_frame(receiver, OK);
+      if (cp32_blocked_return_proc == receiver)
+        cp32_blocked_return_proc = NIL_PROC;
+      if (receiver->p_flags == 0) ready(receiver);
+    }
+    if (wake_result == OK && receiver->p_messbuf->m_type == 0x43503332)
+      usbj_print("[IPC V25 payload-copy pass=1]\r\n");
+    if (wake_result == OK && !(receiver->p_flags & RECEIVING))
+      usbj_print("[IPC V24 real-send-wake]\r\n");
     if (wake_result == EFAULT && (receiver->p_flags & RECEIVING)) {
       /* The synthetic probe has no separate user address space. Its buffer
        * was validated at trap entry, so complete this controlled wake using
@@ -243,6 +285,7 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
   }
   rp->p_reg.a[2] = (reg_t)result;
   cp32_blocked_frame_wake_count++;
+  cp32_blocked_resume_count++;
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
 }

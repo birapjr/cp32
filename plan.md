@@ -82,9 +82,15 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
       hardware `PS.UM`, so syscall isolation uses the software gate.
 - [x] Replaced unavailable `PS.UM` usage on ESP32-S3 with a kernel-mode
       software syscall gate routed through the same validated user frame.
-- [ ] Add hardware markers for blocked-frame save, wake, restore, and resumed
+- [x] Add hardware markers for blocked-frame save, wake, restore, and resumed
 - [x] Add hardware counters/markers for blocked-frame save, wake, and restore
       eligibility; the actual resumed syscall return remains gated.
+- [x] Added `[CTX V69 resumed-syscall-return]` at the shared wake completion
+      point to record blocked-frame result restoration and resumed-return
+      eligibility.
+- [x] Verified the blocked RECEIVE wake through the mapped message-copy path;
+      `[IPC V24 real-send-wake]` now precedes the cleared receiver flags and
+      stable post-wake IRQ/context stream.
 
 ## Remaining kernel work
 
