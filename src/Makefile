@@ -90,6 +90,12 @@ test-user-probe:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1" all
 
+# Hardware test: route BOTH/SENDREC through the user trap gate with an
+# invalid destination so the frame decode and rejection are bounded.
+test-both-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BOTH_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BOTH_PROBE=1" all
+
 # Hardware test: exercise blocked RECEIVE; it must stop at the guard.
 test-blocked-probe:
 	$(MAKE) clean

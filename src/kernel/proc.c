@@ -33,6 +33,8 @@ extern message cp32_probe_message;
 extern message cp32_probe_sender_message;
 PRIVATE int copy_message(struct proc *sender, message *src,
                          struct proc *receiver, message *dst);
+PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
+                                    struct proc *receiver, message *dst);
 
 void sched(void);
 PRIVATE void ready(struct proc *rp);
@@ -111,15 +113,8 @@ PUBLIC void cp32_probe_wake_receiver(void)
     /* The probe objects carry synthetic p_nr values that do not round-trip
      * through proc_addr().  Use the resolved objects directly, while keeping
      * the normal copy, blocked-frame completion, and ready transition. */
-    int wake_result = copy_message(sender, &cp32_probe_sender_message,
-                                   receiver, receiver->p_messbuf);
-    if (wake_result == OK && (receiver->p_flags & RECEIVING)) {
-      receiver->p_flags &= ~RECEIVING;
-      cp32_complete_blocked_frame(receiver, OK);
-      if (cp32_blocked_return_proc == receiver)
-        cp32_blocked_return_proc = NIL_PROC;
-      if (receiver->p_flags == 0) ready(receiver);
-    }
+    int wake_result = deliver_blocked_message(sender, &cp32_probe_sender_message,
+                                              receiver, receiver->p_messbuf);
     if (wake_result == OK && receiver->p_messbuf->m_type == 0x43503332)
       usbj_print("[IPC V25 payload-copy pass=1]\r\n");
     if (wake_result == OK && !(receiver->p_flags & RECEIVING))
@@ -195,6 +190,11 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   owner->p_reg.sp = (reg_t)frame->sp;
 
   result = sys_call(function, src_dest, m_ptr);
+  if (cp32_user_probe_mode && function == BOTH) {
+    usbj_print("[CTX V70 both-dispatch result=");
+    usbj_print_u32((uint32_t)result);
+    usbj_print("]\r\n");
+  }
   frame->a[2] = (uint32_t)result;
   owner->p_reg.a[2] = (reg_t)result;
   if (cp32_user_probe_mode) frame->pc += 3;
@@ -462,6 +462,19 @@ PRIVATE int copy_message(struct proc *sender, message *src,
   return OK;
 }
 
+PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
+                                    struct proc *receiver, message *dst)
+{
+  int result = copy_message(sender, src, receiver, dst);
+  if (result != OK) return result;
+  receiver->p_flags &= ~RECEIVING;
+  cp32_complete_blocked_frame(receiver, OK);
+  if (cp32_blocked_return_proc == receiver)
+    cp32_blocked_return_proc = NIL_PROC;
+  if (receiver->p_flags == 0) ready(receiver);
+  return OK;
+}
+
 PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   struct proc *dest_ptr, *next_ptr;
@@ -490,15 +503,9 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
   if ((dest_ptr->p_flags & (RECEIVING | SENDING)) == RECEIVING &&
       (dest_ptr->p_getfrom == ANY || dest_ptr->p_getfrom == caller_ptr->p_nr)) {
     
-    result = copy_message(caller_ptr, m_ptr, dest_ptr, dest_ptr->p_messbuf);
+    result = deliver_blocked_message(caller_ptr, m_ptr, dest_ptr,
+                                     dest_ptr->p_messbuf);
     if (result != OK) return result;
-    
-    dest_ptr->p_flags &= ~RECEIVING;
-    cp32_complete_blocked_frame(dest_ptr, OK);
-    if (cp32_blocked_return_proc == dest_ptr)
-      cp32_blocked_return_proc = NIL_PROC;
-    if (dest_ptr->p_flags == 0) ready(dest_ptr);
-    
     return OK;
   } else {
     caller_ptr->p_messbuf = m_ptr;

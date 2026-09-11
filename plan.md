@@ -91,6 +91,8 @@ process `SENDING` or `RECEIVING`, and the blocked-return gate remains guarded.
 - [x] Verified the blocked RECEIVE wake through the mapped message-copy path;
       `[IPC V24 real-send-wake]` now precedes the cleared receiver flags and
       stable post-wake IRQ/context stream.
+- [x] Shared blocked-message delivery between normal `mini_send` and the
+      mapped probe, preserving copy, frame completion, and ready-queue rules.
 
 ## Remaining kernel work
 

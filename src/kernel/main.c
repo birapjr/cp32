@@ -424,6 +424,12 @@ void main(void) {
 #if CP32_ENABLE_USER_PROBE
   cp32_user_probe_mode = 1;
   cp32_user_trap_gate = 1;
+  /* Keep the two probe processes addressable by their public MINIX numbers;
+   * the generic bootstrap table is offset by the task range. */
+  proc_addr(1)->p_nr = 1;
+  proc_addr(2)->p_nr = 2;
+  (pproc_addr + NR_TASKS)[1] = proc_addr(1);
+  (pproc_addr + NR_TASKS)[2] = proc_addr(2);
   cp32_probe_sender_message.m_type = 0x43503332;
   cp32_probe_message.m_type = 0;
   proc_addr(2)->p_flags = P_SLOT_FREE;

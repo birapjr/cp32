@@ -482,7 +482,11 @@ irq_user:
 .global cp32_user_probe_entry
 .type   cp32_user_probe_entry, @function
 cp32_user_probe_entry:
-#ifdef CP32_ENABLE_BLOCKED_PROBE
+#ifdef CP32_ENABLE_BOTH_PROBE
+    movi    a2, 3                 /* BOTH / SENDREC */
+    movi    a3, 999               /* invalid destination: safe rejection */
+    movi    a4, 0
+#elif defined(CP32_ENABLE_BLOCKED_PROBE)
     movi    a2, 2                 /* RECEIVE */
     movi    a3, -1                /* ANY */
     movi    a4, cp32_probe_message
