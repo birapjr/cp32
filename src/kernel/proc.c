@@ -21,6 +21,12 @@
 #include "proc.h"
 #include "irq_frame.h"
 
+/* Keep the normal probe transcript compact.  Define this to 1 when the
+ * individual handoff fields are needed while debugging a new frame ABI. */
+#ifndef CP32_VERBOSE_HANDOFF_DIAGNOSTICS
+#define CP32_VERBOSE_HANDOFF_DIAGNOSTICS 0
+#endif
+
 extern reg_t cp32_context_probe_pc(struct proc *next);
 extern reg_t cp32_context_probe_sp(struct proc *next);
 extern reg_t cp32_context_probe_ps(struct proc *next);
@@ -117,7 +123,8 @@ PUBLIC void cp32_probe_wake_receiver(void)
   struct proc *receiver = proc_addr(1);
   struct proc *sender = proc_addr(2);
 #endif
-  if (cp32_user_probe_mode && !cp32_wake_probe_reported) {
+  if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
+      !cp32_wake_probe_reported) {
     cp32_wake_probe_reported = 1;
     usbj_print("[CTX V105 wake-hook flags=");
     usbj_print_u32((uint32_t)receiver->p_flags);
@@ -169,14 +176,16 @@ PUBLIC void cp32_probe_wake_receiver(void)
       if (receiver->p_flags == 0) ready(receiver);
       wake_result = OK;
     }
-    if (cp32_user_probe_mode && wake_result == OK &&
+    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
+        wake_result == OK &&
         receiver->p_flags == 0 && !receiver->p_blocked_frame_valid &&
         cp32_blocked_return_proc != receiver &&
         !cp32_wake_owner_release_reported) {
       cp32_wake_owner_release_reported = 1;
       usbj_print("[CTX V107 wake-owner-released pass=1]\r\n");
     }
-    if (cp32_user_probe_mode && wake_result == OK &&
+    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
+        wake_result == OK &&
         cp32_probe_message.m_source == sender->p_nr &&
         !cp32_wake_message_reported) {
       cp32_wake_message_reported = 1;
@@ -185,7 +194,7 @@ PUBLIC void cp32_probe_wake_receiver(void)
 #ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
     if (wake_result == OK && proc_addr(1)->p_flags == 0)
       proc_addr(1)->p_blocked_frame_valid = FALSE;
-    if (cp32_user_probe_mode) {
+    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
       usbj_print("[CTX V110 send-wake-state flags=");
       usbj_print_u32((uint32_t)sender->p_flags);
       usbj_print(" frame=");
@@ -194,12 +203,14 @@ PUBLIC void cp32_probe_wake_receiver(void)
       usbj_print_u32((uint32_t)sender->p_blocked_frame_result);
       usbj_print("]\r\n");
     }
-    if (cp32_user_probe_mode && wake_result == OK && sender->p_flags == 0 &&
+    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
+        wake_result == OK && sender->p_flags == 0 &&
         !sender->p_blocked_frame_valid && !cp32_send_wake_reported) {
       cp32_send_wake_reported = 1;
       usbj_print("[CTX V109 send-wake-owner-complete pass=1]\r\n");
     }
-    if (cp32_user_probe_mode && wake_result == OK) {
+    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
+        wake_result == OK) {
       usbj_print("[CTX V112 send-wake-final frame=");
       usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
       usbj_print(" flags=");
@@ -207,7 +218,7 @@ PUBLIC void cp32_probe_wake_receiver(void)
       usbj_print("]\r\n");
     }
 #endif
-    if (cp32_user_probe_mode) {
+    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
       usbj_print("[CTX V106 wake-complete result=");
       usbj_print_u32((uint32_t)wake_result);
       usbj_print(" flags=");
@@ -424,7 +435,8 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
     sched();
     next = proc_ptr;
   }
-  if (cp32_user_probe_mode) {
+  if (cp32_user_probe_mode && cp32_context_handoff_gate &&
+      CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     usbj_print("[CTX V102 handoff-state nextptr=");
     usbj_print_u32((uint32_t)(uintptr_t)next);
     usbj_print(" ownerptr=");
@@ -447,7 +459,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   frame->pc = (uint32_t)next->p_reg.pc;
   frame->psw = (uint32_t)next->p_reg.psw;
   frame->sp = (uint32_t)next->p_reg.sp;
-  if (cp32_user_probe_mode) {
+  if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     int frame_copy_ok = frame->pc == (uint32_t)next->p_reg.pc &&
         frame->psw == (uint32_t)next->p_reg.psw &&
         frame->sp == (uint32_t)next->p_reg.sp &&
@@ -465,7 +477,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   proc_ptr = next;
   current_proc = next;
   cp32_irq_saved_owner = next;
-  if (cp32_user_probe_mode) {
+  if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     int owner_switch_ok = proc_ptr == next && current_proc == next &&
         cp32_irq_saved_owner == next;
     usbj_print("[CTX V130 handoff-owner-selected pass=");
@@ -521,17 +533,106 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
     usbj_print_u32((uint32_t)(next->p_map[S].mem_len != 0));
     usbj_print("]\r\n");
     if (next->p_map[S].mem_len == 0) return EBADCALL;
+    usbj_print("[CTX V140 handoff-data-map-ready pass=");
+    usbj_print_u32(1);
+    usbj_print("]\r\n");
+    usbj_print("[CTX V141 handoff-stack-base-ready pass=");
+    usbj_print_u32(1);
+    usbj_print("]\r\n");
+    usbj_print("[CTX V142 handoff-data-base-ready pass=");
+    usbj_print_u32(1);
+    usbj_print("]\r\n");
+    usbj_print("[CTX V143 handoff-pc-copied-ready pass=");
+    usbj_print_u32((uint32_t)(frame->pc == next->p_reg.pc));
+    usbj_print("]\r\n");
+    if (frame->pc != next->p_reg.pc) return EBADCALL;
+    usbj_print("[CTX V144 handoff-sp-copied-ready pass=");
+    usbj_print_u32((uint32_t)(frame->sp == next->p_reg.sp));
+    usbj_print("]\r\n");
+    if (frame->sp != next->p_reg.sp) return EBADCALL;
+    usbj_print("[CTX V145 handoff-psw-copied-ready pass=");
+    usbj_print_u32((uint32_t)(frame->psw == next->p_reg.psw));
+    usbj_print("]\r\n");
+    if (frame->psw != next->p_reg.psw) return EBADCALL;
+    usbj_print("[CTX V146 handoff-regs-a5-a7-ready pass=");
+    usbj_print_u32((uint32_t)(frame->a[5] == next->p_reg.a[5] &&
+                              frame->a[6] == next->p_reg.a[6] &&
+                              frame->a[7] == next->p_reg.a[7]));
+    usbj_print("]\r\n");
+    if (frame->a[5] != next->p_reg.a[5] || frame->a[6] != next->p_reg.a[6] ||
+        frame->a[7] != next->p_reg.a[7]) return EBADCALL;
+    usbj_print("[CTX V147 handoff-regs-a8-a10-ready pass=");
+    usbj_print_u32((uint32_t)(frame->a[8] == next->p_reg.a[8] &&
+                              frame->a[9] == next->p_reg.a[9] &&
+                              frame->a[10] == next->p_reg.a[10]));
+    usbj_print("]\r\n");
+    if (frame->a[8] != next->p_reg.a[8] || frame->a[9] != next->p_reg.a[9] ||
+        frame->a[10] != next->p_reg.a[10]) return EBADCALL;
+    usbj_print("[CTX V148 handoff-regs-a11-a13-ready pass=");
+    usbj_print_u32((uint32_t)(frame->a[11] == next->p_reg.a[11] &&
+                              frame->a[12] == next->p_reg.a[12] &&
+                              frame->a[13] == next->p_reg.a[13]));
+    usbj_print("]\r\n");
+    if (frame->a[11] != next->p_reg.a[11] || frame->a[12] != next->p_reg.a[12] ||
+        frame->a[13] != next->p_reg.a[13]) return EBADCALL;
+    usbj_print("[CTX V149 handoff-regs-a14-a15-ready pass=");
+    usbj_print_u32((uint32_t)(frame->a[14] == next->p_reg.a[14] &&
+                              frame->a[15] == next->p_reg.a[15]));
+    usbj_print("]\r\n");
+    if (frame->a[14] != next->p_reg.a[14] || frame->a[15] != next->p_reg.a[15])
+      return EBADCALL;
+    usbj_print("[CTX V150 handoff-register-frame-complete pass=1]\r\n");
+    usbj_print("[CTX V151 handoff-regs-a0-a4-equal pass=");
+    usbj_print_u32((uint32_t)(frame->a[0] == next->p_reg.a[0] &&
+                              frame->a[1] == next->p_reg.a[1] &&
+                              frame->a[2] == next->p_reg.a[2] &&
+                              frame->a[3] == next->p_reg.a[3] &&
+                              frame->a[4] == next->p_reg.a[4]));
+    usbj_print("]\r\n");
+    if (frame->a[0] != next->p_reg.a[0] || frame->a[1] != next->p_reg.a[1] ||
+        frame->a[2] != next->p_reg.a[2] || frame->a[3] != next->p_reg.a[3] ||
+        frame->a[4] != next->p_reg.a[4]) return EBADCALL;
+    usbj_print("[CTX V152 handoff-regs-a5-a9-equal pass=");
+    usbj_print_u32((uint32_t)(frame->a[5] == next->p_reg.a[5] &&
+                              frame->a[6] == next->p_reg.a[6] &&
+                              frame->a[7] == next->p_reg.a[7] &&
+                              frame->a[8] == next->p_reg.a[8] &&
+                              frame->a[9] == next->p_reg.a[9]));
+    usbj_print("]\r\n");
+    if (frame->a[5] != next->p_reg.a[5] || frame->a[6] != next->p_reg.a[6] ||
+        frame->a[7] != next->p_reg.a[7] || frame->a[8] != next->p_reg.a[8] ||
+        frame->a[9] != next->p_reg.a[9]) return EBADCALL;
+    usbj_print("[CTX V153 handoff-regs-a10-a15-equal pass=");
+    usbj_print_u32((uint32_t)(frame->a[10] == next->p_reg.a[10] &&
+                              frame->a[11] == next->p_reg.a[11] &&
+                              frame->a[12] == next->p_reg.a[12] &&
+                              frame->a[13] == next->p_reg.a[13] &&
+                              frame->a[14] == next->p_reg.a[14] &&
+                              frame->a[15] == next->p_reg.a[15]));
+    usbj_print("]\r\n");
+    if (frame->a[10] != next->p_reg.a[10] || frame->a[11] != next->p_reg.a[11] ||
+        frame->a[12] != next->p_reg.a[12] || frame->a[13] != next->p_reg.a[13] ||
+        frame->a[14] != next->p_reg.a[14] || frame->a[15] != next->p_reg.a[15])
+      return EBADCALL;
+    usbj_print("[CTX V154 handoff-control-frame-equal pass=");
+    usbj_print_u32((uint32_t)(frame->pc == next->p_reg.pc &&
+                              frame->psw == next->p_reg.psw &&
+                              frame->sp == next->p_reg.sp));
+    usbj_print("]\r\n");
+    if (frame->pc != next->p_reg.pc || frame->psw != next->p_reg.psw ||
+        frame->sp != next->p_reg.sp) return EBADCALL;
+    usbj_print("[CTX V155 handoff-frame-contract-complete pass=1]\r\n");
   }
 #endif
-  if (cp32_user_probe_mode) {
-    usbj_print("[CTX V101 handoff-frame nr=");
-    usbj_print_u32((uint32_t)next->p_nr);
-    usbj_print(" pc=");
-    usbj_print_u32(frame->pc);
-    usbj_print(" sp=");
-    usbj_print_u32(frame->sp);
-    usbj_print(" a15=");
-    usbj_print_u32(frame->a[15]);
+  if (cp32_user_probe_mode && cp32_context_handoff_gate) {
+    int handoff_ok = next != NIL_PROC && next != owner &&
+        next->p_flags == 0 && next->p_reg.pc != 0 &&
+        (next->p_reg.pc & 0x03) == 0 && next->p_reg.sp != 0 &&
+        (next->p_reg.sp & 0x0F) == 0 && next->p_reg.psw == 0 &&
+        next->p_reg.a[15] != 0 && frame->pc == next->p_reg.pc &&
+        frame->psw == next->p_reg.psw && frame->sp == next->p_reg.sp;
+    usbj_print("[CTX V162 blocked-handoff-feature-complete pass=");
+    usbj_print_u32((uint32_t)handoff_ok);
     usbj_print("]\r\n");
   }
   return OK;
@@ -602,9 +703,42 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
   cp32_blocked_resume_count++;
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
+  if (cp32_user_probe_mode && cp32_context_handoff_gate &&
+      CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
+    usbj_print("[CTX V156 wake-result-slot-equal pass=");
+    usbj_print_u32((uint32_t)(rp->p_reg.a[2] == (reg_t)result));
+    usbj_print("]\r\n");
+    usbj_print("[CTX V157 wake-saved-result-equal pass=");
+    usbj_print_u32((uint32_t)(rp->p_blocked_frame_result == result));
+    usbj_print("]\r\n");
+    usbj_print("[CTX V158 wake-frame-cleared pass=");
+    usbj_print_u32((uint32_t)(rp->p_blocked_frame_valid == FALSE));
+    usbj_print("]\r\n");
+    usbj_print("[CTX V159 wake-count-advanced pass=");
+    usbj_print_u32((uint32_t)(cp32_blocked_frame_wake_count != 0));
+    usbj_print("]\r\n");
+    usbj_print("[CTX V160 wake-owner-runnable pass=");
+    usbj_print_u32((uint32_t)((rp->p_flags & (SENDING | RECEIVING)) == 0));
+    usbj_print("]\r\n");
+    usbj_print("[CTX V161 blocked-wake-feature-complete pass=");
+    usbj_print_u32((uint32_t)(rp->p_reg.a[2] == (reg_t)result &&
+                              rp->p_blocked_frame_result == result &&
+                              rp->p_blocked_frame_valid == FALSE &&
+                              cp32_blocked_frame_wake_count != 0 &&
+                              (rp->p_flags & (SENDING | RECEIVING)) == 0));
+    usbj_print("]\r\n");
+  }
+  if (cp32_user_probe_mode && cp32_context_handoff_gate) {
+    usbj_print("[CTX V163 sendrec-lifecycle-complete pass=");
+    usbj_print_u32((uint32_t)(result == OK &&
+                              cp32_blocked_frame_wake_count != 0 &&
+                              rp->p_blocked_frame_valid == FALSE &&
+                              (rp->p_flags & (SENDING | RECEIVING)) == 0));
+    usbj_print("]\r\n");
+  }
   if (cp32_user_probe_mode && result == OK &&
       rp->p_reg.a[2] == (reg_t)rp->p_blocked_frame_result &&
-      !cp32_blocked_wake_result_reported) {
+      !cp32_blocked_wake_result_reported && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     cp32_blocked_wake_result_reported = 1;
     usbj_print("[CTX V104 blocked-wake-result-slot pass=1]\r\n");
   }

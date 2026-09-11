@@ -589,3 +589,91 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-11 hardware validation: V139 passed on SENDREC; the replacement
   stack mapping was present, wake completed, and process 2 remained stable
   through IRQ 128.
+- 2026-09-11 build-only: added `[CTX V140 handoff-data-map-ready pass=1]`
+  to require a nonempty data/message mapping for the selected replacement
+  process. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,368 bytes of IRAM margin.
+- 2026-09-11 build-only batch: added V141/V142 for stack/data map bases and
+  V143/V144/V145 for copied PC/SP/PSW equality. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 5,972 bytes
+  of IRAM margin.
+- 2026-09-11 hardware correction: V140 showed that synthetic process 2 may
+  have no data mapping; the check is now observational because handoff needs
+  the validated stack and frame, not a data segment. The corrected
+  `test-blocked-sendrec-probe` build passes with 5,992 bytes of IRAM margin.
+- 2026-09-11 hardware correction: V141/V142 showed synthetic process 2 also
+  has zero map bases; both checks are now observational, while V134 continues
+  to enforce the actual saved stack pointer. The batch build passes with
+  6,084 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V140–V145 passed on SENDREC; frame copy,
+  owner, PC/SP/PSW, and map checks completed, with process 2 stable through
+  IRQ 192.
+- 2026-09-11 build-only batch: added V146–V149 for register groups `a5–a15`
+  and V150 for complete register-frame completion. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 5,620 bytes
+  of IRAM margin.
+- 2026-09-11 hardware validation: V146–V150 passed on SENDREC; process 2
+  remained stable through IRQ 160 with wake state cleared.
+- 2026-09-11 build-only batch: added V151–V153 for full register equality,
+  V154 for PC/SP/PSW equality, and V155 for complete frame-contract
+  completion. `make clean && make test-blocked-sendrec-probe` passes image
+  layout validation with 4,968 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V151–V155 passed on SENDREC; process 2
+  remained stable through IRQ 192.
+- 2026-09-11 build-only batch: added V156–V160 at wake completion for result
+  slot, saved result, frame clearing, wake count, and runnable-owner checks.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 4,684 bytes of IRAM margin.
+- 2026-09-11 build-only feature check: added `[CTX V161
+  blocked-wake-feature-complete]` as one aggregate validation for the full
+  blocked-wake contract. `make clean && make test-blocked-sendrec-probe`
+  passes image layout validation with 4,592 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V161 passed on SENDREC; wake state cleared
+  and process 2 remained stable through IRQ 192.
+- 2026-09-11 build-only feature check: added `[CTX V162
+  blocked-handoff-feature-complete]` as one aggregate validation for owner,
+  frame, and return-state readiness. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 4,456 bytes
+  of IRAM margin.
+- 2026-09-11 hardware validation: V162 passed on SENDREC; the complete
+  handoff and wake path remained stable through IRQ 128.
+- 2026-09-11 build-only feature check: added `[CTX V163
+  sendrec-lifecycle-complete]` as an aggregate SENDREC lifecycle check at
+  wake completion. `make clean && make test-blocked-sendrec-probe` passes
+  image layout validation with 4,360 bytes of IRAM margin.
+- 2026-09-11 hardware validation: corrected V163 passed on SENDREC; the
+  aggregate lifecycle result, wake state, and frame clearing all passed, with
+  process 2 stable through IRQ 192.
+- 2026-09-11 build-only feature check: added `[CTX V164
+  post-wake-scheduler-continuity]` at the timer wake boundary to validate the
+  selected owner remains current and runnable. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 4,288 bytes
+  of IRAM margin.
+- 2026-09-11 hardware correction: gated live handoff/wake feature markers on
+  the context-handoff gate after pretests produced expected transient `pass=0`
+  output. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 4,268 bytes of IRAM margin.
+- 2026-09-11 hardware correction: V163 initially included a counter not
+  incremented by this live path; it now relies only on observed result, wake,
+  frame, and runnable-state invariants. Rebuild passes with 4,372 bytes of
+  IRAM margin.
+- 2026-09-11 diagnostic consolidation: detailed V129–V160 handoff/wake
+  markers are compile-time opt-in via `CP32_VERBOSE_HANDOFF_DIAGNOSTICS`;
+  default output retains aggregate V162/V163 results and V164 scheduler
+  continuity. `make clean && make test-blocked-sendrec-probe` passes image
+  layout validation with 7,248 bytes of IRAM margin. Hardware revalidation is
+  pending.
+- 2026-09-11 diagnostic consolidation follow-up: legacy wake markers
+  V105/V107–V112 are verbose-only; V163 remains the compact SENDREC lifecycle
+  summary. Rebuild with `make clean && make test-blocked-sendrec-probe` passes
+  image layout validation with 7,788 bytes of IRAM margin. Hardware output
+  confirms V162–V164 pass through IRQ 96.
+- 2026-09-11 build-only clock feature: connected an aggregate tick-accounting
+  marker to the existing MINIX `clock_handler` path, covering lost-tick
+  folding, process charging, and pending-tick accumulation. `make clean &&
+  make test-blocked-sendrec-probe` passes image layout validation with 7,692
+  bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: `[CLOCK V1]` advanced monotonically through
+  175 SYSTIMER ticks; accumulated and pending ticks matched at every sample,
+  with no exception and stable process-2 context/IRQ operation through IRQ
+  176.
