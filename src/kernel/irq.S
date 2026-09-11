@@ -510,6 +510,7 @@ cp32_user_probe_entry:
     ill                         /* ESP32-S3 lacks a user syscall opcode;
                                  * this is the controlled exception probe. */
     j       cp32_user_probe_done
+.global cp32_user_probe_done
 cp32_user_probe_done:
     j       cp32_user_probe_done
 .size cp32_user_probe_entry, .-cp32_user_probe_entry

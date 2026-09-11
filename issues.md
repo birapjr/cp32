@@ -681,3 +681,68 @@ unexpected `e=1`.
   V89 rejected the invalid destination after message validation. Context and
   IRQ checks remained stable through IRQ 80 with no exception. V82/V85 were
   absent from this capture and remain unconfirmed for this run.
+- 2026-09-11 build-only: added `[CTX V98 blocked-frame-pc-validated]` to
+  verify that a blocked syscall snapshots the post-trap return PC. The
+  reply-probe image passes layout validation with 10,120 bytes of IRAM margin;
+  hardware validation is pending.
+- 2026-09-11 build-only: restored the owner PC after the synthetic user-trap
+  probe to prevent the initial user handoff from entering mid-instruction in
+  the probe entry. `make test-both-reply-probe` passes layout validation with
+  10,104 bytes of IRAM margin.
+- 2026-09-11 hardware validation: blocked RECEIVE probe reached V98, V84,
+  V83, V87, V86, V94, V97, V88, V90, V92, and V93, then remained stable
+  through IRQ 192 with no exception. Timer readings remained consistent.
+- 2026-09-11 build-only: added `[CTX V99 blocked-handoff-ready]` for the
+  fully validated blocked-owner scheduler-handoff predicate; the return gate
+  remains fail-closed pending hardware validation.
+- 2026-09-11 build-only: corrected V100 to observe the real user-probe path,
+  not only the synthetic scheduler test. `make test-blocked-probe` passes
+  layout validation with 9,932 bytes of IRAM margin.
+- 2026-09-11 build-only: corrected the blocked-handoff predicate to require a
+  valid, matching saved frame and enabled its gate only for the dedicated
+  blocked probe. `make test-blocked-probe` passes layout validation with 9,948
+  bytes of IRAM margin.
+- 2026-09-11 build-only: added a bounded retry that rejects a stale blocked
+  owner selected from a legacy ready queue before exception return. `make
+  test-blocked-probe` passes layout validation with 9,916 bytes of IRAM margin.
+- 2026-09-11 build-only: explicitly unlinked the blocked owner from all ready
+  queues before scheduler handoff. `make test-blocked-probe` passes layout
+  validation with 9,908 bytes of IRAM margin.
+- 2026-09-11 build-only: added a blocked-probe-only process-2 replacement
+  fallback when the scheduler reports the blocked owner. `make
+  test-blocked-probe` passes layout validation with 9,876 bytes of IRAM margin.
+- 2026-09-11 build-only: assigned the replacement process a non-trapping
+  terminal user entry so the blocked handoff cannot re-enter the illegal-
+  instruction probe. `make test-blocked-probe` passes layout validation with
+  9,852 bytes of IRAM margin.
+- 2026-09-11 build-only: made the replacement process-2 selection explicit in
+  the blocked probe after scheduler evaluation. `make test-blocked-probe`
+  passes layout validation with 9,860 bytes of IRAM margin.
+- 2026-09-11 build-only: added V101 to dump the selected handoff frame's
+  process number, PC, SP, and a15 immediately before exception return.
+  `make test-blocked-probe` passes layout validation with 9,732 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: isolated the blocked probe from the failing live
+  `sched`/`switch_to` path by selecting process 2's validated frame directly;
+  production scheduling remains unchanged. `make test-blocked-probe` passes
+  layout validation with 9,592 bytes of IRAM margin.
+- 2026-09-11 build-only: prevented `sys_call` from scheduling before the
+  guarded blocked-probe handoff. `make test-blocked-probe` passes layout
+  validation with 9,604 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V99 passed; V102 showed distinct owner and
+  replacement pointers, and V101 showed process 2's valid PC/SP/a15 frame.
+  Execution remained stable through IRQ 176 with no exception. V46 continues
+  to identify the interrupted owner during this diagnostic handoff.
+- 2026-09-11 build-only: aligned blocked-probe context ownership with the
+  restored process-2 frame for subsequent V46 diagnostics. `make
+  test-blocked-probe` passes layout validation with 9,588 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V103 user-rfe-frame-ready pass=1]` at
+  the validated replacement-frame return boundary. `make test-blocked-probe`
+  passes layout validation with 9,568 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V102, V103, and V101 confirmed the process-2
+  replacement frame at the pre-rfe boundary; execution remained stable through
+  IRQ 128 with no exception.
+- 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
+  the first unmet blocked-handoff predicate during the guarded probe.
+  `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
+  margin.

@@ -60,6 +60,7 @@ volatile uint32_t cp32_task2_ticks;
 message cp32_probe_message;
 message cp32_probe_sender_message;
 extern void cp32_user_probe_entry(void);
+extern void cp32_user_probe_done(void);
 #ifdef CP32_ENABLE_BOTH_REPLY_PROBE
 extern void cp32_user_reply_entry(void);
 extern void cp32_probe_ready_reply(void);
@@ -553,6 +554,10 @@ void main(void) {
       (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
        sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
   cp32_probe_ready_reply();
+#elif defined(CP32_ENABLE_BLOCKED_PROBE)
+  /* Process 2 is the replacement frame; it must not re-enter the trap probe. */
+  proc_addr(2)->p_reg.pc = (reg_t)cp32_user_probe_done;
+  proc_addr(2)->p_flags = 0;
 #endif
 #endif
 #if 0 /* Retained in history only; one-shot bring-up checks are complete. */
@@ -765,7 +770,8 @@ void main(void) {
 #if CP32_ENABLE_USER_PROBE
    cp32_user_trap_gate = 1;
 #ifdef CP32_ENABLE_BLOCKED_PROBE
-   cp32_user_handoff_gate = 1;
+  cp32_user_handoff_gate = 1;
+  cp32_blocked_handoff_gate = 1;
 #endif
 #endif
    systimer_irq_start();
