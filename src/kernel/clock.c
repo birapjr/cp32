@@ -470,7 +470,7 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
-#ifdef CP32_ENABLE_BLOCKED_PROBE
+#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
   if (cp32_timer_irq_ticks == 16) cp32_probe_wake_receiver();
 #endif
   if ((((uintptr_t) frame) & 0x0Fu) == 0)

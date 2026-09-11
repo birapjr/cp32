@@ -771,6 +771,38 @@ unexpected `e=1`.
 - 2026-09-11 hardware validation: V108 passed; the awakened message source
   matched the synthetic sender, with V104/V106/V107 also passing. Execution
   remained stable through IRQ 128 with no exception.
+- 2026-09-11 build-only: added the dedicated `test-blocked-send-probe`
+  target and SEND probe entry for the next IPC lifecycle validation. Image
+  layout passes with 9,920 bytes of IRAM margin.
+- 2026-09-11 build-only: extended the guarded user/blocked handoff gate to
+  the SEND probe. `make test-blocked-send-probe` passes layout validation with
+  9,900 bytes of IRAM margin.
+- 2026-09-11 build-only: routed blocked SEND through the same direct validated
+  replacement-frame path and suppressed its premature live scheduler call.
+  `make test-blocked-send-probe` passes layout validation with 9,892 bytes of
+  IRAM margin.
+- 2026-09-11 hardware validation: blocked SEND reached V99, V102, V103, and
+  V101; the replacement process 2 resumed and V46 reported process 2 through
+  IRQ 160 with advancing timer values and no exception.
+- 2026-09-11 build-only: configured process 2 as the waiting receiver and
+  reversed the timer wake roles for the dedicated blocked-SEND probe. `make
+  test-blocked-send-probe` passes layout validation with 9,860 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: moved blocked-SEND receiver setup to the final
+  pre-entry stage so generic initialization cannot clear `RECEIVING`. `make
+  test-blocked-send-probe` passes layout validation with 9,828 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: corrected SEND probe ordering so process 1 blocks
+  before process 2 enters RECEIVE during the timer wake. `make
+  test-blocked-send-probe` passes layout validation with 9,828 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: enabled the timer wake hook for blocked SEND so the
+  receiver-side completion path can run at tick 16. `make
+  test-blocked-send-probe` passes layout validation with 9,156 bytes of IRAM
+  margin.
+- 2026-09-11 hardware validation: blocked SEND reached V99/V102/V103/V101,
+  then V105/V104/V107/V108/V106 passed. Process 2 resumed and timer values
+  advanced through IRQ 160 with no exception.
 - 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
   the first unmet blocked-handoff predicate during the guarded probe.
   `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM

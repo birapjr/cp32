@@ -107,8 +107,14 @@ volatile int cp32_probe_wake_once;
 
 PUBLIC void cp32_probe_wake_receiver(void)
 {
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+  struct proc *receiver = proc_addr(2);
+  struct proc *sender = proc_addr(1);
+  if (receiver->p_flags == 0) receiver->p_flags = RECEIVING;
+#else
   struct proc *receiver = proc_addr(1);
   struct proc *sender = proc_addr(2);
+#endif
   if (cp32_user_probe_mode && !cp32_wake_probe_reported) {
     cp32_wake_probe_reported = 1;
     usbj_print("[CTX V105 wake-hook flags=");
@@ -365,7 +371,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   /* Remove any legacy duplicate before selecting the replacement frame. */
   unready(owner);
   current_proc = owner;
-#ifdef CP32_ENABLE_BLOCKED_PROBE
+#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
   next = proc_addr(2);
 #else
   sched();
@@ -402,7 +408,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   frame->pc = (uint32_t)next->p_reg.pc;
   frame->psw = (uint32_t)next->p_reg.psw;
   frame->sp = (uint32_t)next->p_reg.sp;
-#ifdef CP32_ENABLE_BLOCKED_PROBE
+#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
   /* Keep diagnostics aligned with the frame that the probe is about to rfe. */
   proc_ptr = next;
   current_proc = next;
@@ -680,7 +686,7 @@ report:
     }
     /* Deliberately disabled until the syscall return frame is proven safe. */
     if (blocked_handoff_eligible(rp)
-#ifndef CP32_ENABLE_BLOCKED_PROBE
+#if !defined(CP32_ENABLE_BLOCKED_PROBE) && !defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
         )
       sched();
 #else

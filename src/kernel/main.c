@@ -769,15 +769,27 @@ void main(void) {
    if (!lock_v2_ok) panic("saved lock status", 1);
 #if CP32_ENABLE_USER_PROBE
    cp32_user_trap_gate = 1;
-#ifdef CP32_ENABLE_BLOCKED_PROBE
+#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
   cp32_user_handoff_gate = 1;
   cp32_blocked_handoff_gate = 1;
+#endif
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+  proc_addr(2)->p_getfrom = ANY;
+  proc_addr(2)->p_messbuf = &cp32_probe_message;
+  proc_addr(2)->p_flags = 0;
+  cp32_probe_wake_once = 1;
 #endif
 #endif
    systimer_irq_start();
 
 #if CP32_ENABLE_USER_PROBE
   usbj_print("[CTX V82 user-frame-save-ready]\r\n");
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+  proc_addr(2)->p_getfrom = ANY;
+  proc_addr(2)->p_messbuf = &cp32_probe_message;
+  proc_addr(2)->p_flags = 0;
+  cp32_probe_wake_once = 1;
+#endif
   if (cp32_user_trap_probe(proc_addr(1)) != OK)
     panic("user trap cause probe", 1);
   cp32_enter_initial_user(proc_addr(1));

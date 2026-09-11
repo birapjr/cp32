@@ -105,6 +105,11 @@ test-blocked-probe:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_PROBE=1" all
 
+# Hardware test: exercise blocked SEND queueing with process 2 as receiver.
+test-blocked-send-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_SEND_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_SEND_PROBE=1" all
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
