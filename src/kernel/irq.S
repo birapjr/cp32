@@ -502,6 +502,10 @@ cp32_user_probe_entry:
     movi    a2, 2                 /* RECEIVE */
     movi    a3, -1                /* ANY */
     movi    a4, cp32_probe_message
+#elif defined(CP32_ENABLE_BLOCKED_SENDREC_PROBE)
+    movi    a2, 3                 /* SENDREC / BOTH */
+    movi    a3, 2                 /* receiver process */
+    movi    a4, cp32_probe_message
 #elif defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
     movi    a2, 1                 /* SEND */
     movi    a3, 2                 /* receiver process */

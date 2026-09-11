@@ -514,15 +514,6 @@ PUBLIC int cp32_user_trap_probe(struct proc *owner)
   return result;
 }
 
-PRIVATE int cp32_blocked_frame_restore_ready(struct proc *rp)
-{
-  return rp != NIL_PROC && !rp->p_blocked_frame_valid &&
-         rp->p_blocked_frame_result == OK &&
-         rp->p_blocked_frame_pc == rp->p_reg.pc &&
-         rp->p_blocked_frame_psw == rp->p_reg.psw &&
-         rp->p_blocked_frame_sp == rp->p_reg.sp;
-}
-
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
   if (rp == NIL_PROC) return;

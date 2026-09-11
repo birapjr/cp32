@@ -459,6 +459,16 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-11 hardware validation: blocked SEND wake completed with V110
   `frame=0`, V109 pass, and V112 final `frame=0 flags=0`; process 2 remained
   stable through IRQ 160 with advancing timer values.
+- 2026-09-11 build-only: added the dedicated `test-blocked-sendrec-probe`
+  target and BOTH/SENDREC probe entry. `make test-blocked-sendrec-probe`
+  passes layout validation with 8,788 bytes of IRAM margin.
+- 2026-09-11 hardware validation: blocked SENDREC completed the handoff and
+  wake markers through V112; sender frame cleared, process 2 resumed, and
+  execution remained stable through IRQ 128 with advancing timer values.
+- 2026-09-11 build-only: removed the unused superseded blocked-frame restore
+  helper; explicit saved-frame checks remain in the active handoff path.
+  `make test-blocked-sendrec-probe` passes layout validation with 8,792 bytes
+  of IRAM margin.
 - 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
   the first unmet blocked-handoff predicate during the guarded probe.
   `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
