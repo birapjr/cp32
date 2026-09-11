@@ -783,6 +783,86 @@ void main(void) {
    systimer_irq_start();
 
 #if CP32_ENABLE_USER_PROBE
+  {
+    struct proc *user = proc_addr(1);
+    phys_bytes sp_click = user->p_reg.sp >> CLICK_SHIFT;
+    vir_bytes msg = (vir_bytes)(uintptr_t)&cp32_probe_message;
+    int setup_ok = user != NIL_PROC && user->p_reg.pc != 0 &&
+        user->p_reg.sp != 0 && (user->p_reg.sp & 0x0F) == 0 &&
+        user->p_reg.a[1] == user->p_reg.sp && user->p_reg.a[15] != 0 &&
+        user->p_map[S].mem_len != 0;
+    int stack_ok = setup_ok && sp_click >= user->p_map[S].mem_phys &&
+        sp_click < user->p_map[S].mem_phys + user->p_map[S].mem_len;
+    setup_ok = stack_ok;
+    int message_ok = setup_ok && user->p_map[D].mem_len != 0 &&
+        msg >= user->p_map[D].mem_vir &&
+        msg < user->p_map[D].mem_vir +
+         user->p_map[D].mem_len * CLICK_SIZE;
+    int message_range_ok = message_ok &&
+        msg + MESS_SIZE <= user->p_map[D].mem_vir +
+         user->p_map[D].mem_len * CLICK_SIZE;
+    usbj_print("[CTX V116 user-message-range-ready pass=");
+    usbj_print_u32((uint32_t)message_range_ok);
+    usbj_print("]\r\n");
+    setup_ok = message_range_ok;
+    usbj_print("[CTX V115 user-message-map-ready pass=");
+    usbj_print_u32((uint32_t)message_ok);
+    usbj_print("]\r\n");
+    setup_ok = message_ok;
+    int pc_ok = setup_ok && user->p_reg.pc != 0 &&
+        (user->p_reg.pc & 0x03) == 0;
+    usbj_print("[CTX V117 user-entry-pc-ready pass=");
+    usbj_print_u32((uint32_t)pc_ok);
+    usbj_print("]\r\n");
+    setup_ok = pc_ok;
+    int psw_ok = setup_ok && user->p_reg.psw == 0;
+    usbj_print("[CTX V118 user-entry-psw-ready pass=");
+    usbj_print_u32((uint32_t)psw_ok);
+    usbj_print("]\r\n");
+    setup_ok = psw_ok;
+    int regs_ok = setup_ok && user->p_reg.a[0] == 0 && user->p_reg.a[2] == 0 &&
+        user->p_reg.a[3] == 0 && user->p_reg.a[4] == 0;
+    usbj_print("[CTX V119 user-initial-registers-ready pass=");
+    usbj_print_u32((uint32_t)regs_ok);
+    usbj_print("]\r\n");
+    setup_ok = regs_ok;
+    int identity_ok = setup_ok && user->p_nr == 1 &&
+        (user->p_flags & P_SLOT_FREE) == 0;
+    usbj_print("[CTX V120 user-process-identity-ready pass=");
+    usbj_print_u32((uint32_t)identity_ok);
+    usbj_print("]\r\n");
+    setup_ok = identity_ok;
+    int table_map_ok = setup_ok && (pproc_addr + NR_TASKS)[1] == user;
+    usbj_print("[CTX V121 user-process-table-map-ready pass=");
+    usbj_print_u32((uint32_t)table_map_ok);
+    usbj_print("]\r\n");
+    setup_ok = table_map_ok;
+    usbj_print("[CTX V114 user-stack-map-ready pass=");
+    usbj_print_u32((uint32_t)setup_ok);
+    usbj_print("]\r\n");
+    usbj_print("[CTX V113 user-address-space-ready pass=");
+    usbj_print_u32((uint32_t)setup_ok);
+    usbj_print("]\r\n");
+    if (!setup_ok) panic("user address space", 1);
+    int entry_ready = setup_ok && cp32_user_trap_gate == 1;
+    usbj_print("[CTX V122 user-entry-handoff-ready pass=");
+    usbj_print_u32((uint32_t)entry_ready);
+    usbj_print("]\r\n");
+    if (!entry_ready) panic("user entry handoff", 1);
+    int entry_contract_ok = entry_ready && user->p_reg.pc ==
+        (reg_t)(uintptr_t)cp32_user_probe_entry &&
+        (uintptr_t)cp32_enter_initial_user != 0;
+    usbj_print("[CTX V123 user-entry-contract-ready pass=");
+    usbj_print_u32((uint32_t)entry_contract_ok);
+    usbj_print("]\r\n");
+    if (!entry_contract_ok) panic("user entry contract", 1);
+    int entry_mode_ok = entry_contract_ok && cp32_user_probe_mode == 1 &&
+        (((uintptr_t)cp32_user_probe_entry & 0x03) == 0);
+    usbj_print("[CTX V124 user-entry-mode-ready pass=");
+    usbj_print_u32((uint32_t)entry_mode_ok);
+    usbj_print("]\r\n");
+    if (!entry_mode_ok) panic("user entry mode", 1);
+  }
   usbj_print("[CTX V82 user-frame-save-ready]\r\n");
 #ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
   proc_addr(2)->p_getfrom = ANY;
@@ -792,6 +872,22 @@ void main(void) {
 #endif
   if (cp32_user_trap_probe(proc_addr(1)) != OK)
     panic("user trap cause probe", 1);
+  usbj_print("[CTX V125 user-trap-preflight-returned pass=1]\r\n");
+  usbj_print("[CTX V126 user-trap-probe-count pass=");
+  usbj_print_u32((uint32_t)(cp32_user_trap_probe_count != 0));
+  usbj_print("]\r\n");
+  if (cp32_user_trap_probe_count == 0) panic("user trap probe count", 1);
+  proc_ptr = proc_addr(1);
+  current_proc = proc_ptr;
+  usbj_print("[CTX V127 user-trap-owner-stable pass=");
+  usbj_print_u32((uint32_t)(proc_ptr == proc_addr(1) && proc_ptr->p_nr == 1));
+  usbj_print("]\r\n");
+  if (proc_ptr != proc_addr(1) || proc_ptr->p_nr != 1)
+    panic("user trap owner", 1);
+  usbj_print("[CTX V128 user-trap-current-owner-aligned pass=");
+  usbj_print_u32((uint32_t)(current_proc == proc_ptr));
+  usbj_print("]\r\n");
+  if (current_proc != proc_ptr) panic("user current owner", 1);
   cp32_enter_initial_user(proc_addr(1));
 #endif
 

@@ -473,3 +473,46 @@ of importing the incompatible libgcc `__udivdi3` routine.
   the first unmet blocked-handoff predicate during the guarded probe.
   `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
   margin.
+- 2026-09-11 build-only: added `[CTX V120 user-process-identity-ready pass=1]`
+  to validate process 1's canonical identity and non-free slot before user
+  entry. `make clean && make test-user-probe` passes layout validation with
+  9,176 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V121 user-process-table-map-ready
+  pass=1]` to verify the canonical process-table slot resolves to the same
+  process validated by V120. `make clean && make test-user-probe` passes image
+  layout validation with 9,108 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V122 user-entry-handoff-ready pass=1]`
+  to verify the user trap gate is armed after all process setup checks and
+  before initial user entry. `make clean && make test-user-probe` passes image
+  layout validation with 9,020 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V123 user-entry-contract-ready pass=1]`
+  to verify the initial PC targets the probe entry and the assembly handoff
+  routine is linked. `make clean && make test-user-probe` passes image layout
+  validation with 8,924 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V124 user-entry-mode-ready pass=1]` to
+  verify probe mode activation and entry alignment before assembly handoff.
+  `make clean && make test-user-probe` passes image layout validation with
+  8,828 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V125 user-trap-preflight-returned pass=1]`
+  after the guarded trap preflight succeeds and before initial user entry.
+  `make clean && make test-user-probe` passes image layout validation with
+  8,812 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V126 user-trap-probe-count pass=1]` to
+  confirm the trap preflight executed its runtime probe path. `make clean &&
+  make test-user-probe` passes image layout validation with 8,728 bytes of
+  IRAM margin.
+- 2026-09-11 build-only: added `[CTX V127 user-trap-owner-stable pass=1]` to
+  verify the preflight leaves `proc_ptr` on canonical process 1 before the
+  initial handoff. `make clean && make test-user-probe` passes image layout
+  validation with 8,620 bytes of IRAM margin.
+- 2026-09-11 build-only fix: restored canonical `proc_ptr` and `current_proc`
+  after trap preflight before V127, correcting the observed owner panic.
+  `make clean && make test-user-probe` passes image layout validation with
+  8,600 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V128 user-trap-current-owner-aligned
+  pass=1]` to verify `current_proc` agrees with canonical `proc_ptr` before
+  user entry. `make clean && make test-user-probe` passes image layout
+  validation with 8,508 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V128 passed; `current_proc` and `proc_ptr`
+  were aligned to process 1, with the user rejection probe stable through IRQ
+  128 and no exception.
