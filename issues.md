@@ -1134,3 +1134,7 @@ queue restoration. The kernel remained stable through IRQ 96 with no exception.
 completed two CLOCK receive, interrupt-notification, queue-restoration, and
 dispatch cycles. The kernel remained stable through IRQ 112; continuous CLOCK
 task-loop scheduling remains gated.
+
+2026-09-12 hardware validation: `[IPC V29 clock-request-reply pass=1 stage=15
+err=0]` completed a CLOCK `GET_UPTIME` request and reply. All four IPC stages
+passed and execution remained stable through IRQ 96.

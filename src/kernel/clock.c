@@ -98,6 +98,10 @@ volatile uint32_t cp32_clock_accounted_ticks;
 volatile uint32_t cp32_clock_alarm_expiries;
 volatile uint32_t cp32_clock_alarm_probe_fires;
 volatile uint32_t cp32_clock_dispatch_count;
+volatile uint32_t cp32_clock_request_probe_stage;
+volatile int cp32_clock_request_probe_error;
+volatile phys_bytes cp32_clock_request_sender_map;
+volatile phys_bytes cp32_clock_request_clock_map;
 extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
@@ -422,6 +426,60 @@ PUBLIC int cp32_clock_ipc_probe_once(void)
   current_proc = saved_current_proc;
   bill_ptr = saved_bill_ptr;
   mc = saved_message;
+  return result;
+}
+
+/* Validate one ordinary CLOCK request/reply transaction. */
+PUBLIC int cp32_clock_request_probe_once(void)
+{
+  struct proc *clock = proc_addr(CLOCK), *sender = proc_addr(1);
+  struct mem_map clock_data = clock->p_map[D], sender_data = sender->p_map[D];
+  int clock_flags = clock->p_flags, sender_flags = sender->p_flags;
+  int sender_nr = sender->p_nr;
+  int result;
+  cp32_clock_request_probe_stage = 0;
+  cp32_clock_request_probe_error = 0;
+  sender->p_nr = 1;
+  cp32_clock_request_sender_map = numap(sender->p_nr, (vir_bytes)&mc, MESS_SIZE);
+  cp32_clock_request_clock_map = numap(clock->p_nr, (vir_bytes)&mc, MESS_SIZE);
+  {
+    int i;
+    vir_bytes base = (vir_bytes)(uintptr_t)&mc & ~(CLICK_SIZE - 1);
+    phys_bytes phys = ((phys_bytes)(uintptr_t)&mc) >> CLICK_SHIFT;
+    vir_bytes len = ((vir_bytes)(uintptr_t)&mc & (CLICK_SIZE - 1)) +
+                    sizeof(mc) + CLICK_SIZE - 1;
+    len >>= CLICK_SHIFT;
+    for (i = 0; i < NR_SEGS; i++) {
+      clock->p_map[i].mem_vir = sender->p_map[i].mem_vir = base;
+      clock->p_map[i].mem_phys = sender->p_map[i].mem_phys = phys;
+      clock->p_map[i].mem_len = sender->p_map[i].mem_len = len;
+    }
+  }
+  clock->p_flags = sender->p_flags = 0;
+  cp32_clock_request_sender_map = numap(sender->p_nr, (vir_bytes)&mc, MESS_SIZE);
+  cp32_clock_request_clock_map = numap(clock->p_nr, (vir_bytes)&mc, MESS_SIZE);
+  mc.m_type = GET_UPTIME;
+  result = mini_rec(clock, ANY, &mc) == OK && (clock->p_flags & RECEIVING);
+  if (result) cp32_clock_request_probe_stage |= 1;
+  if (result)
+    { int ipc_result = mini_send(sender, CLOCK, &mc);
+      cp32_clock_request_probe_error = ipc_result;
+      result = ipc_result == OK && mc.m_source == 1; }
+  if (result) cp32_clock_request_probe_stage |= 2;
+  if (result) {
+    cp32_clock_task_dispatch(GET_UPTIME);
+    result = mini_rec(sender, CLOCK, &mc) == OK && (sender->p_flags & RECEIVING);
+    if (result) cp32_clock_request_probe_stage |= 4;
+  }
+  if (result)
+    result = mini_send(clock, 1, &mc) == OK && mc.m_type == OK &&
+             sender->p_flags == 0;
+  if (result) cp32_clock_request_probe_stage |= 8;
+  clock->p_flags = clock_flags;
+  sender->p_flags = sender_flags;
+  sender->p_nr = sender_nr;
+  clock->p_map[D] = clock_data;
+  sender->p_map[D] = sender_data;
   return result;
 }
 

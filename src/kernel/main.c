@@ -21,6 +21,11 @@ extern void cp32_clock_alarm_probe_arm(void);
 extern void cp32_clock_alarm_probe_service(void);
 extern int cp32_clock_task_probe_once(void);
 extern int cp32_clock_ipc_probe_once(void);
+extern int cp32_clock_request_probe_once(void);
+extern volatile uint32_t cp32_clock_request_probe_stage;
+extern volatile int cp32_clock_request_probe_error;
+extern volatile phys_bytes cp32_clock_request_sender_map;
+extern volatile phys_bytes cp32_clock_request_clock_map;
 
 #ifndef CP32_ENABLE_CLOCK_STARTUP
 #define CP32_ENABLE_CLOCK_STARTUP 0
@@ -963,6 +968,19 @@ void main(void) {
     usbj_print_u32((uint32_t)clock_ipc_ok);
     usbj_print("]\r\n");
     if (!clock_ipc_ok) panic("clock IPC probe", 28);
+    int clock_request_ok = cp32_clock_request_probe_once();
+    usbj_print("[IPC V29 clock-request-reply pass=");
+    usbj_print_u32((uint32_t)clock_request_ok);
+    usbj_print(" stage=");
+    usbj_print_u32(cp32_clock_request_probe_stage);
+    usbj_print(" err=");
+    usbj_print_u32((uint32_t)cp32_clock_request_probe_error);
+    usbj_print(" smap=");
+    usbj_print_u32((uint32_t)cp32_clock_request_sender_map);
+    usbj_print(" cmap=");
+    usbj_print_u32((uint32_t)cp32_clock_request_clock_map);
+    usbj_print("]\r\n");
+    if (!clock_request_ok) panic("clock request probe", 29);
   }
 #endif
    systimer_irq_start();

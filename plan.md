@@ -837,6 +837,10 @@ of importing the incompatible libgcc `__udivdi3` routine.
   passed two complete CLOCK receive/notification/dispatch cycles; execution
   remained stable through IRQ 112 with no exception. Continuous task-loop
   scheduling remains gated.
+- 2026-09-12 hardware validation: `[IPC V29 clock-request-reply pass=1
+  stage=15 err=0]` completed the CLOCK GET_UPTIME request/reply path. Sender
+  and CLOCK mappings were valid, all IPC stages passed, and execution remained
+  stable through IRQ 96.
 - 2026-09-12 hardware validation: `[IPC V26 clock-receive-queue pass=1]`
   passed and the diagnostic kernel remained stable through IRQ 96. CLOCK
   receive delivery and exactly-one-ready-queue restoration are validated;
