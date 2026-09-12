@@ -55,6 +55,7 @@ _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 _PROTOTYPE( phys_clicks cp32_mem_alloc, (phys_clicks clicks, int owner) );
 _PROTOTYPE( int cp32_mem_free, (phys_clicks base, int owner) );
 _PROTOTYPE( int cp32_mem_owned, (phys_clicks base, phys_clicks clicks, int owner) );
+_PROTOTYPE( int cp32_mm_handle_request, (message *m) );
 
 /* clock.c */
 _PROTOTYPE( void clock_task, (void)					);

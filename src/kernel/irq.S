@@ -291,7 +291,8 @@ irq_level1:
     movi    a3, cp32_context_handoff_gate
     l32i    a3, a3, 0
     beqz    a3, 1f
-    movi    a15, proc_ptr
+    /* C publishes the final selected frame after all clock/unhold work. */
+    movi    a15, cp32_irq_return_proc
     j       2f
 1:
     movi    a15, cp32_irq_saved_owner
@@ -329,7 +330,7 @@ irq_level1:
     
     /* Restore a0 from p_reg using a temporary register to avoid destroying a15 if needed, 
      * but since we already restored a15, we must reload proc_ptr. */
-    movi    a14, proc_ptr
+    movi    a14, cp32_irq_return_proc
     l32i    a14, a14, 0
     l32i    a0, a14, 0
     

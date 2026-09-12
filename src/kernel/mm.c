@@ -82,6 +82,10 @@ PUBLIC int cp32_mem_free(phys_clicks base, int owner)
     return EINVAL;
 }
 
+/* Keep the allocator's public boundary strict: callers may only release the
+ * beginning of a block they own.  The coalescing loop above deliberately
+ * leaves zero-sized slots reusable, so this is safe under repeated IPC use. */
+
 PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
 {
     int i;
@@ -110,7 +114,10 @@ PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
     if (!isokprocn(proc_nr) || len == 0 || len - 1 > (vir_bytes)-1 - vir)
         return 0;
     rp = proc_addr(proc_nr);
-    if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE)) return 0;
+    if (rp == NIL_PROC || (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR) ||
+        rp->p_nr != proc_nr || (rp->p_flags & P_SLOT_FREE)) {
+        return 0;
+    }
 
     /* Kernel tasks pass IPC buffers on their kernel stacks.  Those buffers
      * are already physical flat addresses on ESP32-S3 and do not fit the
@@ -157,11 +164,33 @@ PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst
     return OK;
 }
 
+PRIVATE int cp32_mm_source_valid(int source)
+{
+    struct proc *rp;
+    if (!isokprocn(source)) return FALSE;
+    rp = proc_addr(source);
+    return rp != NIL_PROC && !(rp->p_flags & P_SLOT_FREE) && rp->p_nr == source;
+}
+
+PUBLIC int cp32_mm_handle_request(message *m)
+{
+    if (m == (message *)0 || !cp32_mm_source_valid(m->m_source))
+        return EINVAL;
+    if (m->m_type == CP32_MM_ALLOCATE) {
+        m->m1_i1 = cp32_mem_alloc((phys_clicks)m->m1_i1, m->m_source);
+        m->m_type = m->m1_i1 != 0 ? OK : ENOMEM;
+    } else if (m->m_type == CP32_MM_RELEASE) {
+        m->m_type = cp32_mem_free((phys_clicks)m->m1_i1, m->m_source);
+    } else {
+        m->m_type = E_BAD_FCN;
+    }
+    return m->m_type;
+}
+
 /* Basic MM Task entry point */
 PUBLIC void mm_task()
 {
     message m;
-    phys_clicks base;
 
     usbj_print("[MM_TASK]\r\n");
     for (;;) {
@@ -169,20 +198,15 @@ PUBLIC void mm_task()
          * the scheduler and exercises the normal IPC suspension/resumption
          * path instead of consuming CPU in a private idle loop. */
         receive(ANY, &m);
+        if (!cp32_mm_source_valid(m.m_source)) continue;
 
-        switch (m.m_type) {
-        case CP32_MM_ALLOCATE:
-            base = cp32_mem_alloc((phys_clicks)m.m1_i1, m.m_source);
-            m.m1_i1 = base;
-            m.m_type = base != 0 ? OK : ENOMEM;
-            break;
-        case CP32_MM_RELEASE:
-            m.m_type = cp32_mem_free((phys_clicks)m.m1_i1, m.m_source);
-            break;
-        default:
-            m.m_type = E_BAD_FCN;
-            break;
+        /* A malformed IPC endpoint must never turn into a reply to ANY or a
+         * free slot.  This is especially important while the MM server is
+         * being brought up before FS/user processes exist. */
+        cp32_mm_handle_request(&m);
+        if (send(m.m_source, &m) != OK) {
+            /* The requester may have exited while MM was servicing it. */
+            continue;
         }
-        send(m.m_source, &m);
     }
 }

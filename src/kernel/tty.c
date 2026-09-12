@@ -60,6 +60,8 @@
 #include "cardputer.h"
 
 static unsigned cp32_kbd_poll_reports;
+static unsigned cp32_tty_read_reports;
+FORWARD _PROTOTYPE( void in_transfer, (tty_t *tp) );
 static int cp32_read_keyboard_event(unsigned char *event)
 {
 	int result;
@@ -67,6 +69,55 @@ static int cp32_read_keyboard_event(unsigned char *event)
 	result = cardputer_keyboard_read_event(event);
 	unlock();
 	return result;
+}
+static int cp32_cardputer_key(unsigned char event, char *ch)
+{
+	static const char keys[4][14] = {
+		"`1234567890-=\b", "\tqwertyuiop[]\\",
+		"\001\002asdfghjkl;'\n", "\003\004\005zxcvbnm,./ "
+	};
+	static const char shifted[4][14] = {
+		"~!@#$%^&*()_+\b", "\tQWERTYUIOP{}|",
+		"\001\002ASDFGHJKL:\"\n", "\003\004\005ZXCVBNM<>? "
+	};
+	static int shift, ctrl, fn, alt;
+	unsigned code, raw_row, raw_col, row, col;
+	if (!ch || event == 0) return 0;
+	code = (unsigned)(event & 0x7F) - 1;
+	raw_row = code / 10; raw_col = code % 10;
+	if (raw_row >= 8 || raw_col >= 10) return 0;
+	col = raw_row * 2 + (raw_col > 3);
+	row = (raw_col + 4) % 4;
+	if (row >= 4 || col >= 14) return 0;
+	if (row == 2 && col == 0) { fn = !(event & 0x80); return 0; }
+	if (row == 2 && col == 1) { shift = !(event & 0x80); return 0; }
+	if (row == 3 && col == 0) { ctrl = !(event & 0x80); return 0; }
+	if (row == 3 && col == 1) return 0;
+	if (row == 3 && col == 2) { alt = !(event & 0x80); return 0; }
+	if (keys[row][col] < 4 || (event & 0x80)) return 0;
+	*ch = shift ? shifted[row][col] : keys[row][col];
+	if (ctrl && *ch >= 'a' && *ch <= 'z') *ch = (char)(*ch - 'a' + 1);
+	(void)fn; (void)alt;
+	return 1;
+}
+static void cp32_queue_console_key(char ch)
+{
+	tty_t *tp = &tty_table[0];
+	if (tp->tty_incount == buflen(tp->tty_inbuf)) return;
+	*tp->tty_inhead++ = (u16_t)(unsigned char)ch;
+	if (tp->tty_inhead == bufend(tp->tty_inbuf)) tp->tty_inhead = tp->tty_inbuf;
+	tp->tty_incount++;
+	if (ch == '\n') tp->tty_eotct++;
+	if (tp->tty_inleft > 0) in_transfer(tp);
+	usbj_print("[TTY char=");
+	if (ch >= 0x20 && ch <= 0x7E) {
+		char shown[2];
+		shown[0] = ch; shown[1] = '\0';
+		usbj_print(shown);
+	} else {
+		usbj_print("0x"); usbj_print_hex32((uint32_t)(unsigned char)ch);
+	}
+	usbj_print("]\r\n");
 }
 #include "proc.h"
 
@@ -105,6 +156,16 @@ FORWARD _PROTOTYPE( void do_open, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_close, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_read, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_write, (tty_t *tp, message *m_ptr)		);
+FORWARD _PROTOTYPE( int in_process, (tty_t *tp, char *buf, int count)	);
+static void cp32_trace_tty_read(unsigned count)
+{
+	if (++cp32_tty_read_reports == 1 ||
+	    (cp32_tty_read_reports % 50) == 0) {
+		usbj_print("[TTY read count="); usbj_print_u32(count);
+		usbj_print(" replies="); usbj_print_u32(cp32_tty_read_reports);
+		usbj_print("]\r\n");
+	}
+}
 FORWARD _PROTOTYPE( void sigchar, (tty_t *tp, int sig)			);
 FORWARD _PROTOTYPE( void tty_devnop, (tty_t *tp)			);
 FORWARD _PROTOTYPE( void scr_init, (tty_t *tp)				);
@@ -163,12 +224,22 @@ PUBLIC void tty_task()
 	for (tp = FIRST_TTY; tp < END_TTY; tp++) {
 		if (tp->tty_events) handle_events(tp);
 	}
-	/* Normal operation is INT-driven; do not poll the FIFO when INT is idle. */
-	if (cardputer_keyboard_interrupt_asserted() &&
-	    cp32_read_keyboard_event(&key_event) > 0) {
-		/* Raw TCA8418 event is exposed until the Adv keymap is installed. */
-		usbj_print("[KBD event="); usbj_print_u32(key_event);
-		usbj_print("]\r\n");
+	/* Drain a bounded FIFO batch so rapid typing cannot overflow the TCA8418. */
+	{
+		unsigned drained = 0;
+		while (drained++ < 8 && cardputer_keyboard_interrupt_asserted()) {
+			if (cp32_read_keyboard_event(&key_event) <= 0) break;
+			{
+				char input;
+				if (cp32_cardputer_key(key_event, &input)) {
+					lock();
+					cp32_queue_console_key(input);
+					unlock();
+				}
+			}
+			usbj_print("[KBD event="); usbj_print_u32(key_event);
+			usbj_print("]\r\n");
+		}
 	}
 	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 1000) == 0) {
 		usbj_print("[KBD poll="); usbj_print_u32(cp32_kbd_poll_reports);
@@ -676,8 +747,9 @@ tty_t *tp;			/* TTY to check for events. */
 
   /* Reply if enough bytes are available. */
   if (tp->tty_incum >= tp->tty_min && tp->tty_inleft > 0) {
-	tty_reply(tp->tty_inrepcode, tp->tty_incaller, tp->tty_inproc,
+		tty_reply(tp->tty_inrepcode, tp->tty_incaller, tp->tty_inproc,
 								tp->tty_incum);
+	cp32_trace_tty_read((unsigned)tp->tty_incum);
 	tp->tty_inleft = tp->tty_incum = 0;
   }
 }

@@ -169,13 +169,15 @@ PRIVATE void cp32_print_irq_status(void)
  *===========================================================================*/
 PUBLIC void clock_task()
 {
+  static unsigned clock_task_reports;
 /* Main program of clock task.  It corrects realtime by adding pending
  * ticks seen only by the interrupt handler, then dispatches based on
  * the message type.
  */
   int opcode;
 
-  usbj_print("[CLOCK_TASK]\r\n");
+  if (++clock_task_reports == 1 || (clock_task_reports % 50) == 0)
+    usbj_print("[CLOCK_TASK]\r\n");
 
   init_clock();           /* initialize SYSTIMER and register IRQ handler */
 
@@ -524,6 +526,7 @@ int irq;
 /* Called from the level-1 handler; disabled until scheduler handoff is safe. */
 PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 {
+  static unsigned rfe_trace_count;
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
@@ -539,10 +542,23 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     clock_handler(0);
   unhold();
 
+  /* The clock path may schedule while outside the IRQ-owned return contract.
+   * Reconcile once here, while publication is explicitly owned by this IRQ. */
+  if (cp32_context_handoff_gate && k_reenter <= 1 &&
+      (rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
+       rdy_head[USER_Q] != NIL_PROC)) {
+    sched();
+  }
+
   /* The process handoff is deliberately a second gate.  This keeps the
    * validated clock/IRQ bridge testable without selecting another process. */
   extern volatile int cp32_context_handoff_gate;
   extern struct proc *current_proc;
+  extern volatile struct proc *cp32_last_selected_fs;
+  extern volatile struct proc *cp32_irq_return_proc;
+  extern volatile uint32_t cp32_sched_sequence;
+  extern volatile int cp32_irq_dispatch_active;
+  cp32_irq_dispatch_active = 1;
   /* During the CP32 handoff probe, any runnable queue is eligible. The
    * previous TASK_Q-only gate starved synthetic user-range stress entries
    * after scheduler queue classification was corrected. */
@@ -554,14 +570,61 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       proc_ptr != NIL_PROC && current_proc == proc_ptr &&
       proc_ptr->p_flags != 0)
     cp32_handoff_blocked_target_count++;
-  if (cp32_context_handoff_gate &&
-      cp32_irq_handoff_allowed(cp32_clock_irq_bridge_enabled,
-          k_reenter > 1, current_proc != NIL_PROC,
-          proc_ptr != NIL_PROC && current_proc == proc_ptr,
-          proc_ptr != NIL_PROC && proc_ptr->p_flags == 0,
-          rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
-          rdy_head[USER_Q] != NIL_PROC))
+  if (cp32_context_handoff_gate && k_reenter <= 1 &&
+      current_proc != NIL_PROC && proc_ptr != NIL_PROC &&
+      current_proc == proc_ptr && proc_ptr->p_flags == 0 &&
+      (rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
+       rdy_head[USER_Q] != NIL_PROC))
     sched();
+
+  /* Preserve a runnable FS selection across the legacy clock/unhold path.
+   * This is the bridge until the full assembly context switch replaces the
+   * bring-up scheduler. */
+  if (cp32_last_selected_fs != NIL_PROC &&
+      cp32_last_selected_fs->p_flags == 0) {
+    proc_ptr = (struct proc *)cp32_last_selected_fs;
+    current_proc = (struct proc *)cp32_last_selected_fs;
+  }
+  cp32_irq_dispatch_active = 0;
+  if (cp32_irq_return_proc == NIL_PROC ||
+      cp32_irq_return_proc->p_flags != 0) {
+    if (cp32_irq_return_proc != NIL_PROC &&
+        cp32_irq_return_proc->p_nr == FS_PROC_NR) {
+      usbj_print("[RFE overwrite fs-flags=");
+      usbj_print_u32((uint32_t)cp32_irq_return_proc->p_flags);
+      usbj_print(" new=");
+      usbj_print_u32((uint32_t)proc_ptr->p_nr);
+      usbj_print("]\r\n");
+    }
+    cp32_irq_return_proc = proc_ptr;
+  }
+  if (rfe_trace_count == 0) {
+    usbj_print("[RFE publish target=");
+    usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
+    usbj_print(" current=");
+    usbj_print_u32((uint32_t)current_proc->p_nr);
+    usbj_print(" seq=");
+    usbj_print_u32(cp32_sched_sequence);
+    usbj_print("]\r\n");
+  }
+
+  /* This is intentionally adjacent to the scheduler call: it records the
+   * frame selected for the assembly rfi path, without tracing every IRQ. */
+  if (cp32_irq_return_proc != NIL_PROC &&
+      (rfe_trace_count++ == 0 || (rfe_trace_count % 50) == 0)) {
+    usbj_print("[RFE target=");
+    usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
+    usbj_print(" current=");
+    usbj_print_u32(current_proc == NIL_PROC ? 0xFFFFFFFFu :
+                   (uint32_t)current_proc->p_nr);
+    usbj_print(" seq=");
+    usbj_print_u32(cp32_sched_sequence);
+    usbj_print(" pc=");
+    usbj_print_hex32((uint32_t)cp32_irq_return_proc->p_reg.pc);
+    usbj_print(" ps=");
+    usbj_print_hex32((uint32_t)cp32_irq_return_proc->p_reg.psw);
+    usbj_print("]\r\n");
+  }
 
   /* Stable bring-up status: first IRQ, then every 50 IRQs. */
   if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 50) == 0)

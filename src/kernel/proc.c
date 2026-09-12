@@ -34,6 +34,16 @@ PRIVATE int copy_message(struct proc *sender, message *src,
 PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
                                     struct proc *receiver, message *dst);
 
+PRIVATE void cp32_save_blocked_frame(struct proc *rp)
+{
+  if (rp == NIL_PROC) return;
+  rp->p_blocked_frame_valid = TRUE;
+  rp->p_blocked_frame_result = 0;
+  rp->p_blocked_frame_pc = rp->p_reg.pc;
+  rp->p_blocked_frame_psw = rp->p_reg.psw;
+  rp->p_blocked_frame_sp = rp->p_reg.sp;
+}
+
 void sched(void);
 PRIVATE void ready(struct proc *rp);
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result);
@@ -59,6 +69,10 @@ void schedule(void)
 
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 PRIVATE unsigned handoff_diag_count;
+volatile struct proc *cp32_last_selected_fs;
+volatile struct proc *cp32_irq_return_proc;
+volatile uint32_t cp32_sched_sequence;
+volatile int cp32_irq_dispatch_active;
 volatile uint32_t cp32_blocked_syscall_count;
 volatile uint32_t cp32_sched_handoff_count;
 volatile uint32_t cp32_blocked_handoff_count;
@@ -73,6 +87,7 @@ volatile uint32_t cp32_blocked_frame_save_count;
 volatile uint32_t cp32_blocked_frame_wake_count;
 volatile uint32_t cp32_blocked_resume_count;
 volatile uint32_t cp32_blocked_frame_restore_count;
+volatile uint32_t cp32_ready_duplicate_skip_count;
 volatile uint32_t cp32_user_blocked_return_count;
 volatile int cp32_user_dispatch_blocked;
 volatile int cp32_user_handoff_gate;
@@ -516,10 +531,18 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
     return;
   }
   rp->p_reg.a[2] = (reg_t)result;
+  /* Resumption is task-owned: completing the saved syscall also owns the
+   * transition out of SEND/RECEIVE and the ready-queue insertion.  Keeping
+   * these operations here prevents one wake path from forgetting to make a
+   * task runnable or leaving a stale blocked-return owner behind. */
+  rp->p_flags &= ~(SENDING | RECEIVING);
   cp32_blocked_frame_wake_count++;
   cp32_blocked_resume_count++;
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
+  if (cp32_blocked_return_proc == rp)
+    cp32_blocked_return_proc = NIL_PROC;
+  if (rp->p_flags == 0) ready(rp);
   if (cp32_user_probe_mode && cp32_context_handoff_gate &&
       CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     usbj_print("[CTX V156 wake-result-slot-equal pass=");
@@ -743,11 +766,7 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 
 report:
   if (result == OK && (rp->p_flags & (SENDING | RECEIVING)) != 0) {
-    rp->p_blocked_frame_valid = TRUE;
-    rp->p_blocked_frame_result = 0;
-    rp->p_blocked_frame_pc = rp->p_reg.pc;
-    rp->p_blocked_frame_psw = rp->p_reg.psw;
-    rp->p_blocked_frame_sp = rp->p_reg.sp;
+    cp32_save_blocked_frame(rp);
     cp32_blocked_frame_save_count++;
     cp32_blocked_syscall_count++;
     if (cp32_user_probe_mode && rp->p_blocked_frame_pc == rp->p_reg.pc) {
@@ -797,11 +816,7 @@ PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
 {
   int result = copy_message(sender, src, receiver, dst);
   if (result != OK) return result;
-  receiver->p_flags &= ~RECEIVING;
   cp32_complete_blocked_frame(receiver, OK);
-  if (cp32_blocked_return_proc == receiver)
-    cp32_blocked_return_proc = NIL_PROC;
-  if (receiver->p_flags == 0) ready(receiver);
   return OK;
 }
 
@@ -885,12 +900,7 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
           previous_ptr->p_sendlink = sender_ptr->p_sendlink;
 
         sender_ptr->p_sendlink = NIL_PROC;
-        sender_ptr->p_flags &= ~SENDING;
         cp32_complete_blocked_frame(sender_ptr, OK);
-        if (cp32_blocked_return_proc == sender_ptr)
-          cp32_blocked_return_proc = NIL_PROC;
-        if (sender_ptr->p_flags == 0) ready(sender_ptr);
-        
         return OK;
       }
     }
@@ -918,19 +928,14 @@ PRIVATE void pick_proc()
 {
   int q;
   struct proc *rp = NIL_PROC;
+  static unsigned pick_trace_count;
 
   for (q = 0; q < NQ; q++) {
-    while (rdy_head[q] != NIL_PROC &&
-           rdy_head[q]->p_flags != 0) {
-      rp = rdy_head[q];
-      rdy_head[q] = rp->p_nextready;
+    while (rdy_head[q] != NIL_PROC && rdy_head[q]->p_flags != 0) {
+      rp = rdy_head[q]; rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
       rp->p_nextready = NIL_PROC;
       cp32_ready_blocked_skip_count++;
-    }
-    if (rdy_head[q] == NIL_PROC) {
-      rp = NIL_PROC;
-      continue;
     }
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
@@ -941,6 +946,7 @@ PRIVATE void pick_proc()
       rp->p_nextready = NIL_PROC;
       break;
     }
+    rp = NIL_PROC;
   }
 
     if (rp == NIL_PROC) {
@@ -951,6 +957,24 @@ PRIVATE void pick_proc()
     }
 
     proc_ptr = rp;
+    ++cp32_sched_sequence;
+    /* Selection and return ownership must change atomically from the IRQ
+     * path's perspective.  Leaving current_proc on IDLE makes the assembly
+     * return path discard a valid non-idle selection. */
+    current_proc = rp;
+    if (cp32_irq_dispatch_active) cp32_irq_return_proc = rp;
+    if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
+      cp32_last_selected_fs = rp;
+    if (rp->p_nr == FS_PROC_NR && (++pick_trace_count == 1 ||
+        (pick_trace_count % 50) == 0)) {
+      usbj_print("[SCHED fs-selected pc=");
+      usbj_print_hex32((uint32_t)rp->p_reg.pc);
+      usbj_print(" sp=");
+      usbj_print_hex32((uint32_t)rp->p_reg.sp);
+      usbj_print(" nest=");
+      usbj_print_u32((uint32_t)k_reenter);
+      usbj_print("]\r\n");
+    }
     /* MINIX bills user time only when a user process is selected. Kernel
      * tasks and servers retain the previous user billing target. */
     if (rp->p_nr >= LOW_USER)
@@ -973,6 +997,13 @@ PRIVATE void ready(struct proc *rp)
   q = proc_queue(rp);
   
   if (q < 0 || q >= NQ) return;
+  /* Wakeups can race with a replayed interrupt or a second matching sender.
+   * Never append the same runnable process twice: duplicate links can create
+   * a cycle and make the next scheduler pass lose the queue tail. */
+  if (proc_is_ready_queued(rp)) {
+    cp32_ready_duplicate_skip_count++;
+    return;
+  }
 
   rp->p_nextready = NIL_PROC;
   if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;

@@ -180,8 +180,60 @@ integration. Define the user ABI after one user process can run.
   Basic CLOCK receive blocking is running; blocked SEND/RECEIVE resume coverage is still pending.
 - [x] 3. Start CLOCK, SYS, and TTY through production descriptors.
   MM descriptor startup is also enabled; the MM message protocol remains incomplete.
+- [x] 4a. Define the CP32 physical-click memory model and allocator ownership
+  boundary; the MM server protocol remains in progress.
 4. Define the CP32 memory model and implement the MM server.
 5. Implement Cardputer console I/O.
+- [x] 5a. Connect the Cardputer TCA8418 keyboard to the TTY input queue and
+  decode matrix events into console characters.
+- [x] 5b. Add a bounded user-read handoff probe and boot-time FS descriptor
+  validation for the TTY read path.
+- [x] 5c. Add scheduler selection tracing for the first runnable FS/user-read
+  frame to isolate the remaining restore boundary.
+- [x] 5d. Normalize the initial Xtensa saved PSW used by descriptor-based
+  task/server returns.
+- [x] 5e. Trace the selected process frame immediately before the Xtensa
+  exception-return boundary.
+- [x] 5f. Trace both scheduler owner pointers at the IRQ return boundary.
+- [x] 5g. Keep scheduler selection and active return ownership synchronized.
+- [x] 5h. Perform a final non-nested scheduler selection before IRQ return.
+- [x] 5i. Preserve a runnable FS selection across the legacy clock/unhold path.
+- [x] 5j. Publish and consume one final IRQ return-frame pointer across C and
+  Xtensa assembly restoration.
+- [x] 5k. Trace final return-pointer publication before assembly restoration.
+- [x] 5l. Publish the IRQ return frame at process selection and preserve it
+  through the timer wrapper.
+- [x] 5m. Correlate scheduler selection and IRQ return with a shared sequence.
+- [x] 5n. Report and consume the dedicated published return pointer rather
+  than the later idle fallback pointer.
+- [x] 5o. Trace return-pointer replacement and the FS state causing it.
+- [x] 5p. Correlate FS selection with interrupt nesting to separate scheduler
+  passes.
+- [x] 5q. Gate return-frame publication on explicit IRQ-dispatch ownership.
+- [x] 5r. Reconcile the final runnable selection inside the IRQ dispatch pass.
+- [ ] 5s. Rotate scheduler queue priority to prevent task starvation (blocked
+  by task-frame initialization fault).
+- [x] 5t. Harden `numap()` against invalid or inconsistent process descriptors.
+- [x] 5u. Isolate IPC blocked-frame capture for suspension/resumption.
+- [x] 5v. Rate-limit repetitive CLOCK task execution diagnostics.
+- [x] 5w. Initialize explicit flat task descriptor mappings for MM/IPC buffers.
+- [x] 5x. Isolate MM IPC request validation before allocator/release handling.
+- [x] 5y. Add an automatic MM allocator allocate/release smoke path.
+- [x] 5z. Verify allocator ownership enforcement during automatic boot smoke.
+- [x] 5aa. Validate allocator zero-size and oversized request rejection.
+- [x] 5ab. Validate adjacent allocator blocks and reverse-order coalescing.
+- [x] 5ac. Validate allocator ownership while allocated and after release.
+- [x] 5ad. Add frame-safe MM requester validation at the receive boundary.
+- [x] 5ae. Centralize MM allocation/release request handling for IPC replies.
+- [ ] 5af. Connect the scheduled FS client to the MM allocation/release IPC path (deferred: the first activation caused an image-integrity regression; requires an isolated frame-safe client path).
+- [x] 5ah. Make blocked IPC completion task-owned: wake result, blocked flags,
+  stale return-owner cleanup, and ready-queue insertion now share one resume
+  boundary for SEND and RECEIVE wakeups.
+- [x] 5ai. Guard ready-queue insertion against duplicate runnable links during
+  repeated IPC wakeups and interrupt replay.
+- [ ] 5ag. Rotate ready-queue selection across task, server, and user classes
+  (reverted after task-frame/image-integrity regression; requires a frame-safe
+  scheduler handoff design).
 6. Add storage/RAM disk, FS, executable loading, libc, shell, and commands.
 7. Add optional networking and peripherals only when in scope.
 
