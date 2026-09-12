@@ -10,7 +10,11 @@ This keeps the port moving faster while preserving a clear validation boundary
 for every completed feature. Detailed field diagnostics remain available only
 when a focused failure investigation requires them.
 
-## Current state — 2026-09-11
+## Historical migration log
+
+The detailed marker-by-marker entries below are retained as historical evidence
+and are not the active task list. The active implementation state is maintained
+in the concise sections near the end of this file.
 
 The production user exception entry was tightened after review: the user
 frame now saves all interrupted call0 registers before reading `EXCCAUSE`,
@@ -200,7 +204,7 @@ Latest validated reply-probe markers:
 
 Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
 
-## Immediate next task
+## Historical probe checklist
 
 - [x] Defined and documented the CP32 syscall return-frame contract in
       `src/kernel/irq_frame.h`: saved `pc/sp/psw`, call0 result in `a2`, and
@@ -285,6 +289,24 @@ Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
 - [x] Verified both the reply-probe image and the normal image compile with
       the image-layout check passing.
 
+## Active implementation state
+
+Current feature sequence:
+
+1. MINIX interrupt notification delivery and held replay — hardware validated
+   with `[IRQ V1 notify-contract pass=1 deferred=2 delivered=2 replayed=1]`.
+2. Task descriptor metadata — hardware validated with `[TASK V1 ... pass=1
+   count=9]`.
+3. Descriptor-driven IDLE startup — hardware validated with `[TASK V2 ...]`.
+4. Descriptor-driven CLOCK startup — hardware validated with `[TASK V3 ...]`.
+5. Descriptor-driven SYS startup — hardware validated with `[TASK V4 ...]`.
+6. Next: descriptor-driven TTY startup, then guarded service-loop startup.
+
+Every feature follows this boundary: copy the MINIX structure and behavior,
+adapt only ESP32-S3 hardware/ABI details, add one aggregate failure-prone
+marker, build the normal and feature image, then require a serial-console
+result before marking hardware complete.
+
 ## Remaining kernel work
 
 - [ ] Complete production Xtensa user exception/trap entry and separate
@@ -297,9 +319,10 @@ Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
 - [ ] Port clock tick accounting, lost ticks, alarms, TTY timers, quantum
       expiration, and deferred rescheduling onto ESP32-S3 SYSTIMER.
 - [x] Validate MINIX-style task/server descriptor metadata and stack budgets.
-- [ ] Use task descriptors for production task/server initialization: assign
-      entry points, stacks, initial frames, maps, and privilege state with a
-      guarded startup handoff.
+- [x] Use task descriptors for guarded IDLE, CLOCK, and SYS entry/frame
+      initialization.
+- [ ] Use task descriptors for TTY entry/frame initialization and then enable
+      guarded service loops one task at a time.
 - [ ] Implement a panic/fatal path that preserves a short diagnostic marker.
 - [ ] Start real kernel tasks incrementally: system, clock, and TTY.
 
