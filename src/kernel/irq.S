@@ -360,18 +360,12 @@ irq_level1:
 .type   irq_user, @function
 irq_user:
     wsr     a0, excsave1
-    rsr     a5, exccause
-    movi    a6, 0x04             /* EXCCAUSE_LEVEL1_INTERRUPT */
-    beq     a5, a6, 1f
-    j       2f
-1:
-    rsr     a0, excsave1
-    j       irq_level1
-2:
     /* Build the frame before reading exception CSRs.  In particular, the
      * original user a2 is the syscall number and must not be replaced by
      * EXCCAUSE.  a0 is used as the temporary frame base; original a0 is
-     * recovered from EXCSAVE1 after original a1 has been saved. */
+     * recovered from EXCSAVE1 after original a1 has been saved.  Save every
+     * general register before using one as the exception-cause scratch; this
+     * preserves the interrupted user a5 as well as the other call0 state. */
     movi    a0, _stack_top
     addi    a0, a0, -128
     s32i    a1, a0, 4
@@ -398,6 +392,14 @@ irq_user:
     s32i    a1, a0, 68
     l32i    a1, a0, 4
     s32i    a1, a0, 72
+
+    /* A level-1 interrupt can arrive through either exception vector. */
+    rsr     a5, exccause
+    movi    a6, 0x04             /* EXCCAUSE_LEVEL1_INTERRUPT */
+    bne     a5, a6, 2f
+    rsr     a0, excsave1
+    j       irq_level1
+2:
 
     movi    a2, proc_ptr
     l32i    a2, a2, 0
@@ -495,19 +497,28 @@ cp32_user_probe_entry:
 #elif defined(CP32_ENABLE_BOTH_PROBE)
     movi    a2, 3                 /* BOTH / SENDREC */
     movi    a3, 999               /* invalid destination: safe rejection */
-    movi    a4, 0
+    movi    a4, cp32_probe_message
 #elif defined(CP32_ENABLE_BLOCKED_PROBE)
     movi    a2, 2                 /* RECEIVE */
     movi    a3, -1                /* ANY */
     movi    a4, cp32_probe_message
+#elif defined(CP32_ENABLE_BLOCKED_SENDREC_PROBE)
+    movi    a2, 3                 /* SENDREC / BOTH */
+    movi    a3, 2                 /* receiver process */
+    movi    a4, cp32_probe_message
+#elif defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
+    movi    a2, 1                 /* SEND */
+    movi    a3, 2                 /* receiver process */
+    movi    a4, cp32_probe_message
 #else
     movi    a2, 1                 /* SEND */
     movi    a3, 999               /* invalid destination: immediate EINVAL */
-    movi    a4, 0
+    movi    a4, cp32_probe_message
 #endif
     ill                         /* ESP32-S3 lacks a user syscall opcode;
                                  * this is the controlled exception probe. */
     j       cp32_user_probe_done
+.global cp32_user_probe_done
 cp32_user_probe_done:
     j       cp32_user_probe_done
 .size cp32_user_probe_entry, .-cp32_user_probe_entry

@@ -10,8 +10,10 @@ MEMORY {
     /* Flash: LMA home for all IRAM sections               */
     irom  (RX) : ORIGIN = 0x42010000, LENGTH = 7936K
 
-    /* SRAM0: instruction bus only, 320 KB                 */
-    iram  (RX) : ORIGIN = 0x40370000, LENGTH = 320K
+    /* SRAM0: instruction bus only, full 448 KiB window    */
+    /* The ROM can load the bare-metal executable across the full contiguous
+       instruction SRAM window, as used by the reference no-SDK project. */
+    iram  (RX) : ORIGIN = 0x40370000, LENGTH = 448K
 
     /* SRAM1: data bus, 480 KB                             */
     dram  (RW) : ORIGIN = 0x3FC88000, LENGTH = 480K
@@ -136,10 +138,8 @@ SECTIONS {
     /* --------------------------------------------------
        Sanity assertions — caught at link time
     -------------------------------------------------- */
-    ASSERT(_iram_end <= 0x403C0000,
-        "ERROR: kernel code overflows IRAM (320 KB limit)")
-    ASSERT(_iram_end <= 0x40378000,
-        "ERROR: IRAM image crossed the validated loader boundary; reduce or refactor code")
+    ASSERT(_iram_end <= 0x403E0000,
+        "ERROR: kernel code overflows IRAM (448 KiB limit)")
     ASSERT(_stack_top <= 0x3FD00000,
         "ERROR: DRAM overflow — reduce heap or stack")
     ASSERT(_heap_end <= _stack_bottom,

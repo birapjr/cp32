@@ -13,6 +13,33 @@
 #include "kernel.h"
 #include "proc.h"
 #include "irq_frame.h"
+
+extern void kernel_idle_loop(void);
+extern void clock_task(void);
+extern void sys_task(void);
+
+#ifndef CP32_ENABLE_CLOCK_STARTUP
+#define CP32_ENABLE_CLOCK_STARTUP 0
+#endif
+
+#ifndef CP32_ENABLE_SYS_STARTUP
+#define CP32_ENABLE_SYS_STARTUP 0
+#endif
+
+/* MINIX task-table metadata, kept separate from the ESP32-S3 frame setup.
+ * The entry points and stack sizes are descriptors only until production task
+ * startup is enabled. */
+static struct tasktab cp32_tasktab[] = {
+  { 0,             4096, "TTY" },
+  { 0,             2048, "SYN_AL" },
+  { kernel_idle_loop, 2048, "IDLE" },
+  { 0,             2048, "MEMORY" },
+  { CP32_ENABLE_CLOCK_STARTUP ? clock_task : 0, 4096, "CLOCK" },
+  { CP32_ENABLE_SYS_STARTUP ? sys_task : 0, 4096, "SYS" },
+  { 0,                0, "HARDWAR" },
+  { 0,                0, "MM" },
+  { 0,                0, "FS" }
+};
 #include "esp32s3/systimer.h"
 #include <minix/com.h>
 #include <string.h>
@@ -24,6 +51,9 @@ extern volatile uint32_t cp32_clock_irq_bridge_calls;
 extern volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
+extern volatile uint32_t cp32_irq_notify_deferred;
+extern volatile uint32_t cp32_irq_notify_delivered;
+extern volatile uint32_t cp32_irq_notify_replayed;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
@@ -60,6 +90,7 @@ volatile uint32_t cp32_task2_ticks;
 message cp32_probe_message;
 message cp32_probe_sender_message;
 extern void cp32_user_probe_entry(void);
+extern void cp32_user_probe_done(void);
 #ifdef CP32_ENABLE_BOTH_REPLY_PROBE
 extern void cp32_user_reply_entry(void);
 extern void cp32_probe_ready_reply(void);
@@ -70,6 +101,10 @@ extern volatile int cp32_user_probe_mode;
 
 #ifndef CP32_ENABLE_USER_PROBE
 #define CP32_ENABLE_USER_PROBE 0
+#endif
+
+#ifndef CP32_ENABLE_TASK_STARTUP
+#define CP32_ENABLE_TASK_STARTUP 0
 #endif
 
 static void cp32_task1_loop(void)
@@ -252,6 +287,22 @@ void test_ipc_mm(void) {
     usbj_print("]\r\n");
     if (!pass) panic("IPC held replay", 13);
 
+    /* Aggregate the MINIX interrupt() contract: duplicate notifications are
+     * coalesced while nested, then exactly one held notification is replayed
+     * and delivered after the receiver is waiting again. */
+    pass = cp32_irq_notify_deferred >= 2 &&
+        cp32_irq_notify_replayed >= 1 && cp32_irq_notify_delivered >= 2;
+    usbj_print("[IRQ V1 notify-contract pass=");
+    usbj_print_u32(pass);
+    usbj_print(" deferred=");
+    usbj_print_u32(cp32_irq_notify_deferred);
+    usbj_print(" delivered=");
+    usbj_print_u32(cp32_irq_notify_delivered);
+    usbj_print(" replayed=");
+    usbj_print_u32(cp32_irq_notify_replayed);
+    usbj_print("]\r\n");
+    if (!pass) panic("IRQ notification", 1);
+
     /* A waits for B; B's attempt to send back must fail without queueing B.
      * Receiving A's original message must still recover both processes. */
     res = _send(p2->p_nr, &m1);
@@ -334,7 +385,6 @@ void kernel_idle_loop(void) {
 }
 
 void main(void) {
-  usbj_print("[IMG V8] CP32 diagnostic image\r\n");
   status_line("main() starting", 0);
 
   register struct proc *rp;
@@ -364,6 +414,20 @@ void main(void) {
 
   /* Set up proc table entries for tasks and servers. */
   status_line("initializing proc table", 0);
+
+  {
+    int tasktab_ok = (sizeof(cp32_tasktab) / sizeof(cp32_tasktab[0]) == NR_TASKS) &&
+        cp32_tasktab[2].initial_pc != 0 &&
+        cp32_tasktab[0].stksize >= 2048 &&
+        cp32_tasktab[4].stksize >= 2048 &&
+        cp32_tasktab[5].stksize >= 2048;
+    usbj_print("[TASK V1 descriptor-table pass=");
+    usbj_print_u32(tasktab_ok);
+    usbj_print(" count=");
+    usbj_print_u32((uint32_t)(sizeof(cp32_tasktab) / sizeof(cp32_tasktab[0])));
+    usbj_print("]\r\n");
+    if (!tasktab_ok) panic("task descriptor table", 1);
+  }
   
   // Use the existing ktsb declaration from line 39
   ktsb = (reg_t)_stack_bottom + 0x4000; // Offset from bottom to avoid overlap
@@ -423,6 +487,70 @@ void main(void) {
     }
     rp->p_flags = 0; // Runnable
   }
+
+#if CP32_ENABLE_TASK_STARTUP
+  /* First production descriptor handoff: IDLE is safe to validate because it
+   * never returns and does not require a device or IPC service.  TTY/CLOCK/SYS
+   * remain disabled until their own startup contracts are proven. */
+  {
+    struct proc *idle = proc_addr(IDLE);
+    int startup_ok = cp32_tasktab[2].initial_pc != 0 &&
+        cp32_tasktab[2].stksize >= 2048 && idle->p_reg.sp != 0 &&
+        (idle->p_reg.sp & 0x0F) == 0;
+    if (startup_ok) {
+      idle->p_reg.pc = (reg_t)cp32_tasktab[2].initial_pc;
+      idle->p_reg.a[1] = idle->p_reg.sp;
+    }
+    usbj_print("[TASK V2 idle-startup pass=");
+    usbj_print_u32(startup_ok);
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)idle->p_reg.pc);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)idle->p_reg.sp);
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("idle task startup", 2);
+  }
+#if CP32_ENABLE_CLOCK_STARTUP
+  {
+    struct proc *clock = proc_addr(CLOCK);
+    int startup_ok = cp32_tasktab[4].initial_pc != 0 &&
+        cp32_tasktab[4].stksize >= 4096 && clock->p_reg.sp != 0 &&
+        (clock->p_reg.sp & 0x0F) == 0 && clock->p_nr == CLOCK;
+    if (startup_ok) {
+      clock->p_reg.pc = (reg_t)cp32_tasktab[4].initial_pc;
+      clock->p_reg.a[1] = clock->p_reg.sp;
+    }
+    usbj_print("[TASK V3 clock-startup pass=");
+    usbj_print_u32(startup_ok);
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)clock->p_reg.pc);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)clock->p_reg.sp);
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("clock task startup", 3);
+  }
+#endif
+#if CP32_ENABLE_SYS_STARTUP
+  {
+    struct proc *sys = proc_addr(-2); /* MINIX SYS task number */
+    int startup_ok = cp32_tasktab[5].initial_pc != 0 &&
+        cp32_tasktab[5].stksize >= 4096 && sys->p_reg.sp != 0 &&
+        (sys->p_reg.sp & 0x0F) == 0 && sys->p_nr == -2;
+    if (startup_ok) {
+      sys->p_reg.pc = (reg_t)cp32_tasktab[5].initial_pc;
+      sys->p_reg.a[1] = sys->p_reg.sp;
+    }
+    usbj_print("[TASK V4 sys-startup pass=");
+    usbj_print_u32(startup_ok);
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)sys->p_reg.pc);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)sys->p_reg.sp);
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("sys task startup", 4);
+  }
+#endif
+#endif
   
   bill_ptr = proc_addr(IDLE);
 #if CP32_ENABLE_USER_PROBE
@@ -511,23 +639,18 @@ void main(void) {
     usbj_print("FATAL: systimer counter is not advancing\r\n");
     for (;;) { }
   }
-  usbj_print("systimer UNIT0 advancing (TARGET0 IRQ disabled)\r\n");
   status_line("checking systimer interrupt route", 0);
   if (systimer_route_probe() != OK) {
     usbj_print("FATAL: systimer interrupt route rejected\r\n");
     for (;;) { }
   }
-  usbj_print("TARGET0 mapped to CPU interrupt 2 (IRQ disabled)\r\n");
-    usbj_print("[IMG V8] pre-IRQ setup complete\r\n");
     status_line("starting systimer interrupt probe", 0);
     proc_ptr = &proc[0]; /* Ensure proc_ptr is valid before enabling IRQs */
     cp32_clock_irq_bridge_enabled = 1;
-    usbj_print("[IMG V10] timer bridge enabled for clock lifecycle\r\n");
     cp32_context_restore_gate = 1;
     /* First live handoff experiment: keep clock_handler disabled, but allow
      * the IRQ bridge to invoke the scheduler and select a saved frame. */
     cp32_context_handoff_gate = 1;
-   usbj_print("[BOOT V4] entering IPC/MM validation\r\n");
   test_ipc_mm();
   cp32_prepare_two_task_stress();
 #if CP32_ENABLE_USER_PROBE
@@ -559,8 +682,13 @@ void main(void) {
       (((vir_bytes)(uintptr_t)&cp32_probe_message & (CLICK_SIZE - 1)) +
        sizeof(cp32_probe_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
   cp32_probe_ready_reply();
+#elif defined(CP32_ENABLE_BLOCKED_PROBE)
+  /* Process 2 is the replacement frame; it must not re-enter the trap probe. */
+  proc_addr(2)->p_reg.pc = (reg_t)cp32_user_probe_done;
+  proc_addr(2)->p_flags = 0;
 #endif
 #endif
+#if 0 /* Retained in history only; one-shot bring-up checks are complete. */
   usbj_print("[SCHED V1 classify pass=1 p1=2 p2=3]\r\n");
   usbj_print("[SCHED V4 blocked-probe pass=");
   usbj_print_u32((uint32_t)cp32_probe_blocked_handoff());
@@ -712,6 +840,7 @@ void main(void) {
   usbj_print(" d=");
   usbj_print_u32((uint32_t)(proc_addr(2)->p_reg.sp - proc_addr(1)->p_reg.sp));
   usbj_print("]\r\n");
+#endif
   cp32_context_handoff_gate = 1;
 #ifdef CP32_ENABLE_BOTH_REPLY_PROBE
   /* The final stress reset above clears ready queues; restore the canonical
@@ -768,14 +897,125 @@ void main(void) {
    if (!lock_v2_ok) panic("saved lock status", 1);
 #if CP32_ENABLE_USER_PROBE
    cp32_user_trap_gate = 1;
-#ifdef CP32_ENABLE_BLOCKED_PROBE
-   cp32_user_handoff_gate = 1;
+#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
+  cp32_user_handoff_gate = 1;
+  cp32_blocked_handoff_gate = 1;
+#endif
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+  proc_addr(2)->p_getfrom = ANY;
+  proc_addr(2)->p_messbuf = &cp32_probe_message;
+  proc_addr(2)->p_flags = 0;
+  cp32_probe_wake_once = 1;
 #endif
 #endif
    systimer_irq_start();
-  usbj_print("TARGET0 periodic IRQ enabled (CPU interrupt 2, level 1) [BOOT V4]\r\n");
 
 #if CP32_ENABLE_USER_PROBE
+  {
+    struct proc *user = proc_addr(1);
+    phys_bytes sp_click = user->p_reg.sp >> CLICK_SHIFT;
+    vir_bytes msg = (vir_bytes)(uintptr_t)&cp32_probe_message;
+    int setup_ok = user != NIL_PROC && user->p_reg.pc != 0 &&
+        user->p_reg.sp != 0 && (user->p_reg.sp & 0x0F) == 0 &&
+        user->p_reg.a[1] == user->p_reg.sp && user->p_reg.a[15] != 0 &&
+        user->p_map[S].mem_len != 0;
+    int stack_ok = setup_ok && sp_click >= user->p_map[S].mem_phys &&
+        sp_click < user->p_map[S].mem_phys + user->p_map[S].mem_len;
+    setup_ok = stack_ok;
+    int message_ok = setup_ok && user->p_map[D].mem_len != 0 &&
+        msg >= user->p_map[D].mem_vir &&
+        msg < user->p_map[D].mem_vir +
+         user->p_map[D].mem_len * CLICK_SIZE;
+    int message_range_ok = message_ok &&
+        msg + MESS_SIZE <= user->p_map[D].mem_vir +
+         user->p_map[D].mem_len * CLICK_SIZE;
+    usbj_print("[CTX V116 user-message-range-ready pass=");
+    usbj_print_u32((uint32_t)message_range_ok);
+    usbj_print("]\r\n");
+    setup_ok = message_range_ok;
+    usbj_print("[CTX V115 user-message-map-ready pass=");
+    usbj_print_u32((uint32_t)message_ok);
+    usbj_print("]\r\n");
+    setup_ok = message_ok;
+    int pc_ok = setup_ok && user->p_reg.pc != 0 &&
+        (user->p_reg.pc & 0x03) == 0;
+    usbj_print("[CTX V117 user-entry-pc-ready pass=");
+    usbj_print_u32((uint32_t)pc_ok);
+    usbj_print("]\r\n");
+    setup_ok = pc_ok;
+    int psw_ok = setup_ok && user->p_reg.psw == 0;
+    usbj_print("[CTX V118 user-entry-psw-ready pass=");
+    usbj_print_u32((uint32_t)psw_ok);
+    usbj_print("]\r\n");
+    setup_ok = psw_ok;
+    int regs_ok = setup_ok && user->p_reg.a[0] == 0 && user->p_reg.a[2] == 0 &&
+        user->p_reg.a[3] == 0 && user->p_reg.a[4] == 0;
+    usbj_print("[CTX V119 user-initial-registers-ready pass=");
+    usbj_print_u32((uint32_t)regs_ok);
+    usbj_print("]\r\n");
+    setup_ok = regs_ok;
+    int identity_ok = setup_ok && user->p_nr == 1 &&
+        (user->p_flags & P_SLOT_FREE) == 0;
+    usbj_print("[CTX V120 user-process-identity-ready pass=");
+    usbj_print_u32((uint32_t)identity_ok);
+    usbj_print("]\r\n");
+    setup_ok = identity_ok;
+    int table_map_ok = setup_ok && (pproc_addr + NR_TASKS)[1] == user;
+    usbj_print("[CTX V121 user-process-table-map-ready pass=");
+    usbj_print_u32((uint32_t)table_map_ok);
+    usbj_print("]\r\n");
+    setup_ok = table_map_ok;
+    usbj_print("[CTX V114 user-stack-map-ready pass=");
+    usbj_print_u32((uint32_t)setup_ok);
+    usbj_print("]\r\n");
+    usbj_print("[CTX V113 user-address-space-ready pass=");
+    usbj_print_u32((uint32_t)setup_ok);
+    usbj_print("]\r\n");
+    if (!setup_ok) panic("user address space", 1);
+    int entry_ready = setup_ok && cp32_user_trap_gate == 1;
+    usbj_print("[CTX V122 user-entry-handoff-ready pass=");
+    usbj_print_u32((uint32_t)entry_ready);
+    usbj_print("]\r\n");
+    if (!entry_ready) panic("user entry handoff", 1);
+    int entry_contract_ok = entry_ready && user->p_reg.pc ==
+        (reg_t)(uintptr_t)cp32_user_probe_entry &&
+        (uintptr_t)cp32_enter_initial_user != 0;
+    usbj_print("[CTX V123 user-entry-contract-ready pass=");
+    usbj_print_u32((uint32_t)entry_contract_ok);
+    usbj_print("]\r\n");
+    if (!entry_contract_ok) panic("user entry contract", 1);
+    int entry_mode_ok = entry_contract_ok && cp32_user_probe_mode == 1 &&
+        (((uintptr_t)cp32_user_probe_entry & 0x03) == 0);
+    usbj_print("[CTX V124 user-entry-mode-ready pass=");
+    usbj_print_u32((uint32_t)entry_mode_ok);
+    usbj_print("]\r\n");
+    if (!entry_mode_ok) panic("user entry mode", 1);
+  }
+  usbj_print("[CTX V82 user-frame-save-ready]\r\n");
+#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
+  proc_addr(2)->p_getfrom = ANY;
+  proc_addr(2)->p_messbuf = &cp32_probe_message;
+  proc_addr(2)->p_flags = 0;
+  cp32_probe_wake_once = 1;
+#endif
+  if (cp32_user_trap_probe(proc_addr(1)) != OK)
+    panic("user trap cause probe", 1);
+  usbj_print("[CTX V125 user-trap-preflight-returned pass=1]\r\n");
+  usbj_print("[CTX V126 user-trap-probe-count pass=");
+  usbj_print_u32((uint32_t)(cp32_user_trap_probe_count != 0));
+  usbj_print("]\r\n");
+  if (cp32_user_trap_probe_count == 0) panic("user trap probe count", 1);
+  proc_ptr = proc_addr(1);
+  current_proc = proc_ptr;
+  usbj_print("[CTX V127 user-trap-owner-stable pass=");
+  usbj_print_u32((uint32_t)(proc_ptr == proc_addr(1) && proc_ptr->p_nr == 1));
+  usbj_print("]\r\n");
+  if (proc_ptr != proc_addr(1) || proc_ptr->p_nr != 1)
+    panic("user trap owner", 1);
+  usbj_print("[CTX V128 user-trap-current-owner-aligned pass=");
+  usbj_print_u32((uint32_t)(current_proc == proc_ptr));
+  usbj_print("]\r\n");
+  if (current_proc != proc_ptr) panic("user current owner", 1);
   cp32_enter_initial_user(proc_addr(1));
 #endif
 
@@ -784,7 +1024,6 @@ void main(void) {
    * a low-rate heartbeat so a silent hang can be distinguished from an
    * intentional idle state while task dispatch is still being ported. */
   status_line("entering kernel idle", 0);
-  usbj_print("timer probe build: CP32-IRQ-FRAME-64-SCHED-2\r\n");
   /* With live handoff enabled, leave proc_ptr on the current idle frame.
    * Calling schedule() here would assign main()'s live frame to process 1
    * before the first IRQ and overwrite its task entry PC. */

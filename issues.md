@@ -1,5 +1,42 @@
 # CP32 Port – Current Issues and Handoff
 
+## TASK V1 — task descriptor table
+
+Added the reference-style nine-entry task descriptor metadata and a boot
+marker validating its required entry points and stack budgets. Build and image
+layout pass. Hardware validation is pending; descriptors are not yet used for
+production context startup.
+
+The descriptor table was corrected to avoid referencing inactive task bodies
+in the normal image. This restores the IRAM margin to 9,968 bytes while
+retaining the metadata and `[TASK V1]` validation path.
+
+Hardware validation then reported `[TASK V1 descriptor-table pass=1 count=9]`
+and remained stable through IRQ 144. Metadata validation is complete; using
+the descriptors to launch production tasks is still pending.
+
+`test-task-startup` now provides the next guarded slice for hardware testing:
+descriptor-driven IDLE startup. The normal image does not enable it.
+
+Hardware validation passed `[TASK V2 idle-startup pass=1]`; the task remained
+stable with the existing IRQ/context stream through IRQ 160. CLOCK startup is
+the next guarded descriptor migration.
+
+## IRQ V1 — interrupt notification contract
+
+The MINIX `interrupt()`/`unhold()` feature now records deferred, delivered,
+and replayed notification counts and emits one aggregate boot marker. The
+build-time/boot simulation covers duplicate coalescing while nested and
+delivery after replay. Hardware validation is pending: verify the USB
+Serial/JTAG run reports `[IRQ V1 notify-contract pass=1 ...]` and that real
+SYSTIMER nesting does not duplicate or lose `HARD_INT` messages.
+
+Hardware validation completed on 2026-09-12 with the normal image:
+`deferred=2`, `delivered=2`, and `replayed=1`, all with `pass=1`. The same
+run continued through IRQ 176 with stable clock/context markers and no
+exception. Physical deeper nested IRQ behavior beyond this controlled
+critical-section test remains unvalidated.
+
 Latest cleaned-log hardware run passed through IRQ 176 (`t1=3234`, `t2=3157`);
 IPC V18 counted `n=1..8`, and LOCK/CTX remained healthy. IPC V19 will report
 the final blocked-call census before handoff work.
@@ -500,3 +537,563 @@ unexpected `e=1`.
   `mem_copy`, delivery, `0/0`, `Hello IPC!`, and cleared flags; timer/context
   checks remained clean through IRQ 144. The next IPC gap is task-owned
   message-loop execution.
+- 2026-09-11 build-only: reordered `irq_user` frame construction so all
+  interrupted call0 registers, including `a5`, are saved before reading
+  `EXCCAUSE`. `make clean && make` and the image-layout check passed. No
+  hardware validation has been performed for this change yet.
+- 2026-09-11 hardware validation: guarded trap/scheduler image passed through
+  IRQ 112. `[CTX V65]` returned `4294967194` (`EBADCALL=-102`), with
+  `[CTX V66]` user-rfe count `0`, `[CTX V64]` handoff rejects `0`, and
+  `[CTX V46]` showing aligned `sp`/`a1`, `a15ok=1`, and `rel=1`; IRQ samples
+  reported `r=1`, `f=1`, and no exception.
+- 2026-09-11 cleanup: excluded the completed one-shot V1–V64 diagnostic
+  transcript from `main.c`. Build and image-layout validation pass; IRAM
+  margin increased to 10,372 bytes. The compact periodic IRQ/context checks
+  remain enabled.
+- 2026-09-11 cleanup: removed the obsolete `[IMG V8] CP32 diagnostic image`
+  startup banner. Build and image-layout validation pass; IRAM margin is now
+  10,384 bytes.
+- 2026-09-11 cleanup: removed the obsolete SYSTIMER/BOOT/image startup
+  banners and timer probe build label. Build and image-layout validation pass;
+  IRAM margin is now 10,496 bytes.
+- 2026-09-11 marker: added `[CTX V82 user-frame-save-ready]` before the gated
+  user probe entry. Hardware validation is pending.
+- 2026-09-11 hardware validation: normal image passed through IRQ 96 with
+  memory/vector/stack, IPC/MM, lock, invalid-syscall, and context checks
+  passing. `a1==sp`, `a15ok=1`, and `rel=1` remained valid; no exception was
+  observed. V82 was absent as expected because the user probe was disabled.
+- 2026-09-11 build-only: `make test-user-probe` passed the image-layout check
+  with 10,184 bytes of IRAM margin. The V82 probe marker awaits hardware
+  validation.
+- 2026-09-11 build-only: `make test-both-reply-probe` passed the image-layout
+  check with 9,580 bytes of IRAM margin. The guarded reply path and V82 marker
+  await hardware validation.
+- 2026-09-11 marker/build-only: added one-shot `[CTX V83 user-frame-c-boundary]`
+  after structural validation at the C trap boundary. `make test-user-probe`
+  and image-layout validation pass with 10,136 bytes of IRAM margin.
+- 2026-09-11 hardware validation: user-probe image reached V82/V83 and ran
+  cleanly through IRQ 192 with no exception. The corrected frame reached the
+  C boundary; `a1==sp`, `a15ok=1`, and `rel=1` remained valid. `t1/t2=0` is
+  expected for this image because process 1 is the terminal user probe.
+- 2026-09-11 cleanup: removed the high-frequency `CTX V78` scheduler trace.
+  Normal build and image-layout validation pass with 10,744 bytes of IRAM
+  margin; compact V46/IRQ diagnostics remain enabled.
+- 2026-09-11 cleanup: removed redundant high-frequency IPC V18/V24/V79/V80/V81
+  trace output. Normal build and image-layout validation pass with 11,308
+  bytes of IRAM margin; one-shot IPC pass/fail markers remain.
+- 2026-09-11 cleanup: removed redundant user-dispatch V67 entry/result
+  messages. `make test-user-probe` and image-layout validation pass with
+  11,072 bytes of IRAM margin; V83 remains as the C-boundary marker.
+- 2026-09-11 cleanup: removed obsolete V68/V70–V77 user-probe trace output.
+  `make test-user-probe` and image-layout validation pass with 12,068 bytes
+  of IRAM margin; V82/V83 remain enabled.
+- 2026-09-11 hardware validation: output passed initialization, IPC/MM,
+  syscall rejection, lock, V83 C-boundary, context, and IRQ checks through
+  IRQ 112 with no exception. V82 was absent from this capture despite being
+  present in source; do not mark V82 hardware validation complete yet.
+- 2026-09-11 hardware validation: cleaned user-probe image passed through IRQ
+  80 with V82/V83 appearing once, IPC/MM and lock checks passing, valid
+  context invariants, and no exception.
+- 2026-09-11 hardware validation: user-probe image reached `[CTX V82]` and
+  `[CTX V83]` and ran cleanly through IRQ 96. Frame alignment, `a15ok=1`, and
+  `rel=1` remained valid with no exception. `t1/t2=0` and `f=0` are expected
+  because process 1 is occupied by the user probe.
+- 2026-09-11 hardware validation: cleaned user-probe image remained stable
+  through IRQ 160 with V82/V83 present, reduced IPC output, valid frame
+  alignment, and no exception.
+- 2026-09-11 build-only: added the user trap-cause gate and V84 accepted-cause
+  marker. `make test-user-probe` and image-layout validation pass with 12,016
+  bytes of IRAM margin; hardware validation is pending.
+- 2026-09-11 hardware validation: V82, V84, and V83 appeared in the expected
+  order; IPC/MM and lock checks passed, context invariants remained valid, and
+  periodic IRQ delivery was stable through IRQ 112 with no exception.
+- 2026-09-11 build-only: added the guarded invalid-cause probe and
+  `[CTX V85 trap-cause-reject pass=1]`. `make test-user-probe` and image-layout
+  validation pass with 12,016 bytes of IRAM margin; hardware validation is
+  pending.
+- 2026-09-11 hardware validation: live user probe reached V82/V84/V83 and ran
+  cleanly through IRQ 96 with no exception. V85 was absent because its helper
+  is not currently invoked by the active live path; do not mark V85 hardware
+  validation complete.
+- 2026-09-11 build-only: wired the invalid-cause probe into the active user
+  probe sequence. `make test-user-probe` and image-layout validation pass with
+  11,652 bytes of IRAM margin; V85 hardware validation is pending.
+- 2026-09-11 hardware validation: V82, V84, V83, and V85 appeared in order
+  through IRQ 96. Accepted-cause dispatch and rejected-cause handling passed;
+  context/IRQ checks remained stable with no exception.
+- 2026-09-11 build-only: user-trap owner/state validation is now enforced for
+  probe and production paths, with `[CTX V86 user-owner-validated]`. The probe
+  image passes layout validation with 11,616 bytes of IRAM margin; hardware
+  validation is pending.
+- 2026-09-11 hardware validation: clock tick accounting passed through IRQ
+  176. `[CLOCK V1]` advanced monotonically from 15 to 175 ticks and pending
+  ticks matched the accumulated count at every sample; no exception occurred.
+- 2026-09-11 build-only: strengthened user-frame validation with `a1 == sp`
+  and nonzero `a15`, adding `[CTX V87 user-frame-shape-validated]`.
+  `make test-user-probe` and image-layout validation pass with 11,552 bytes of
+  IRAM margin; hardware validation is pending.
+- 2026-09-11 hardware validation: V82, V84, V83, V87, V85, and V86 appeared in
+  order through IRQ 80. Frame shape, cause, and owner validation passed with
+  stable context/IRQ operation and no exception.
+- 2026-09-11 build-only: added pre-dispatch message-pointer validation and
+  `[CTX V88 user-message-validated]`; the active invalid-destination probe now
+  uses a mapped message buffer. `make test-user-probe` and image-layout
+  validation pass with 11,460 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V88 appeared after the frame/cause/owner
+  markers through IRQ 64, confirming mapped message-pointer validation.
+  IPC/MM, syscall, lock, context, and IRQ checks passed with no exception.
+- 2026-09-11 hardware validation: V82, V84, V83, V85, and V86 appeared in
+  order through IRQ 112. Owner validation, cause rejection, context, and IRQ
+  checks passed with no exception.
+- 2026-09-11 build-only: added pre-dispatch destination validation and
+  `[CTX V89 user-destination-reject]`. `make test-user-probe` and image-layout
+  validation pass with 11,384 bytes of IRAM margin; hardware validation is
+  pending.
+- 2026-09-11 build-only: synchronized the owner saved PC after trap-PC
+  advancement, including early rejection paths, and added
+  `[CTX V97 owner-return-pc-synchronized]`. `make test-user-probe` and
+  image-layout validation pass with 10,776 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V84, V83, V87, V86, V94, V97, V88, V89, and
+  V95 appeared in order through IRQ 112. Owner-PC synchronization and
+  rejection return passed with stable context/IRQ operation and no exception.
+- 2026-09-11 build-only: added `[CTX V90 user-destination-validated]` for the
+  accepted destination path. `make test-both-reply-probe` and image-layout
+  validation pass with 10,760 bytes of IRAM margin; hardware validation is
+  pending.
+- 2026-09-11 build-only: added `[CTX V93 syscall-result-recorded]` after
+  recording the syscall result in the trap frame and owner register state.
+  `make test-both-reply-probe` and image-layout validation pass with 10,544
+  bytes of IRAM margin; hardware validation is pending.
+- 2026-09-11 build-only: made syscall return-PC advancement unconditional and
+  added `[CTX V94 syscall-return-pc-advanced]`. `make test-both-reply-probe`
+  and image-layout validation pass with 10,508 bytes of IRAM margin.
+- 2026-09-11 build-only: moved return-PC advancement before `sys_call` so
+  blocked-frame snapshots retain the post-trap PC. `make test-both-reply-probe`
+  and image-layout validation pass with 10,500 bytes of IRAM margin.
+- 2026-09-11 build-only: early invalid-destination returns now write
+  `E_BAD_DEST` into the user frame before restore and emit V95. `make
+  test-user-probe` and image-layout validation pass with 10,984 bytes of IRAM
+  margin; hardware validation is pending.
+- 2026-09-11 hardware validation: rejection probe reached V82, V84, V83, V87,
+  V85, V86, V88, V89, and V95 through IRQ 80. `E_BAD_DEST` was recorded in
+  the user frame before restore; context/IRQ checks passed with no exception.
+- 2026-09-11 build-only: moved syscall return-PC advancement before argument
+  validation so rejected calls cannot re-execute the trap. `make
+  test-user-probe` and image-layout validation pass with 10,828 bytes of IRAM
+  margin; V94 remains the marker.
+- 2026-09-11 hardware validation: V94 preceded V96, V85, V88, V89, and V95
+  through IRQ 80. Rejected syscalls advanced past the trap and returned their
+  recorded errors; context/IRQ checks passed with no exception.
+- 2026-09-11 build-only: extended early error-result propagation to invalid
+  message pointers and added `[CTX V96 pointer-reject-result-recorded]`.
+  `make test-user-probe` and image-layout validation pass with 10,856 bytes of
+  IRAM margin; hardware validation is pending.
+- 2026-09-11 hardware validation: active rejection probe reached V96, V85, V88,
+  V89, and V95 through IRQ 80. Invalid pointer, cause, and destination results
+  were recorded safely; no exception occurred.
+- 2026-09-11 hardware validation: V94 appeared after V93 and the reply probe
+  remained stable through IRQ 80. Return-PC advancement, process-3 handoff,
+  context, and IRQ checks passed with no exception.
+- 2026-09-11 hardware validation: follow-up output showed V94 before V93, as
+  expected after moving PC advancement before `sys_call`; process 3 remained
+  selected and the system stayed clean through IRQ 64 with no exception.
+- 2026-09-11 hardware validation: valid BOTH/SENDREC reply probe reached V93
+  after V92 and remained stable through IRQ 144. Result recording, process-3
+  handoff, context, and IRQ checks passed with no exception.
+- 2026-09-11 build-only: added the SEND/RECEIVE/BOTH destination contract
+  guard and `[CTX V92 user-call-contract-validated]`. The reply-probe image
+  passes layout validation with 10,588 bytes of IRAM margin; hardware
+  validation is pending.
+- 2026-09-11 hardware validation: valid BOTH/SENDREC reply probe reached V92
+  after the frame/cause/owner/message/destination markers and remained stable
+  through IRQ 128. Process 3 stayed selected and no exception occurred.
+- 2026-09-11 build-only: added free-process destination rejection and
+  `[CTX V91 user-free-destination-reject]`. `make test-both-reply-probe` and
+  image-layout validation pass with 10,660 bytes of IRAM margin.
+- 2026-09-11 hardware validation: valid-destination reply probe reached V82,
+  V84, V83, V87, V85, V86, V88, and V90 through IRQ 64; process 3 was
+  selected and no exception occurred. V91 was absent as expected.
+- 2026-09-11 hardware validation: invalid-destination probe reached V82, V84,
+  V83, V87, V85, V86, V88, and V89, then remained stable through IRQ 64 with
+  no exception. V90 was absent as expected because this image exercises only
+  destination rejection.
+- 2026-09-11 hardware validation: V84, V83, V87, V86, V88, and V89 appeared;
+  V89 rejected the invalid destination after message validation. Context and
+  IRQ checks remained stable through IRQ 80 with no exception. V82/V85 were
+  absent from this capture and remain unconfirmed for this run.
+- 2026-09-11 build-only: added `[CTX V98 blocked-frame-pc-validated]` to
+  verify that a blocked syscall snapshots the post-trap return PC. The
+  reply-probe image passes layout validation with 10,120 bytes of IRAM margin;
+  hardware validation is pending.
+- 2026-09-11 build-only: restored the owner PC after the synthetic user-trap
+  probe to prevent the initial user handoff from entering mid-instruction in
+  the probe entry. `make test-both-reply-probe` passes layout validation with
+  10,104 bytes of IRAM margin.
+- 2026-09-11 hardware validation: blocked RECEIVE probe reached V98, V84,
+  V83, V87, V86, V94, V97, V88, V90, V92, and V93, then remained stable
+  through IRQ 192 with no exception. Timer readings remained consistent.
+- 2026-09-11 build-only: added `[CTX V99 blocked-handoff-ready]` for the
+  fully validated blocked-owner scheduler-handoff predicate; the return gate
+  remains fail-closed pending hardware validation.
+- 2026-09-11 build-only: corrected V100 to observe the real user-probe path,
+  not only the synthetic scheduler test. `make test-blocked-probe` passes
+  layout validation with 9,932 bytes of IRAM margin.
+- 2026-09-11 build-only: corrected the blocked-handoff predicate to require a
+  valid, matching saved frame and enabled its gate only for the dedicated
+  blocked probe. `make test-blocked-probe` passes layout validation with 9,948
+  bytes of IRAM margin.
+- 2026-09-11 build-only: added a bounded retry that rejects a stale blocked
+  owner selected from a legacy ready queue before exception return. `make
+  test-blocked-probe` passes layout validation with 9,916 bytes of IRAM margin.
+- 2026-09-11 build-only: explicitly unlinked the blocked owner from all ready
+  queues before scheduler handoff. `make test-blocked-probe` passes layout
+  validation with 9,908 bytes of IRAM margin.
+- 2026-09-11 build-only: added a blocked-probe-only process-2 replacement
+  fallback when the scheduler reports the blocked owner. `make
+  test-blocked-probe` passes layout validation with 9,876 bytes of IRAM margin.
+- 2026-09-11 build-only: assigned the replacement process a non-trapping
+  terminal user entry so the blocked handoff cannot re-enter the illegal-
+  instruction probe. `make test-blocked-probe` passes layout validation with
+  9,852 bytes of IRAM margin.
+- 2026-09-11 build-only: made the replacement process-2 selection explicit in
+  the blocked probe after scheduler evaluation. `make test-blocked-probe`
+  passes layout validation with 9,860 bytes of IRAM margin.
+- 2026-09-11 build-only: added V101 to dump the selected handoff frame's
+  process number, PC, SP, and a15 immediately before exception return.
+  `make test-blocked-probe` passes layout validation with 9,732 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: isolated the blocked probe from the failing live
+  `sched`/`switch_to` path by selecting process 2's validated frame directly;
+  production scheduling remains unchanged. `make test-blocked-probe` passes
+  layout validation with 9,592 bytes of IRAM margin.
+- 2026-09-11 build-only: prevented `sys_call` from scheduling before the
+  guarded blocked-probe handoff. `make test-blocked-probe` passes layout
+  validation with 9,604 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V99 passed; V102 showed distinct owner and
+  replacement pointers, and V101 showed process 2's valid PC/SP/a15 frame.
+  Execution remained stable through IRQ 176 with no exception. V46 continues
+  to identify the interrupted owner during this diagnostic handoff.
+- 2026-09-11 build-only: aligned blocked-probe context ownership with the
+  restored process-2 frame for subsequent V46 diagnostics. `make
+  test-blocked-probe` passes layout validation with 9,588 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V103 user-rfe-frame-ready pass=1]` at
+  the validated replacement-frame return boundary. `make test-blocked-probe`
+  passes layout validation with 9,568 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V102, V103, and V101 confirmed the process-2
+  replacement frame at the pre-rfe boundary; execution remained stable through
+  IRQ 128 with no exception.
+- 2026-09-11 build-only: synchronized the probe's saved IRQ owner with the
+  process-2 replacement frame for post-rfe timer diagnostics. `make
+  test-blocked-probe` passes layout validation with 9,564 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V104 blocked-wake-result-slot pass=1]`
+  to validate wake completion's saved `a2` result slot. `make
+  test-blocked-probe` passes layout validation with 9,496 bytes of IRAM margin.
+- 2026-09-11 build-only: added V106 after the wake attempt to report delivery
+  result, receiver flags, and wake count. `make test-blocked-probe` passes
+  layout validation with 9,288 bytes of IRAM margin.
+- 2026-09-11 build-only: reset the one-shot V104 flag at user-probe start so
+  the hardware wake completion is reported independently of earlier wake
+  tests. `make test-blocked-probe` passes layout validation with 9,280 bytes
+  of IRAM margin.
+- 2026-09-11 hardware validation: V105 observed the blocked receiver, V104
+  confirmed the saved `a2` wake result, and V106 confirmed successful wake with
+  flags cleared. The replacement frame remained stable through IRQ 160.
+- 2026-09-11 build-only: added `[CTX V107 wake-owner-released pass=1]` for
+  post-wake runnable-state and blocked-owner release validation. `make
+  test-blocked-probe` passes layout validation with 9,204 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V104, V106, and V107 passed; the blocked
+  receiver's result slot was restored, flags cleared, and blocked-owner state
+  released. Execution remained stable through IRQ 160 with no exception.
+- 2026-09-11 build-only: added `[CTX V108 wake-message-source-validated
+  pass=1]` to validate the sender identity copied into the awakened message.
+  `make test-blocked-probe` passes layout validation with 9,144 bytes of IRAM
+  margin.
+- 2026-09-11 hardware validation: V108 passed; the awakened message source
+  matched the synthetic sender, with V104/V106/V107 also passing. Execution
+  remained stable through IRQ 128 with no exception.
+- 2026-09-11 build-only: added the dedicated `test-blocked-send-probe`
+  target and SEND probe entry for the next IPC lifecycle validation. Image
+  layout passes with 9,920 bytes of IRAM margin.
+- 2026-09-11 build-only: extended the guarded user/blocked handoff gate to
+  the SEND probe. `make test-blocked-send-probe` passes layout validation with
+  9,900 bytes of IRAM margin.
+- 2026-09-11 build-only: routed blocked SEND through the same direct validated
+  replacement-frame path and suppressed its premature live scheduler call.
+  `make test-blocked-send-probe` passes layout validation with 9,892 bytes of
+  IRAM margin.
+- 2026-09-11 hardware validation: blocked SEND reached V99, V102, V103, and
+  V101; the replacement process 2 resumed and V46 reported process 2 through
+  IRQ 160 with advancing timer values and no exception.
+- 2026-09-11 build-only: configured process 2 as the waiting receiver and
+  reversed the timer wake roles for the dedicated blocked-SEND probe. `make
+  test-blocked-send-probe` passes layout validation with 9,860 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: moved blocked-SEND receiver setup to the final
+  pre-entry stage so generic initialization cannot clear `RECEIVING`. `make
+  test-blocked-send-probe` passes layout validation with 9,828 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: corrected SEND probe ordering so process 1 blocks
+  before process 2 enters RECEIVE during the timer wake. `make
+  test-blocked-send-probe` passes layout validation with 9,828 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: enabled the timer wake hook for blocked SEND so the
+  receiver-side completion path can run at tick 16. `make
+  test-blocked-send-probe` passes layout validation with 9,156 bytes of IRAM
+  margin.
+- 2026-09-11 hardware validation: blocked SEND reached V99/V102/V103/V101,
+  then V105/V104/V107/V108/V106 passed. Process 2 resumed and timer values
+  advanced through IRQ 160 with no exception.
+- 2026-09-11 build-only: routed blocked-SEND wake completion through
+  `mini_rec()` so the queued sender, rather than only the receiver, receives
+  the saved result and wake transition. `make test-blocked-send-probe` passes
+  layout validation with 9,132 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V109 send-wake-owner-complete pass=1]`
+  to validate blocked sender flags and frame completion after `mini_rec()`.
+  `make test-blocked-send-probe` passes layout validation with 9,068 bytes of
+  IRAM margin.
+- 2026-09-11 hardware validation: blocked SEND wake completed with V110
+  `frame=0`, V109 pass, and V112 final `frame=0 flags=0`; process 2 remained
+  stable through IRQ 160 with advancing timer values.
+- 2026-09-11 build-only: added the dedicated `test-blocked-sendrec-probe`
+  target and BOTH/SENDREC probe entry. `make test-blocked-sendrec-probe`
+  passes layout validation with 8,788 bytes of IRAM margin.
+- 2026-09-11 hardware validation: blocked SENDREC completed the handoff and
+  wake markers through V112; sender frame cleared, process 2 resumed, and
+  execution remained stable through IRQ 128 with advancing timer values.
+- 2026-09-11 build-only: removed the unused superseded blocked-frame restore
+  helper; explicit saved-frame checks remain in the active handoff path.
+  `make test-blocked-sendrec-probe` passes layout validation with 8,792 bytes
+  of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
+  the first unmet blocked-handoff predicate during the guarded probe.
+  `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
+  margin.
+- 2026-09-11 build-only: added `[CTX V120 user-process-identity-ready pass=1]`
+  to validate process 1's canonical identity and non-free slot before user
+  entry. `make clean && make test-user-probe` passes layout validation with
+  9,176 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V121 user-process-table-map-ready
+  pass=1]` to verify the canonical process-table slot resolves to the same
+  process validated by V120. `make clean && make test-user-probe` passes image
+  layout validation with 9,108 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V122 user-entry-handoff-ready pass=1]`
+  to verify the user trap gate is armed after all process setup checks and
+  before initial user entry. `make clean && make test-user-probe` passes image
+  layout validation with 9,020 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V123 user-entry-contract-ready pass=1]`
+  to verify the initial PC targets the probe entry and the assembly handoff
+  routine is linked. `make clean && make test-user-probe` passes image layout
+  validation with 8,924 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V124 user-entry-mode-ready pass=1]` to
+  verify probe mode activation and entry alignment before assembly handoff.
+  `make clean && make test-user-probe` passes image layout validation with
+  8,828 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V125 user-trap-preflight-returned pass=1]`
+  after the guarded trap preflight succeeds and before initial user entry.
+  `make clean && make test-user-probe` passes image layout validation with
+  8,812 bytes of IRAM margin.
+- 2026-09-11 build-only: added `[CTX V126 user-trap-probe-count pass=1]` to
+  confirm the trap preflight executed its runtime probe path. `make clean &&
+  make test-user-probe` passes image layout validation with 8,728 bytes of
+  IRAM margin.
+- 2026-09-11 build-only: added `[CTX V127 user-trap-owner-stable pass=1]` to
+  verify the preflight leaves `proc_ptr` on canonical process 1 before the
+  initial handoff. `make clean && make test-user-probe` passes image layout
+  validation with 8,620 bytes of IRAM margin.
+- 2026-09-11 build-only fix: restored canonical `proc_ptr` and `current_proc`
+  after trap preflight before V127, correcting the observed owner panic.
+  `make clean && make test-user-probe` passes image layout validation with
+  8,600 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 build-only: added `[CTX V128 user-trap-current-owner-aligned
+  pass=1]` to verify `current_proc` agrees with canonical `proc_ptr` before
+  user entry. `make clean && make test-user-probe` passes image layout
+  validation with 8,508 bytes of IRAM margin.
+- 2026-09-11 hardware validation: V128 passed; `current_proc` and `proc_ptr`
+  were aligned to process 1, with the user rejection probe stable through IRQ
+  128 and no exception.
+- 2026-09-11 build-only: added `[CTX V129 handoff-frame-copy pass=1]` after
+  blocked handoff frame construction to validate copied PC, PSW, SP, and
+  `a15` against the selected process. `make clean && make
+  test-blocked-send-probe` passes image layout validation with 7,272 bytes of
+  IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V129 passed on blocked SEND; process 2 was
+  selected with a matching frame, wake completed with `frame=0`, and execution
+  remained stable through IRQ 160.
+- 2026-09-11 build-only: added `[CTX V130 handoff-owner-selected pass=1]`
+  after installing the selected process as `proc_ptr`, `current_proc`, and
+  saved IRQ owner. `make clean && make test-blocked-send-probe` passes image
+  layout validation with 7,160 bytes of IRAM margin. Hardware validation is
+  pending.
+- 2026-09-11 build-only: added `[CTX V131 handoff-owner-runnable pass=1]` to
+  verify the selected handoff owner has no blocking flags before return-frame
+  use. `make clean && make test-blocked-send-probe` passes image layout
+  validation with 7,096 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V131 passed on blocked SEND; the selected
+  process 2 was runnable, wake completed with cleared frame state, and timer
+  execution remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V132 handoff-entry-pc-aligned pass=1]`
+  to require a nonzero, instruction-aligned replacement PC before `rfe`.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 7,004 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V132 passed on SENDREC; process 2 resumed
+  with the validated handoff and remained stable through IRQ 128.
+- 2026-09-11 build-only: added `[CTX V133 handoff-entry-psw-ready pass=1]`
+  to require the expected kernel-mode PSW (`0x10`) in the replacement frame.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,932 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware correction: V133 rejected the incorrect `0x10` saved
+  PSW assumption; the user frame contract initializes the saved PSW to `0`.
+  V133 now validates that established value. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 6,940 bytes
+  of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: corrected V133 passed on SENDREC; process 2
+  resumed and remained stable through IRQ 128.
+- 2026-09-11 build-only: added `[CTX V134 handoff-entry-sp-aligned pass=1]`
+  to require a nonzero, 16-byte-aligned replacement stack pointer. `make
+  clean && make test-blocked-sendrec-probe` passes image layout validation
+  with 6,856 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V134 passed on SENDREC; the replacement
+  stack remained aligned and execution stayed stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V135 handoff-call0-registers-ready
+  pass=1]` to validate the replacement frame's `a0` and `a1` call0 values.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,772 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V135 passed on SENDREC; process 2 resumed
+  and remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V136 handoff-a15-ready pass=1]` to
+  require a nonzero saved `a15` in the replacement frame. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 6,708 bytes
+  of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V136 passed on SENDREC; process 2 resumed
+  and remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V137 handoff-call-args-ready pass=1]`
+  to validate the replacement frame's initial `a2–a4` call argument slots.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,620 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V137 passed on SENDREC; process 2 remained
+  stable through IRQ 160 with wake state cleared.
+- 2026-09-11 build-only: added `[CTX V138 handoff-owner-number-ready pass=1]`
+  to verify the selected process number resolves back to its canonical table
+  object. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,508 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V138 passed on SENDREC; process 2 resumed
+  and remained stable through IRQ 96.
+- 2026-09-11 build-only: added `[CTX V139 handoff-stack-map-ready pass=1]`
+  to require a nonempty stack mapping for the selected replacement process.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,432 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V139 passed on SENDREC; the replacement
+  stack mapping was present, wake completed, and process 2 remained stable
+  through IRQ 128.
+- 2026-09-11 build-only: added `[CTX V140 handoff-data-map-ready pass=1]`
+  to require a nonempty data/message mapping for the selected replacement
+  process. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 6,368 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 build-only batch: added V141/V142 for stack/data map bases and
+  V143/V144/V145 for copied PC/SP/PSW equality. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 5,972 bytes
+  of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware correction: V140 showed that synthetic process 2 may
+  have no data mapping; the check is now observational because handoff needs
+  the validated stack and frame, not a data segment. The corrected
+  `test-blocked-sendrec-probe` build passes with 5,992 bytes of IRAM margin.
+  Hardware revalidation is pending.
+- 2026-09-11 hardware correction: V141/V142 showed synthetic process 2 also
+  has zero map bases; both checks are now observational, while V134 continues
+  to enforce the actual saved stack pointer. The batch build passes with
+  6,084 bytes of IRAM margin. Hardware revalidation is pending.
+- 2026-09-11 hardware validation: V140–V145 passed on SENDREC; frame copy,
+  owner, PC/SP/PSW, and map checks completed, with process 2 stable through
+  IRQ 192.
+- 2026-09-11 build-only batch: added V146–V149 for register groups `a5–a15`
+  and V150 for complete register-frame completion. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 5,620 bytes
+  of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V146–V150 passed on SENDREC; process 2
+  remained stable through IRQ 160 with wake state cleared.
+- 2026-09-11 build-only batch: added V151–V153 for full register equality,
+  V154 for PC/SP/PSW equality, and V155 for complete frame-contract
+  completion. `make clean && make test-blocked-sendrec-probe` passes image
+  layout validation with 4,968 bytes of IRAM margin. Hardware validation is
+  pending.
+- 2026-09-11 hardware validation: V151–V155 passed on SENDREC; process 2
+  remained stable through IRQ 192.
+- 2026-09-11 build-only batch: added V156–V160 at wake completion for result
+  slot, saved result, frame clearing, wake count, and runnable-owner checks.
+  `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 4,684 bytes of IRAM margin. Hardware validation is pending.
+- 2026-09-11 build-only feature check: added `[CTX V161
+  blocked-wake-feature-complete]` as one aggregate validation for the full
+  blocked-wake contract. `make clean && make test-blocked-sendrec-probe`
+  passes image layout validation with 4,592 bytes of IRAM margin. Hardware
+  validation is pending.
+- 2026-09-11 hardware validation: V161 passed on SENDREC; wake state cleared
+  and process 2 remained stable through IRQ 192.
+- 2026-09-11 build-only feature check: added `[CTX V162
+  blocked-handoff-feature-complete]` as one aggregate validation for owner,
+  frame, and return-state readiness. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 4,456 bytes
+  of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware validation: V162 passed on SENDREC; the complete
+  handoff and wake path remained stable through IRQ 128.
+- 2026-09-11 build-only feature check: added `[CTX V163
+  sendrec-lifecycle-complete]` as an aggregate SENDREC lifecycle check at
+  wake completion. `make clean && make test-blocked-sendrec-probe` passes
+  image layout validation with 4,360 bytes of IRAM margin. Hardware validation
+  is pending.
+- 2026-09-11 hardware validation: corrected V163 passed on SENDREC; the
+  aggregate lifecycle result, wake state, and frame clearing all passed, with
+  process 2 stable through IRQ 192.
+- 2026-09-11 build-only feature check: added `[CTX V164
+  post-wake-scheduler-continuity]` at the timer wake boundary to validate the
+  selected owner remains current and runnable. `make clean && make
+  test-blocked-sendrec-probe` passes image layout validation with 4,288 bytes
+  of IRAM margin. Hardware validation is pending.
+- 2026-09-11 hardware correction: gated live handoff/wake feature markers on
+  the context-handoff gate after pretests produced expected transient `pass=0`
+  output. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 4,268 bytes of IRAM margin. Hardware revalidation is pending.
+- 2026-09-11 hardware correction: V163 initially included a counter not
+  incremented by this live path; it now relies only on observed result, wake,
+  frame, and runnable-state invariants. Rebuild passes with 4,372 bytes of
+  IRAM margin. Hardware revalidation is pending.
+- 2026-09-11 diagnostic consolidation: detailed V129–V160 handoff/wake
+  logging is disabled by default to reduce serial and IRAM overhead; aggregate
+  feature markers remain enabled, and verbose diagnostics are available with
+  `CP32_VERBOSE_HANDOFF_DIAGNOSTICS=1`. Build-only validation passed with
+  7,248 bytes of IRAM margin; hardware revalidation is pending.
+- 2026-09-11 diagnostic consolidation follow-up: legacy wake markers
+  V105/V107–V112 are now verbose-only; V163 remains the compact lifecycle
+  result. `make clean && make test-blocked-sendrec-probe` passes image layout
+  validation with 7,788 bytes of IRAM margin. Hardware output confirms the
+  consolidated V162–V164 path through IRQ 96.
+- 2026-09-11 build-only clock feature: added compact tick-accounting output
+  for the SYSTIMER-to-MINIX clock path, including pending/lost tick transfer
+  and CPU-time charging. `make clean && make test-blocked-sendrec-probe`
+  passes image layout validation with 7,692 bytes of IRAM margin. Hardware
+  validation is pending.
+- 2026-09-11 build-only clock feature: added alarm expiry counting and compact
+  nearest-alarm state output around `do_clocktick()`. The build passes image
+  layout validation with 7,616 bytes of IRAM margin; hardware alarm-expiry
+  validation is pending.
+- 2026-09-11 clock correction: fixed uninitialized alarm state by setting
+  `next_alarm = LONG_MAX` and resetting clock accounting state during clock
+  initialization. Build passes with 7,616 bytes of IRAM margin; hardware must
+  confirm `[CLOCK V2] next=4294967295` while no alarm is armed.
+- 2026-09-11 clock bring-up correction: initialized alarm/accounting state in
+  the SYSTIMER probe startup path, not only in the not-yet-running clock task.
+  Build passes with 7,580 bytes of IRAM margin; hardware must confirm
+  `[CLOCK V2] next=4294967295` while no alarm is armed.
+- 2026-09-11 hardware validation: the SYSTIMER probe confirms the corrected
+  unarmed alarm state (`next=2147483647`, `expiries=0`) through IRQ 160.
+  Tick accounting remained monotonic and no exception occurred.
+
+2026-09-12 build-only: `make test-task-startup-clock` adds the guarded
+descriptor-driven CLOCK entry/frame initialization probe. Image layout passes
+with 7,780 bytes of IRAM margin; hardware validation is pending.
+
+Hardware validation passed `[TASK V4 sys-startup pass=1]` and remained stable
+through IRQ 176. TTY descriptor startup is the next guarded slice.
+
+Hardware validation passed `[TASK V3 clock-startup pass=1]` and remained
+stable through IRQ 128. SYS descriptor startup is the next guarded slice.

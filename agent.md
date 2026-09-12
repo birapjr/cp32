@@ -67,6 +67,18 @@ make disasm     # source-interleaved disassembly
 make flash
 ```
 
+Feature-target workflow:
+
+```sh
+make clean && make test-task-startup
+make clean && make test-task-startup-clock
+make clean && make test-task-startup-sys
+```
+
+The normal image keeps task startup guarded. These targets enable one
+descriptor-driven startup slice at a time; hardware completion requires the
+matching `[TASK Vn ... pass=1]` marker and continued IRQ/context stability.
+
 The expected toolchain is `xtensa-esp32s3-elf-gcc` and related binutils. Image generation and flashing use `esptool`, with the current default serial device set to `/dev/cu.usbmodem2101` in the Makefile. Treat the port as machine-specific and change it when necessary. The README documents viewing early kernel output at 115200 baud with `screen`.
 
 ## Architecture and important invariants
@@ -84,22 +96,36 @@ The expected toolchain is `xtensa-esp32s3-elf-gcc` and related binutils. Image g
 
 Do not describe the kernel as boot-complete or a usable MINIX system. Known incomplete areas include:
 
-- `main()` still stops in a diagnostic idle loop rather than task initialization/scheduling.
-- `proc.c` has isolated `pick_proc()`, `ready()`, and `unready()` implementations, but `sched()`, process initialization, system calls, send/receive, and context switching remain incomplete.
+- `main()` still stops in a diagnostic idle loop; descriptor-driven IDLE, CLOCK,
+  and SYS frame initialization are validated, but their production service
+  loops are not started.
+- `proc.c` has validated ready/unready, IPC, interrupt replay, and guarded
+  handoff slices; production scheduler ownership and full context switching
+  remain incomplete.
 - `irq.S` has a validated level-1 SYSTIMER probe frame, but general interrupt dispatch, nested-context policy, and scheduler return are incomplete.
-- `port.c` `_send()` and `_receive()` are temporary stubs returning `OK`.
+- `port.c` retains compatibility wrappers; production user-process syscall
+  entry and complete task lifecycle remain incomplete.
 - Device-specific Cardputer input/display, storage, user-process loading, shell, filesystem, and applications are not present in this tree.
 - Clock and TTY code is adapted from MINIX but requires validation against the actual ESP32-S3 interrupt and Cardputer device model.
 
-When implementing features, prefer making one low-level path testable on real hardware and preserving diagnostic output before attempting broad MINIX subsystem integration.
+Validated descriptor startup currently covers IDLE, CLOCK, and SYS. TTY
+descriptor startup is the next slice; service loops, scheduler ownership, and
+full task lifecycle remain gated until each task has a bounded startup probe.
+
+When implementing features, migrate one coherent MINIX feature at a time. Keep
+the original file/function structure where practical, isolate ESP32-S3 changes
+to IRQ/register/assembly/ABI boundaries, add one compact aggregate marker for
+failure-prone state, build the feature target, and require serial hardware
+evidence before marking the slice complete. Remove obsolete high-frequency
+diagnostics after the slice is validated.
 
 ## Current project status
 
 The current hardware-validated path reaches `main()`, initializes the process
-table and ready queues, starts the ESP32-S3 SYSTIMER probe, validates IPC/MM,
-checks syscall rejection, and enters the diagnostic idle loop. Timer IRQ
-delivery is stable with the IRQ frame and re-entry counters returning to their
-expected values and no exception observed in the latest runs.
+table and ready queues, validates the MINIX task descriptor table, performs
+guarded IDLE/CLOCK/SYS descriptor startup, starts the ESP32-S3 SYSTIMER probe,
+validates IPC/MM and syscall rejection, and enters the diagnostic idle loop.
+The latest SYS startup run remained stable through IRQ 176.
 
 Validated bring-up areas:
 
@@ -113,13 +139,13 @@ Validated bring-up areas:
 
 Current gates and limitations:
 
-- The timer-to-clock/scheduler bridge is gated during early validation so the
-  first IRQ cannot switch away from `main()` prematurely.
+- The timer-to-clock/scheduler bridge remains gated during early validation so
+  the first IRQ cannot switch away from `main()` prematurely.
 - The V16 context gate is enabled, but the complete proven register restore is
   retained as the fallback; a production scheduler handoff is not complete.
-- `switch_to()` remains a diagnostic C boundary, not a complete process
-  context switch. The next task is a real scheduler handoff preserving every
-  required call0 register.
+- `switch_to()` remains a diagnostic C boundary, not a complete production
+  context switch; descriptor startup currently validates frames without
+  launching service loops.
 - User trap entry, normal syscall entry from user mode, process execution,
   clock accounting, and the full MINIX task lifecycle remain unfinished.
 
@@ -127,11 +153,10 @@ Do not describe CP32 as boot-complete or as a usable MINIX system. The latest
 hardware result is documented in `plan.md` and `issues.md`; future changes
 must update both files and add a new versioned marker when diagnostics change.
 
-Current hardware markers and diagnostics are tracked in `issues.md`. The
-latest validated work uses the `CP32-IRQ-FRAME-*` marker family. For every
-hardware-visible change, update the marker and keep `r`, `c`, `f`, `s`, and `e`
-interpretable: re-entry, bridge calls, aligned frames, in-stack frames, and
-clock-handler gate respectively.
+Current hardware markers and diagnostics are tracked in `issues.md`. Use the
+aggregate feature markers `[IRQ V1]`, `[TASK V1]`–`[TASK V4]`, `[CLOCK V1/V2]`,
+`[CTX V46]`, and the compact IPC/MM/LOCK markers. Add detailed fields only
+while diagnosing a failure, then remove them after validation.
 
 ## Bring-up debug and marker strategy
 
@@ -140,9 +165,7 @@ with output. Every hardware-visible diagnostic change gets a monotonically
 increasing version marker so the flashed image can be identified immediately.
 Use the marker families consistently:
 
-- `[IMG Vn]` identifies the image and major boot-stage transitions. Keep one
-  image marker before IRQ enable and one immediately before the stage being
-  tested.
+- `[IMG Vn]` identifies an image only when a new image distinction is needed.
 - `[BOOT Vn]` identifies timer/boot sequencing changes.
 - `[IPC Vn]` and `[MM Vn]` identify IPC delivery and memory-translation checks.
 - `[SYS Vn]` identifies syscall-dispatch checks.

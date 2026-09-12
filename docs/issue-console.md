@@ -324,3 +324,29 @@ The root cause of the earlier USB garbage was image-layout instability near
 the `0x40378000` IRAM boundary, not the contents of a particular diagnostic
 message. The durable safeguards are section garbage collection, the linker
 assertion, and checking both the generated ELF and `.bin` on every build.
+
+## Confirmed solution: full IRAM image
+
+The previous `0x40378000` working boundary was not a hardware limit. The
+stable solution is to keep the kernel in the ESP32-S3's complete contiguous
+instruction SRAM window and let the ROM image loader place the runtime
+sections there:
+
+- IRAM origin: `0x40370000`
+- IRAM size: `448 KiB`
+- enforced end: `0x403E0000`
+- verified image: `IRAM end 0x40375938`, with `435912` bytes remaining
+
+The startup path now performs only early CPU interrupt quiescing before
+`start()`. The earlier manual flash-MMU/IROM page mapping experiment was
+removed; it was unnecessary for an all-IRAM image and could cause the kernel
+to freeze during early hardware initialization.
+
+The build automatically checks the ELF layout and reports the remaining IRAM
+margin. The clean build passed with:
+
+```text
+image layout check: PASS
+```
+
+This is the confirmed hardware-tested layout to keep going forward.

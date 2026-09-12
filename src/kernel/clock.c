@@ -59,6 +59,7 @@
 
 extern volatile uint32_t cp32_task1_ticks;
 extern volatile uint32_t cp32_task2_ticks;
+extern struct proc *current_proc;
 
 extern void sched(void);
 #include "esp32s3/systimer.h"
@@ -93,6 +94,8 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 
 /* Incremented by the temporary level-2 SYSTIMER probe handler. */
 volatile uint32_t cp32_timer_irq_ticks;
+volatile uint32_t cp32_clock_accounted_ticks;
+volatile uint32_t cp32_clock_alarm_expiries;
 extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
@@ -186,6 +189,7 @@ PRIVATE void do_clocktick()
           } else {
             cause_sig(proc_nr, SIGALRM);
           }
+          cp32_clock_alarm_expiries++;
           rp->p_alarm = 0;
         }
         /* Track the nearest future alarm. */
@@ -426,6 +430,7 @@ int irq;
 
   ticks      = lost_ticks + 1;
   lost_ticks = 0;
+  cp32_clock_accounted_ticks += ticks;
   rp->user_time += ticks;
   if (rp != bill_ptr && rp != proc_addr(IDLE))
     bill_ptr->sys_time += ticks;   /* unbillable task time → billed as sys */
@@ -470,8 +475,16 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
-#ifdef CP32_ENABLE_BLOCKED_PROBE
-  if (cp32_timer_irq_ticks == 16) cp32_probe_wake_receiver();
+#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
+  if (cp32_timer_irq_ticks == 16) {
+    cp32_probe_wake_receiver();
+    usbj_print("[CTX V164 post-wake-scheduler-continuity pass=");
+    usbj_print_u32((uint32_t)(current_proc == proc_addr(2) &&
+                              proc_ptr == proc_addr(2) &&
+                              (proc_addr(2)->p_flags &
+                               (SENDING | RECEIVING)) == 0));
+    usbj_print("]\r\n");
+  }
 #endif
   if ((((uintptr_t) frame) & 0x0Fu) == 0)
     cp32_clock_irq_frame_aligned_calls++;
@@ -485,6 +498,16 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print(" f="); usbj_print_u32(cp32_clock_irq_frame_stack_calls);
     usbj_print(" t1="); usbj_print_u32(cp32_task1_ticks);
     usbj_print(" t2="); usbj_print_u32(cp32_task2_ticks);
+    usbj_print("]\r\n");
+    usbj_print("[CLOCK V1 tick-accounting ticks=");
+    usbj_print_u32(cp32_clock_accounted_ticks);
+    usbj_print(" pending=");
+    usbj_print_u32((uint32_t)pending_ticks);
+    usbj_print("]\r\n");
+    usbj_print("[CLOCK V2 alarm-state expiries=");
+    usbj_print_u32(cp32_clock_alarm_expiries);
+    usbj_print(" next=");
+    usbj_print_u32((uint32_t)next_alarm);
     usbj_print("]\r\n");
   }
   
@@ -549,6 +572,14 @@ PUBLIC int systimer_route_probe()
  * disconnected until this path is stable. */
 PUBLIC void systimer_irq_start()
 {
+  /* The bring-up probe starts SYSTIMER before clock_task exists. Initialize
+   * the shared MINIX clock state here as well as in init_clock(), otherwise
+   * an unarmed alarm is indistinguishable from an expired alarm. */
+  realtime = 0;
+  pending_ticks = 0;
+  next_alarm = LONG_MAX;
+  sched_ticks = SCHED_RATE;
+  prev_ptr = NIL_PROC;
   systimer_enable_target0_periodic(SYSTIMER_TICKS_PER_CLOCK);
   systimer_set_target0(systimer_unit0_read() + SYSTIMER_TICKS_PER_CLOCK);
   REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
@@ -576,6 +607,12 @@ PRIVATE void init_clock()
  */
 
   /* Enable SYSTIMER peripheral clock gate. */
+  realtime = 0;
+  pending_ticks = 0;
+  next_alarm = LONG_MAX;
+  sched_ticks = SCHED_RATE;
+  prev_ptr = NIL_PROC;
+
   REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_CLK_EN);
 
   /* Start UNIT0 free-running counter. */

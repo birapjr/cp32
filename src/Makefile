@@ -14,7 +14,7 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = start.c main.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c
+C_SRCS = start.c hardware_init.c main.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c
 LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
@@ -90,6 +90,21 @@ test-user-probe:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1" all
 
+# Hardware test: initialize the canonical MINIX IDLE task from tasktab.
+test-task-startup:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1" all
+
+# Hardware test: initialize IDLE and CLOCK from the MINIX task descriptors.
+test-task-startup-clock:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_CLOCK_STARTUP=1" all
+
+# Hardware test: initialize IDLE, CLOCK, and SYS from task descriptors.
+test-task-startup-sys:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_CLOCK_STARTUP=1 -DCP32_ENABLE_SYS_STARTUP=1" all
+
 # Hardware test: route BOTH/SENDREC through the user trap gate with an
 # invalid destination so the frame decode and rejection are bounded.
 test-both-probe:
@@ -104,6 +119,15 @@ test-both-reply-probe:
 test-blocked-probe:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_PROBE=1" all
+
+# Hardware test: exercise blocked SEND queueing with process 2 as receiver.
+test-blocked-send-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_SEND_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_SEND_PROBE=1" all
+
+test-blocked-sendrec-probe:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1 -DCP32_ENABLE_BLOCKED_SENDREC_PROBE=1 -DCP32_ENABLE_BLOCKED_SEND_PROBE=1" ASFLAGS="$(ASFLAGS) -DCP32_ENABLE_BLOCKED_SENDREC_PROBE=1 -DCP32_ENABLE_BLOCKED_SEND_PROBE=1" all
 
 # Clean build artifacts
 clean:
