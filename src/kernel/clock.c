@@ -97,6 +97,7 @@ volatile uint32_t cp32_timer_irq_ticks;
 volatile uint32_t cp32_clock_accounted_ticks;
 volatile uint32_t cp32_clock_alarm_expiries;
 volatile uint32_t cp32_clock_alarm_probe_fires;
+volatile uint32_t cp32_clock_dispatch_count;
 extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
@@ -125,6 +126,7 @@ FORWARD _PROTOTYPE( void cause_alarm,     (void) );
 PUBLIC void cp32_clock_alarm_probe_watchdog(void);
 FORWARD _PROTOTYPE( void do_setsyn_alrm,  (message *m_ptr) );
 FORWARD _PROTOTYPE( int  clock_handler,   (int irq) );
+PUBLIC int cp32_clock_task_dispatch(int opcode);
 
 /*===========================================================================*
  *                              clock_task                                    *
@@ -143,26 +145,32 @@ PUBLIC void clock_task()
     receive(ANY, &mc);
     opcode = mc.m_type;
 
-    /* Transfer ticks accumulated by the ISR into realtime atomically. */
-    lock();
-    realtime      += pending_ticks;
-    pending_ticks  = 0;
-    unlock();
-
-    switch (opcode) {
-      case HARD_INT:    do_clocktick();       break;
-      case GET_UPTIME:  do_getuptime();       break;
-      case GET_TIME:    do_get_time();        break;
-      case SET_TIME:    do_set_time(&mc);     break;
-      case SET_ALARM:   do_setalarm(&mc);     break;
-      case SET_SYNC_AL: do_setsyn_alrm(&mc);  break;
-      default: panic("clock task got bad message", mc.m_type);
-    }
-
-    /* Send reply, except for clock tick. */
-    mc.m_type = OK;
-    if (opcode != HARD_INT) send(mc.m_source, &mc);
+    if (cp32_clock_task_dispatch(opcode) && opcode != HARD_INT)
+      send(mc.m_source, &mc);
   }
+}
+
+/* Dispatch one already-received CLOCK message.  Keeping this separate makes
+ * the task-context behavior testable before its blocking loop is enabled. */
+PUBLIC int cp32_clock_task_dispatch(int opcode)
+{
+  cp32_clock_dispatch_count++;
+  lock();
+  realtime += pending_ticks;
+  pending_ticks = 0;
+  unlock();
+
+  switch (opcode) {
+    case HARD_INT:    do_clocktick();      break;
+    case GET_UPTIME:  do_getuptime();      break;
+    case GET_TIME:    do_get_time();       break;
+    case SET_TIME:    do_set_time(&mc);    break;
+    case SET_ALARM:   do_setalarm(&mc);    break;
+    case SET_SYNC_AL: do_setsyn_alrm(&mc); break;
+    default: panic("clock task got bad message", mc.m_type);
+  }
+  mc.m_type = OK;
+  return opcode != HARD_INT;
 }
 
 
@@ -362,6 +370,59 @@ PUBLIC int cp32_clock_task_probe_once(void)
   init_clock();
   do_clocktick();
   return sched_ticks == SCHED_RATE && next_alarm == LONG_MAX;
+}
+
+/* Exercise the real task receive/interrupt delivery path once. */
+PUBLIC int cp32_clock_ipc_probe_once(void)
+{
+  struct proc *clock = proc_addr(CLOCK);
+  int result = TRUE;
+  int cycle;
+  int saved_flags = clock->p_flags;
+  int saved_blocked = clock->p_int_blocked;
+  struct mem_map saved_data = clock->p_map[D];
+  struct proc *saved_proc_ptr = proc_ptr;
+  struct proc *saved_current_proc = current_proc;
+  struct proc *saved_bill_ptr = bill_ptr;
+  message saved_message = mc;
+
+  clock->p_flags = 0;
+  clock->p_int_blocked = 0;
+  clock->p_getfrom = ANY;
+  clock->p_messbuf = &mc;
+  clock->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&mc & ~(CLICK_SIZE - 1);
+  clock->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&mc) >> CLICK_SHIFT;
+  clock->p_map[D].mem_len =
+      (((vir_bytes)(uintptr_t)&mc & (CLICK_SIZE - 1)) +
+       sizeof(mc) + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  for (cycle = 0; cycle < 2 && result; cycle++) {
+    int queued = 0;
+    int q;
+    struct proc *rp;
+    mc.m_type = 0;
+    result = mini_rec(clock, ANY, &mc);
+    if (result != OK || !(clock->p_flags & RECEIVING)) break;
+    interrupt(CLOCK);
+    for (q = 0; q < NQ; q++)
+      for (rp = rdy_head[q]; rp != NIL_PROC; rp = rp->p_nextready)
+        if (rp == clock) queued++;
+    result = mc.m_source == HARDWARE && mc.m_type == HARD_INT &&
+             clock->p_flags == 0 && clock->p_int_blocked == 0 && queued == 1;
+    if (result) {
+      uint32_t dispatch_before = cp32_clock_dispatch_count;
+      cp32_clock_task_dispatch(HARD_INT);
+      result = mc.m_type == OK &&
+               cp32_clock_dispatch_count == dispatch_before + 1;
+    }
+  }
+  clock->p_flags = saved_flags;
+  clock->p_int_blocked = saved_blocked;
+  clock->p_map[D] = saved_data;
+  proc_ptr = saved_proc_ptr;
+  current_proc = saved_current_proc;
+  bill_ptr = saved_bill_ptr;
+  mc = saved_message;
+  return result;
 }
 
 

@@ -122,6 +122,11 @@ test-clock-task:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_CLOCK_TASK_PROBE=1" all
 
+# Hardware test: exercise CLOCK receive and interrupt notification once.
+test-clock-ipc:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_CLOCK_TASK_PROBE=1 -DCP32_ENABLE_CLOCK_IPC_PROBE=1" all
+
 # Hardware test: route BOTH/SENDREC through the user trap gate with an
 # invalid destination so the frame decode and rejection are bounded.
 test-both-probe:

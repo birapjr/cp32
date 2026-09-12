@@ -1116,3 +1116,21 @@ the test-only path transfers them into realtime.
 2026-09-12 hardware validation: `test-clock-task` passed `[CLOCK V3
 service-probe pass=1]` and remained stable through IRQ 96. The probe validates
 one deferred `HARD_INT` pass without starting the blocking CLOCK IPC loop.
+
+2026-09-12 hardware validation: `[IPC V25 clock-receive-notify pass=1]`
+completed the CLOCK receive/interrupt delivery probe and remained stable
+through IRQ 112. The probe exposed that diagnostic owner state must be restored
+explicitly before enabling the continuous CLOCK task.
+
+2026-09-12 hardware validation: `[IPC V26 clock-receive-queue pass=1]` passed;
+the CLOCK task received one hardware notification and was restored to exactly
+one ready queue entry. Execution remained stable through IRQ 96.
+
+2026-09-12 hardware validation: `[IPC V27 clock-dispatch-queue pass=1]`
+completed one received HARD_INT through the reusable CLOCK dispatcher after
+queue restoration. The kernel remained stable through IRQ 96 with no exception.
+
+2026-09-12 hardware validation: `[IPC V28 clock-service-cycles pass=1]`
+completed two CLOCK receive, interrupt-notification, queue-restoration, and
+dispatch cycles. The kernel remained stable through IRQ 112; continuous CLOCK
+task-loop scheduling remains gated.

@@ -818,3 +818,26 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-12 hardware validation: `[CLOCK V3 service-probe pass=1]` passed
   before interrupt enable, followed by stable clock/context operation through
   IRQ 96 with no exception. The continuous CLOCK IPC loop remains gated.
+- 2026-09-12 hardware validation: `[IPC V25 clock-receive-notify pass=1]`
+  completed the bounded CLOCK receive and interrupt-notification path; the
+  kernel remained stable through IRQ 112. Probe owner restoration is being
+  tightened before continuous CLOCK enablement.
+- 2026-09-12 build-only: extended the CLOCK IPC probe with a ready-queue
+  cardinality check and promoted it to `[IPC V26 clock-receive-queue]`.
+  Hardware validation is pending.
+- 2026-09-12 build-only: connected one received HARD_INT to the reusable CLOCK
+  dispatcher and added `[IPC V27 clock-dispatch-queue]`.
+- 2026-09-12 hardware validation: `[IPC V27 clock-dispatch-queue pass=1]`
+  passed; receive delivery, queue restoration, and one real CLOCK dispatch
+  step completed, with stable operation through IRQ 96 and no exception.
+- 2026-09-12 build-only: extended the CLOCK IPC probe to two complete receive,
+  hardware-notification, queue-restoration, and dispatch cycles as
+  `[IPC V28 clock-service-cycles]`. Hardware validation is pending.
+- 2026-09-12 hardware validation: `[IPC V28 clock-service-cycles pass=1]`
+  passed two complete CLOCK receive/notification/dispatch cycles; execution
+  remained stable through IRQ 112 with no exception. Continuous task-loop
+  scheduling remains gated.
+- 2026-09-12 hardware validation: `[IPC V26 clock-receive-queue pass=1]`
+  passed and the diagnostic kernel remained stable through IRQ 96. CLOCK
+  receive delivery and exactly-one-ready-queue restoration are validated;
+  continuous CLOCK service remains gated.

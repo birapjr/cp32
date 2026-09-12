@@ -20,6 +20,7 @@ extern void sys_task(void);
 extern void cp32_clock_alarm_probe_arm(void);
 extern void cp32_clock_alarm_probe_service(void);
 extern int cp32_clock_task_probe_once(void);
+extern int cp32_clock_ipc_probe_once(void);
 
 #ifndef CP32_ENABLE_CLOCK_STARTUP
 #define CP32_ENABLE_CLOCK_STARTUP 0
@@ -39,6 +40,10 @@ extern int cp32_clock_task_probe_once(void);
 
 #ifndef CP32_ENABLE_CLOCK_TASK_PROBE
 #define CP32_ENABLE_CLOCK_TASK_PROBE 0
+#endif
+
+#ifndef CP32_ENABLE_CLOCK_IPC_PROBE
+#define CP32_ENABLE_CLOCK_IPC_PROBE 0
 #endif
 /* MINIX task-table metadata, kept separate from the ESP32-S3 frame setup.
  * The entry points and stack sizes are descriptors only until production task
@@ -949,6 +954,15 @@ void main(void) {
     usbj_print_u32((uint32_t)clock_probe_ok);
     usbj_print("]\r\n");
     if (!clock_probe_ok) panic("clock task probe", 3);
+  }
+#endif
+#if CP32_ENABLE_CLOCK_IPC_PROBE
+  {
+    int clock_ipc_ok = cp32_clock_ipc_probe_once();
+    usbj_print("[IPC V28 clock-service-cycles pass=");
+    usbj_print_u32((uint32_t)clock_ipc_ok);
+    usbj_print("]\r\n");
+    if (!clock_ipc_ok) panic("clock IPC probe", 28);
   }
 #endif
    systimer_irq_start();
