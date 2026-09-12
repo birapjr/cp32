@@ -96,6 +96,7 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 volatile uint32_t cp32_timer_irq_ticks;
 volatile uint32_t cp32_clock_accounted_ticks;
 volatile uint32_t cp32_clock_alarm_expiries;
+volatile uint32_t cp32_clock_alarm_probe_fires;
 extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
@@ -121,6 +122,7 @@ FORWARD _PROTOTYPE( void do_set_time,     (message *m_ptr) );
 FORWARD _PROTOTYPE( void do_setalarm,     (message *m_ptr) );
 FORWARD _PROTOTYPE( void init_clock,      (void) );
 FORWARD _PROTOTYPE( void cause_alarm,     (void) );
+PUBLIC void cp32_clock_alarm_probe_watchdog(void);
 FORWARD _PROTOTYPE( void do_setsyn_alrm,  (message *m_ptr) );
 FORWARD _PROTOTYPE( int  clock_handler,   (int irq) );
 
@@ -329,6 +331,39 @@ watchdog_t function;
       next_alarm = rp->p_alarm;
 }
 
+/* Bounded bring-up hook: arm a task watchdog without entering the clock task
+ * service loop.  The normal clock ISR/do_clocktick path performs the expiry. */
+PUBLIC void cp32_clock_alarm_probe_arm(void)
+{
+  struct proc *rp = proc_addr(-1);
+  rp->p_alarm = realtime + 3;
+  watch_dog[-1 + NR_TASKS] = cp32_clock_alarm_probe_watchdog;
+  next_alarm = rp->p_alarm;
+}
+
+PUBLIC void cp32_clock_alarm_probe_watchdog(void)
+{
+  cp32_clock_alarm_probe_fires++;
+}
+
+PUBLIC void cp32_clock_alarm_probe_service(void)
+{
+  if (cp32_clock_alarm_probe_fires == 0 && next_alarm != LONG_MAX) {
+    realtime += pending_ticks;
+    pending_ticks = 0;
+    do_clocktick();
+  }
+}
+
+/* One-shot CLOCK task-context probe.  Avoids receive()/send() until IPC task
+ * scheduling is complete, while validating one deferred HARD_INT pass. */
+PUBLIC int cp32_clock_task_probe_once(void)
+{
+  init_clock();
+  do_clocktick();
+  return sched_ticks == SCHED_RATE && next_alarm == LONG_MAX;
+}
+
 
 /*===========================================================================*
  *                              cause_alarm                                   *
@@ -441,6 +476,14 @@ int irq;
   pending_ticks += ticks;
   now = realtime + pending_ticks;
 
+#if CP32_ENABLE_CLOCK_ALARM_PROBE
+  /* The probe image has no running clock task.  Execute one bounded alarm
+   * pass when the synthetic deadline is reached; production keeps this work
+   * deferred through the normal CLOCK notification path. */
+  if (cp32_clock_alarm_probe_fires == 0 && next_alarm <= now)
+    do_clocktick();
+#endif
+
   /* Step 5: Wake TTY if its timeout has expired. */
   if (tty_timeout != 0 && tty_timeout <= now) tty_wakeup(now);
 
@@ -517,6 +560,11 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
+#if CP32_ENABLE_CLOCK_ALARM_PROBE
+  /* Run after clock_handler has charged this interrupt into pending_ticks. */
+  if (cp32_timer_irq_ticks >= 3)
+    cp32_clock_alarm_probe_service();
+#endif
   unhold();
 
   /* The process handoff is deliberately a second gate.  This keeps the

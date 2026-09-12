@@ -111,6 +111,17 @@ test-task-startup-tty:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_TTY_STARTUP=1" all
 
+# Hardware test: exercise one bounded task-alarm expiry through the live ISR.
+test-clock-alarm:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_CLOCK_ALARM_PROBE=1" all
+
+# Hardware test: validate one deferred HARD_INT pass without starting the
+# unbounded receive/send CLOCK service loop.
+test-clock-task:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_CLOCK_TASK_PROBE=1" all
+
 # Hardware test: route BOTH/SENDREC through the user trap gate with an
 # invalid destination so the frame decode and rejection are bounded.
 test-both-probe:

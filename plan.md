@@ -804,3 +804,17 @@ of importing the incompatible libgcc `__udivdi3` routine.
 - 2026-09-12 hardware validation: `[TASK V5 tty-descriptor pass=1 stack=4096
   disabled=1]` passed, and the normal IPC/MM/lock/clock/context path remained
   stable through IRQ 80 with no exception. The TTY service loop remains gated.
+- 2026-09-12 build-only: added the dedicated `test-clock-alarm` target and a
+  bounded task-watchdog alarm probe. It arms one three-tick alarm through the
+  existing MINIX `next_alarm`/`do_clocktick()` path; hardware validation is
+  pending.
+- 2026-09-12 hardware validation: the bounded alarm probe fired exactly once
+  (`expiries=1`) and cleared `next_alarm` to `2147483647`; context and IRQ
+  operation remained stable through IRQ 32. The lower pending count reflects
+  the probe’s one-time transfer into realtime, matching clock-task behavior.
+- 2026-09-12 build-only: added `test-clock-task`, a bounded CLOCK task-context
+  probe for one deferred `HARD_INT` pass. The continuous receive/send loop
+  remains gated pending production IPC scheduling.
+- 2026-09-12 hardware validation: `[CLOCK V3 service-probe pass=1]` passed
+  before interrupt enable, followed by stable clock/context operation through
+  IRQ 96 with no exception. The continuous CLOCK IPC loop remains gated.

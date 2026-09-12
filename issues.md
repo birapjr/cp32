@@ -1107,3 +1107,12 @@ observed.
 2026-09-12 hardware validation: the layout-safe TTY descriptor probe passed
 with `pass=1`, a 4096-byte aligned stack, and `disabled=1`. The kernel remained
 stable through IRQ 80; the unfinished TTY service loop was not launched.
+
+2026-09-12 hardware validation: `test-clock-alarm` fired its synthetic task
+watchdog exactly once and left the alarm deadline at `LONG_MAX` (`2147483647`).
+The probe remained stable through IRQ 32; pending ticks decrease once when
+the test-only path transfers them into realtime.
+
+2026-09-12 hardware validation: `test-clock-task` passed `[CLOCK V3
+service-probe pass=1]` and remained stable through IRQ 96. The probe validates
+one deferred `HARD_INT` pass without starting the blocking CLOCK IPC loop.
