@@ -1092,5 +1092,8 @@ unexpected `e=1`.
 descriptor-driven CLOCK entry/frame initialization probe. Image layout passes
 with 7,780 bytes of IRAM margin; hardware validation is pending.
 
+Hardware validation passed `[TASK V4 sys-startup pass=1]` and remained stable
+through IRQ 176. TTY descriptor startup is the next guarded slice.
+
 Hardware validation passed `[TASK V3 clock-startup pass=1]` and remained
 stable through IRQ 128. SYS descriptor startup is the next guarded slice.

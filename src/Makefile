@@ -100,6 +100,11 @@ test-task-startup-clock:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_CLOCK_STARTUP=1" all
 
+# Hardware test: initialize IDLE, CLOCK, and SYS from task descriptors.
+test-task-startup-sys:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_CLOCK_STARTUP=1 -DCP32_ENABLE_SYS_STARTUP=1" all
+
 # Hardware test: route BOTH/SENDREC through the user trap gate with an
 # invalid destination so the frame decode and rejection are bounded.
 test-both-probe:

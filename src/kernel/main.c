@@ -16,9 +16,14 @@
 
 extern void kernel_idle_loop(void);
 extern void clock_task(void);
+extern void sys_task(void);
 
 #ifndef CP32_ENABLE_CLOCK_STARTUP
 #define CP32_ENABLE_CLOCK_STARTUP 0
+#endif
+
+#ifndef CP32_ENABLE_SYS_STARTUP
+#define CP32_ENABLE_SYS_STARTUP 0
 #endif
 
 /* MINIX task-table metadata, kept separate from the ESP32-S3 frame setup.
@@ -30,7 +35,7 @@ static struct tasktab cp32_tasktab[] = {
   { kernel_idle_loop, 2048, "IDLE" },
   { 0,             2048, "MEMORY" },
   { CP32_ENABLE_CLOCK_STARTUP ? clock_task : 0, 4096, "CLOCK" },
-  { 0,             4096, "SYS" },
+  { CP32_ENABLE_SYS_STARTUP ? sys_task : 0, 4096, "SYS" },
   { 0,                0, "HARDWAR" },
   { 0,                0, "MM" },
   { 0,                0, "FS" }
@@ -523,6 +528,26 @@ void main(void) {
     usbj_print_u32((uint32_t)clock->p_reg.sp);
     usbj_print("]\r\n");
     if (!startup_ok) panic("clock task startup", 3);
+  }
+#endif
+#if CP32_ENABLE_SYS_STARTUP
+  {
+    struct proc *sys = proc_addr(-2); /* MINIX SYS task number */
+    int startup_ok = cp32_tasktab[5].initial_pc != 0 &&
+        cp32_tasktab[5].stksize >= 4096 && sys->p_reg.sp != 0 &&
+        (sys->p_reg.sp & 0x0F) == 0 && sys->p_nr == -2;
+    if (startup_ok) {
+      sys->p_reg.pc = (reg_t)cp32_tasktab[5].initial_pc;
+      sys->p_reg.a[1] = sys->p_reg.sp;
+    }
+    usbj_print("[TASK V4 sys-startup pass=");
+    usbj_print_u32(startup_ok);
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)sys->p_reg.pc);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)sys->p_reg.sp);
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("sys task startup", 4);
   }
 #endif
 #endif

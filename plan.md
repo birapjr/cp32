@@ -359,6 +359,10 @@ Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
 - 2026-09-12 build-only: added `test-task-startup-clock`, a guarded
   descriptor-driven CLOCK entry/frame initialization probe. The image-layout
   check passes with 7,780 bytes of IRAM margin; hardware validation is pending.
+- 2026-09-12 hardware validation: `test-task-startup-sys` reported `[TASK V4
+  sys-startup pass=1 pc=1077367660 sp=1070300304]`. Descriptor-driven SYS
+  frame initialization passed, with IRQ/clock/context execution stable through
+  IRQ 176. The next startup slice is TTY.
 - 2026-09-12 hardware validation: `test-task-startup-clock` reported `[TASK
   V3 clock-startup pass=1 pc=1077364700 sp=1070296016]`. Descriptor-driven
   CLOCK frame initialization passed, with IRQ/clock/context execution stable
