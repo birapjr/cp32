@@ -105,6 +105,12 @@ test-task-startup-sys:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_CLOCK_STARTUP=1 -DCP32_ENABLE_SYS_STARTUP=1" all
 
+# Hardware test: validate the TTY descriptor without launching its unfinished
+# device/IPC service loop.
+test-task-startup-tty:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_TTY_STARTUP=1" all
+
 # Hardware test: route BOTH/SENDREC through the user trap gate with an
 # invalid destination so the frame decode and rejection are bounded.
 test-both-probe:

@@ -200,10 +200,12 @@ PRIVATE void do_clocktick()
   }
 
   /* If a user process has been running too long, pick another one. */
-  if (--sched_ticks == 0) {
+  /* The ISR owns the quantum countdown.  At the boundary it routes here;
+   * reset the counter once, avoiding the historical double decrement. */
+  if (sched_ticks == 1) {
     if (bill_ptr == prev_ptr) lock_sched();   /* process has run too long */
-    sched_ticks = SCHED_RATE;                 /* reset quantum            */
-    prev_ptr    = bill_ptr;                   /* new previous process     */
+    sched_ticks = SCHED_RATE;
+    prev_ptr    = bill_ptr;
   }
 
 #if (SHADOWING == 1)
@@ -440,7 +442,7 @@ int irq;
   now = realtime + pending_ticks;
 
   /* Step 5: Wake TTY if its timeout has expired. */
-  if (tty_timeout <= now) tty_wakeup(now);
+  if (tty_timeout != 0 && tty_timeout <= now) tty_wakeup(now);
 
   /* Step 6: Switch to do_clocktick() if:
  *   (a) an alarm has expired, OR

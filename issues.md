@@ -1097,3 +1097,13 @@ through IRQ 176. TTY descriptor startup is the next guarded slice.
 
 Hardware validation passed `[TASK V3 clock-startup pass=1]` and remained
 stable through IRQ 128. SYS descriptor startup is the next guarded slice.
+
+2026-09-12 hardware validation: the finalized clock quantum ownership and
+zero-timeout handling passed through IRQ 128. Tick accounting remained
+monotonic with `ticks == pending` at each sample; alarm state stayed unarmed
+(`expiries=0`, `next=2147483647`), and no exception or context instability was
+observed.
+
+2026-09-12 hardware validation: the layout-safe TTY descriptor probe passed
+with `pass=1`, a 4096-byte aligned stack, and `disabled=1`. The kernel remained
+stable through IRQ 80; the unfinished TTY service loop was not launched.

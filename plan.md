@@ -777,3 +777,30 @@ of importing the incompatible libgcc `__udivdi3` routine.
   `[CLOCK V2] expiries=0 next=2147483647` consistently through IRQ 160;
   `[CLOCK V1]` reached 159 ticks monotonically and context/handoff checks
   remained stable with no exception.
+- 2026-09-12 build-only: added guarded descriptor-driven TTY startup with
+  `[TASK V5 tty-startup]` and the dedicated `make test-task-startup-tty`
+  target. The TTY service loop remains gated pending serial validation.
+- 2026-09-12 correction: kept the descriptor-initialized TTY slot marked
+  `P_SLOT_FREE`; enabling its unfinished `tty_task()` loop caused the first
+  timer scheduling path to enter device/IPC code before TTY is ported. The
+  V5 marker now also reports `disabled=1`.
+- 2026-09-12 hardware failure: the flashed TTY image reported a corrupted
+  `.data` sentinel (`0x902FA811`) and `[TASK V1 ... pass=0]` before startup.
+  The temporary expanded V1 field dump was removed after it perturbed this
+  fragile early-boot path; aggregate validation is retained.
+- 2026-09-12 build-only clock correction: finalized MINIX quantum ownership
+  by keeping the ISR countdown and making `do_clocktick()` reset the quantum
+  only at its boundary; also made zero mean “no TTY timeout” instead of waking
+  TTY on every tick. Normal image layout validation passes; hardware
+  revalidation is pending.
+- 2026-09-12 hardware validation: clock quantum and timeout corrections passed
+  through IRQ 128. `[CLOCK V1]` ticks/pending advanced together, `[CLOCK V2]`
+  remained `expiries=0 next=2147483647`, and context/IRQ operation stayed
+  stable with no exception.
+- 2026-09-12 build-only: added a layout-safe TTY descriptor validation target.
+  `[TASK V5 tty-descriptor]` checks the canonical TTY slot, 4 KiB stack,
+  alignment, and explicit disabled state without linking or launching the
+  unfinished TTY service loop. Hardware validation is pending.
+- 2026-09-12 hardware validation: `[TASK V5 tty-descriptor pass=1 stack=4096
+  disabled=1]` passed, and the normal IPC/MM/lock/clock/context path remained
+  stable through IRQ 80 with no exception. The TTY service loop remains gated.

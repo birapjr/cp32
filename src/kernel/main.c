@@ -26,6 +26,9 @@ extern void sys_task(void);
 #define CP32_ENABLE_SYS_STARTUP 0
 #endif
 
+#ifndef CP32_ENABLE_TTY_STARTUP
+#define CP32_ENABLE_TTY_STARTUP 0
+#endif
 /* MINIX task-table metadata, kept separate from the ESP32-S3 frame setup.
  * The entry points and stack sizes are descriptors only until production task
  * startup is enabled. */
@@ -548,6 +551,26 @@ void main(void) {
     usbj_print_u32((uint32_t)sys->p_reg.sp);
     usbj_print("]\r\n");
     if (!startup_ok) panic("sys task startup", 4);
+  }
+#endif
+#if CP32_ENABLE_TTY_STARTUP
+  {
+    struct proc *tty = proc_addr(-NR_TASKS);
+    /* Keep the unfinished device task out of the ready queues while its
+     * descriptor is validated. */
+    tty->p_flags = P_SLOT_FREE;
+    int startup_ok = cp32_tasktab[0].initial_pc == 0 &&
+        cp32_tasktab[0].stksize >= 4096 && tty->p_reg.sp != 0 &&
+        (tty->p_reg.sp & 0x0F) == 0 && tty->p_nr == -NR_TASKS &&
+        (tty->p_flags & P_SLOT_FREE) != 0;
+    usbj_print("[TASK V5 tty-descriptor pass=");
+    usbj_print_u32((uint32_t)startup_ok);
+    usbj_print(" stack=");
+    usbj_print_u32((uint32_t)cp32_tasktab[0].stksize);
+    usbj_print(" disabled=");
+    usbj_print_u32((uint32_t)((tty->p_flags & P_SLOT_FREE) != 0));
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("tty task descriptor", 5);
   }
 #endif
 #endif
