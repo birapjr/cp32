@@ -332,6 +332,17 @@ Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
 
 ## Build status
 
+- 2026-09-12 build-only: completed the architecture-independent MINIX
+  interrupt-notification slice in `src/kernel/proc.c`. Deferred, delivered,
+  and replayed `HARDWARE/HARD_INT` notifications now have aggregate counters,
+  and boot validates the full held/coalesced/replay contract with `[IRQ V1
+  notify-contract ...]`. Hardware validation is pending; ESP32-S3-specific
+  IRQ entry and interrupt-level behavior remain subject to serial validation.
+- 2026-09-12 hardware validation: the normal image reported `[IRQ V1
+  notify-contract pass=1 deferred=2 delivered=2 replayed=1]`. Held interrupt
+  coalescing and replay passed, and SYSTIMER IRQ/clock/context execution
+  remained stable through IRQ 176 with no exception.
+
 The image builds and flashes with the kernel's call0 ABI and no known linker
 ABI warning. The 64-bit timer conversion uses a freestanding divider instead
 of importing the incompatible libgcc `__udivdi3` routine.

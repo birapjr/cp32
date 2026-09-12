@@ -24,6 +24,9 @@ extern volatile uint32_t cp32_clock_irq_bridge_calls;
 extern volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 extern volatile uint32_t cp32_clock_irq_frame_stack_calls;
 extern volatile int cp32_clock_irq_bridge_enabled;
+extern volatile uint32_t cp32_irq_notify_deferred;
+extern volatile uint32_t cp32_irq_notify_delivered;
+extern volatile uint32_t cp32_irq_notify_replayed;
 extern volatile int k_reenter;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
@@ -252,6 +255,22 @@ void test_ipc_mm(void) {
     usbj_print_u32(pass);
     usbj_print("]\r\n");
     if (!pass) panic("IPC held replay", 13);
+
+    /* Aggregate the MINIX interrupt() contract: duplicate notifications are
+     * coalesced while nested, then exactly one held notification is replayed
+     * and delivered after the receiver is waiting again. */
+    pass = cp32_irq_notify_deferred >= 2 &&
+        cp32_irq_notify_replayed >= 1 && cp32_irq_notify_delivered >= 2;
+    usbj_print("[IRQ V1 notify-contract pass=");
+    usbj_print_u32(pass);
+    usbj_print(" deferred=");
+    usbj_print_u32(cp32_irq_notify_deferred);
+    usbj_print(" delivered=");
+    usbj_print_u32(cp32_irq_notify_delivered);
+    usbj_print(" replayed=");
+    usbj_print_u32(cp32_irq_notify_replayed);
+    usbj_print("]\r\n");
+    if (!pass) panic("IRQ notification", 1);
 
     /* A waits for B; B's attempt to send back must fail without queueing B.
      * Receiving A's original message must still recover both processes. */

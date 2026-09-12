@@ -106,6 +106,12 @@ volatile uint32_t cp32_user_handoff_reject_count;
 volatile uint32_t cp32_user_trap_probe_count;
 volatile uint32_t cp32_user_cause_reject_count;
 volatile uint32_t cp32_blocked_pc_validation_count;
+/* Aggregate interrupt-notification contract.  These counters are deliberately
+ * independent of the verbose handoff diagnostics: an IRQ can be held while
+ * a critical section is active, coalesced, and replayed later. */
+volatile uint32_t cp32_irq_notify_deferred;
+volatile uint32_t cp32_irq_notify_delivered;
+volatile uint32_t cp32_irq_notify_replayed;
 volatile int cp32_user_probe_mode;
 volatile uint32_t cp32_user_rfe_epc;
 volatile uint32_t cp32_user_rfe_ps;
@@ -860,6 +866,7 @@ PUBLIC void interrupt(int task)
         held_tail = rp;
       }
     }
+    cp32_irq_notify_deferred++;
     restore_lock(saved_ps);
     return;
   }
@@ -872,6 +879,7 @@ PUBLIC void interrupt(int task)
     rp->p_int_blocked = TRUE;
     return;
   }
+  cp32_irq_notify_delivered++;
   rp->p_int_blocked = FALSE;
   rp->p_flags &= ~RECEIVING;
   if (cp32_blocked_return_proc == rp) cp32_blocked_return_proc = NIL_PROC;
@@ -1451,6 +1459,7 @@ PUBLIC void unhold()
       held_tail = NIL_PROC;
     rp->p_nextheld = NIL_PROC;
     rp->p_int_held = 0;
+    cp32_irq_notify_replayed++;
     restore_lock(saved_ps);
     interrupt(rp->p_nr);
   }

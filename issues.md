@@ -1,5 +1,20 @@
 # CP32 Port – Current Issues and Handoff
 
+## IRQ V1 — interrupt notification contract
+
+The MINIX `interrupt()`/`unhold()` feature now records deferred, delivered,
+and replayed notification counts and emits one aggregate boot marker. The
+build-time/boot simulation covers duplicate coalescing while nested and
+delivery after replay. Hardware validation is pending: verify the USB
+Serial/JTAG run reports `[IRQ V1 notify-contract pass=1 ...]` and that real
+SYSTIMER nesting does not duplicate or lose `HARD_INT` messages.
+
+Hardware validation completed on 2026-09-12 with the normal image:
+`deferred=2`, `delivered=2`, and `replayed=1`, all with `pass=1`. The same
+run continued through IRQ 176 with stable clock/context markers and no
+exception. Physical deeper nested IRQ behavior beyond this controlled
+critical-section test remains unvalidated.
+
 Latest cleaned-log hardware run passed through IRQ 176 (`t1=3234`, `t2=3157`);
 IPC V18 counted `n=1..8`, and LOCK/CTX remained healthy. IPC V19 will report
 the final blocked-call census before handoff work.
