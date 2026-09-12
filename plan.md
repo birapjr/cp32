@@ -845,3 +845,10 @@ of importing the incompatible libgcc `__udivdi3` routine.
   passed and the diagnostic kernel remained stable through IRQ 96. CLOCK
   receive delivery and exactly-one-ready-queue restoration are validated;
   continuous CLOCK service remains gated.
+- 2026-09-12 hardware validation: `[CLOCK V30 service-lifecycle pass=1]`
+  passed the combined two-cycle notification/dispatch and GET_UPTIME
+  request/reply lifecycle; execution remained stable through IRQ 160 with no
+  exception. Continuous CLOCK loop scheduling remains gated.
+- 2026-09-12 hardware validation: `[TASK V3 clock-startup pass=1]` passed
+  with an aligned CLOCK frame and stable IPC/clock/context operation through
+  IRQ 112. The continuous CLOCK receive loop remains gated.

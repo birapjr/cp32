@@ -483,6 +483,12 @@ PUBLIC int cp32_clock_request_probe_once(void)
   return result;
 }
 
+/* Bounded service lifecycle: notifications followed by one client request. */
+PUBLIC int cp32_clock_service_probe_once(void)
+{
+  return cp32_clock_ipc_probe_once() && cp32_clock_request_probe_once();
+}
+
 
 /*===========================================================================*
  *                              cause_alarm                                   *

@@ -1138,3 +1138,10 @@ task-loop scheduling remains gated.
 2026-09-12 hardware validation: `[IPC V29 clock-request-reply pass=1 stage=15
 err=0]` completed a CLOCK `GET_UPTIME` request and reply. All four IPC stages
 passed and execution remained stable through IRQ 96.
+2026-09-12 hardware validation: `[CLOCK V30 service-lifecycle pass=1]`
+completed the combined bounded CLOCK notification, dispatch, and request/reply
+lifecycle. V28/V29 passed in the same image and execution remained stable
+through IRQ 160.
+2026-09-12 hardware validation: `[TASK V3 clock-startup pass=1]` passed with
+an aligned CLOCK task frame. The kernel remained stable through IRQ 112; the
+continuous CLOCK IPC loop was not launched.
