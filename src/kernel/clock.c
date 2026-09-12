@@ -58,6 +58,8 @@
 #include "proc.h"
 
 extern struct proc *current_proc;
+extern volatile struct proc *cp32_irq_saved_owner;
+extern volatile int cp32_context_handoff_gate;
 
 extern void sched(void);
 #include "esp32s3/systimer.h"
@@ -101,6 +103,11 @@ volatile uint32_t cp32_clock_irq_frame_aligned_calls;
 volatile uint32_t cp32_clock_irq_frame_stack_calls;
 volatile uint32_t cp32_handoff_owner_mismatch_count;
 volatile uint32_t cp32_handoff_blocked_target_count;
+volatile uint32_t cp32_irq_status_reports;
+volatile uint32_t cp32_irq_unknown_count;
+
+typedef void (*cp32_irq_handler_t)(cp32_irq_frame_t *frame);
+PRIVATE cp32_irq_handler_t cp32_irq_handlers[32];
 
 extern char _stack_bottom[];
 extern char _stack_top[];
@@ -118,6 +125,45 @@ FORWARD _PROTOTYPE( void do_setsyn_alrm,  (message *m_ptr) );
 FORWARD _PROTOTYPE( int  clock_handler,   (int irq) );
 PUBLIC int cp32_clock_task_dispatch(int opcode);
 
+PUBLIC int cp32_irq_register(unsigned line, cp32_irq_handler_t handler)
+{
+  if (line >= 32 || handler == (cp32_irq_handler_t)0)
+    return -1;
+  cp32_irq_handlers[line] = handler;
+  return 0;
+}
+
+/* Dispatch each asserted CPU line through its registered device handler. */
+PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pending)
+{
+  unsigned line;
+  for (line = 0; line < 32; line++) {
+    uint32_t bit = 1u << line;
+    if ((pending & bit) == 0) continue;
+    if (cp32_irq_handlers[line] != (cp32_irq_handler_t)0)
+      cp32_irq_handlers[line](frame);
+    else
+      cp32_irq_unknown_count++;
+  }
+}
+
+PRIVATE void cp32_print_irq_status(void)
+{
+  int owner = cp32_irq_saved_owner != NIL_PROC ? cp32_irq_saved_owner->p_nr : 9999;
+  int selected = proc_ptr != NIL_PROC ? proc_ptr->p_nr : 9999;
+  int handed_off = cp32_irq_saved_owner != NIL_PROC &&
+      proc_ptr != NIL_PROC && cp32_irq_saved_owner != proc_ptr;
+  usbj_print("[IRQ count="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print(" nest="); usbj_print_u32((uint32_t)k_reenter);
+  usbj_print(" owner="); usbj_print_u32((uint32_t)owner);
+  usbj_print(" selected="); usbj_print_u32((uint32_t)selected);
+  usbj_print(" handoff="); usbj_print_u32((uint32_t)handed_off);
+  usbj_print(" gates="); usbj_print_u32((uint32_t)(cp32_clock_irq_bridge_enabled && cp32_context_handoff_gate));
+  usbj_print(" unknown="); usbj_print_u32(cp32_irq_unknown_count);
+  usbj_print("]\r\n");
+  cp32_irq_status_reports++;
+}
+
 /*===========================================================================*
  *                              clock_task                                    *
  *===========================================================================*/
@@ -128,6 +174,8 @@ PUBLIC void clock_task()
  * the message type.
  */
   int opcode;
+
+  usbj_print("[CLOCK_TASK]\r\n");
 
   init_clock();           /* initialize SYSTIMER and register IRQ handler */
 
@@ -481,23 +529,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       (uintptr_t) frame + sizeof(*frame) <= (uintptr_t) _stack_top)
     cp32_clock_irq_frame_stack_calls++;
 
-  if ((cp32_timer_irq_ticks & 0x0Fu) == 0) {
-    usbj_print("[IRQ "); usbj_print_u32(cp32_timer_irq_ticks);
-    usbj_print(" r="); usbj_print_u32((uint32_t) k_reenter);
-    usbj_print(" f="); usbj_print_u32(cp32_clock_irq_frame_stack_calls);
-    usbj_print("]\r\n");
-    usbj_print("[CLOCK V1 tick-accounting ticks=");
-    usbj_print_u32(cp32_clock_accounted_ticks);
-    usbj_print(" pending=");
-    usbj_print_u32((uint32_t)pending_ticks);
-    usbj_print("]\r\n");
-    usbj_print("[CLOCK V2 alarm-state expiries=");
-    usbj_print_u32(cp32_clock_alarm_expiries);
-    usbj_print(" next=");
-    usbj_print_u32((uint32_t)next_alarm);
-    usbj_print("]\r\n");
-  }
-  
   /* Run the MINIX clock path first; the separate handoff gate below controls
    * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
@@ -519,14 +550,18 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       proc_ptr != NIL_PROC && current_proc == proc_ptr &&
       proc_ptr->p_flags != 0)
     cp32_handoff_blocked_target_count++;
-  if (cp32_context_handoff_gate && current_proc != NIL_PROC &&
-      proc_ptr != NIL_PROC && current_proc == proc_ptr &&
-      proc_ptr->p_flags == 0 &&
-      (!cp32_clock_irq_bridge_enabled ||
-       rdy_head[TASK_Q] != NIL_PROC ||
-       rdy_head[SERVER_Q] != NIL_PROC ||
-       rdy_head[USER_Q] != NIL_PROC))
+  if (cp32_context_handoff_gate &&
+      cp32_irq_handoff_allowed(cp32_clock_irq_bridge_enabled,
+          k_reenter > 1, current_proc != NIL_PROC,
+          proc_ptr != NIL_PROC && current_proc == proc_ptr,
+          proc_ptr != NIL_PROC && proc_ptr->p_flags == 0,
+          rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
+          rdy_head[USER_Q] != NIL_PROC))
     sched();
+
+  /* Stable bring-up status: first IRQ, then every 50 IRQs. */
+  if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 50) == 0)
+    cp32_print_irq_status();
 }
 
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies
@@ -542,12 +577,30 @@ PUBLIC void systimer_irq_start()
   next_alarm = LONG_MAX;
   sched_ticks = SCHED_RATE;
   prev_ptr = NIL_PROC;
+
+  /* Route SYSTIMER TARGET0 to CPU interrupt 2.  Enabling INTENABLE alone is
+   * insufficient: the ESP32-S3 interrupt matrix defaults this source to no
+   * CPU line, which otherwise leaves the kernel idle with ticks at zero. */
+  /* The map register is source-specific; its value is the destination CPU
+   * interrupt number, not the SYSTIMER source ID. */
+  REG_WRITE(INTERRUPT_CORE0_SYSTIMER_TARGET0_INT_MAP_REG,
+            CP32_SYSTIMER_CPU_INT);
+  cp32_irq_register(CP32_SYSTIMER_CPU_INT, cp32_timer_irq_dispatch);
+  /* The early probe previously programmed TARGET0 without starting the
+   * SYSTIMER clock or UNIT0, so its counter never advanced and no alarm could
+   * become pending. */
+  REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_CLK_EN |
+              SYSTIMER_TIMER_UNIT0_WORK_EN);
   systimer_enable_target0_periodic(SYSTIMER_TICKS_PER_CLOCK);
   systimer_set_target0(systimer_unit0_read() + SYSTIMER_TICKS_PER_CLOCK);
   REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
   REG_WRITE(SYSTIMER_INT_CLR_REG, SYSTIMER_TARGET0_INT_BIT);
   REG_SET_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
   enable_irq(CP32_SYSTIMER_CPU_INT);
+  /* Startup may leave PS.INTLEVEL raised while boot diagnostics run.
+   * enable_irq() preserves that state; explicitly open the CPU gate before
+   * entering the idle loop so the mapped level-1 IRQ can be taken. */
+  unlock();
 }
 
 

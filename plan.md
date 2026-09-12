@@ -175,9 +175,11 @@ integration. Define the user ABI after one user process can run.
 
 ## Priority order
 
-1. Complete IRQ dispatch and one real context-switch/handoff path.
-2. Make IPC suspension/resumption task-owned; validate queues, billing, and quantum.
-3. Start CLOCK, SYS, and TTY through production descriptors.
+- [x] 1. Complete IRQ dispatch and one real context-switch/handoff path.
+- [ ] 2. Make IPC suspension/resumption task-owned; validate queues, billing, and quantum.
+  Basic CLOCK receive blocking is running; blocked SEND/RECEIVE resume coverage is still pending.
+- [x] 3. Start CLOCK, SYS, and TTY through production descriptors.
+  MM descriptor startup is also enabled; the MM message protocol remains incomplete.
 4. Define the CP32 memory model and implement the MM server.
 5. Implement Cardputer console I/O.
 6. Add storage/RAM disk, FS, executable loading, libc, shell, and commands.

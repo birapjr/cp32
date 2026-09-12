@@ -80,6 +80,7 @@ volatile uint32_t cp32_user_handoff_reject_count;
 volatile uint32_t cp32_user_trap_probe_count;
 volatile uint32_t cp32_user_cause_reject_count;
 volatile uint32_t cp32_blocked_pc_validation_count;
+volatile uint32_t cp32_ipc_trace_calls;
 /* Aggregate interrupt-notification contract.  These counters are deliberately
  * independent of the verbose handoff diagnostics: an IRQ can be held while
  * a critical section is active, coalesced, and replayed later. */
@@ -697,6 +698,23 @@ PUBLIC void interrupt(int task)
   /* IRQ return selects a frame after this notification; do not change the
    * owner of the interrupted frame here. */
 }
+
+/* Optional IPC execution trace, isolated for easy removal. */
+PRIVATE void cp32_trace_ipc(int operation, int endpoint)
+{
+  cp32_ipc_trace_calls++;
+  /* CLOCK performs a receive on every tick; keep the first-use proof while
+   * avoiding a UART line for every few dozen IPC calls. */
+  if (cp32_ipc_trace_calls == 1 || (cp32_ipc_trace_calls % 5000) == 0) {
+    usbj_print("[IPC count=");
+    usbj_print_u32(cp32_ipc_trace_calls);
+    usbj_print(" op=");
+    usbj_print_u32((uint32_t)operation);
+    usbj_print(" src=");
+    usbj_print_u32((uint32_t)endpoint);
+    usbj_print("]\r\n");
+  }
+}
  
 /*===========================================================================*
  *				sys_call				     * 
@@ -709,6 +727,8 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
   if (rp == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (function != SEND && function != RECEIVE && function != BOTH)
     return EBADCALL;
+
+  cp32_trace_ipc(function, src_dest);
 
   if (function & SEND) {
     result = mini_send(rp, src_dest, m_ptr);

@@ -6,27 +6,41 @@
 
 extern char _stack_bottom[];
 extern void systimer_irq_start(void);
+extern void clock_task(void);
+extern void sys_task(void);
+extern void tty_task(void);
+extern void mm_task(void);
 extern struct proc *current_proc;
 
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
+extern volatile int cp32_blocked_handoff_gate;
+extern volatile int cp32_user_handoff_gate;
 extern volatile uint32_t cp32_timer_irq_ticks;
 
 void kernel_idle_loop(void)
 {
-  status_line("\r\nkernel_idle_loop()", 2);
   static uint32_t heartbeat;
+  static uint32_t executions;
+  static int announced;
+
+  if (!announced) {
+    announced = 1;
+    status_line("\r\nkernel_idle_loop()", 2);
+  }
 
   for (;;) {
     wdt_feed_all();
-    delay(1000000);
-    /* Keep a low-rate boot heartbeat while the full scheduler is being restored. */
-    usbj_print("[CTX kernel-running ticks=");
-    usbj_print_u32(cp32_timer_irq_ticks);
-    usbj_print(" heartbeat=");
-    usbj_print_u32(++heartbeat);
-    usbj_print("]\r\n");
+    delay(100000);
+    /* Keep a low-rate boot heartbeat while the scheduler is restored. */
+    if (++executions % 20 == 0) {
+      usbj_print("[CTX kernel-running ticks=");
+      usbj_print_u32(cp32_timer_irq_ticks);
+      usbj_print(" heartbeat=");
+      usbj_print_u32(++heartbeat);
+      usbj_print("]\r\n");
+    }
   }
 }
 
@@ -54,7 +68,13 @@ void main(void)
   status_line("init TASKS", 0);
   for (t = -NR_TASKS; t <= LOW_USER; ++t) {
     rp = proc_addr(t);
-    rp->p_reg.pc = (reg_t)kernel_idle_loop;
+    /* Start the first production descriptor. CLOCK owns the normal receive
+     * loop and is the first real consumer of task-owned IPC suspension. */
+    rp->p_reg.pc = (t == CLOCK) ? (reg_t)clock_task :
+        (t == SYSTASK) ? (reg_t)sys_task :
+        (t == TTY) ? (reg_t)tty_task :
+        (t == MM_PROC_NR) ? (reg_t)mm_task :
+        (reg_t)kernel_idle_loop;
     rp->p_reg.psw = istaskp(rp) ? 0x100 : 0;
     memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
     rp->p_reg.a[15] = 0x3FC00000;
@@ -84,10 +104,15 @@ void main(void)
   cp32_clock_irq_bridge_enabled = 1;
   cp32_context_restore_gate = 1;
   cp32_context_handoff_gate = 1;
+  cp32_blocked_handoff_gate = 1;
+  cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
   systimer_irq_start();
-  
+
+  /* Image/test identity: this is the IRQ handler-registration dispatcher
+   * build, immediately before control enters the diagnostic workload. */
+  usbj_print("[TEST MM-DESC]\r\n");
   kernel_idle_loop();
 }
 

@@ -52,6 +52,9 @@ _PROTOTYPE( phys_bytes numap, (int proc_nr, vir_bytes vir_addr,
 _PROTOTYPE( void sys_task, (void)					);
 _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 		vir_bytes bytes)					);
+_PROTOTYPE( phys_clicks cp32_mem_alloc, (phys_clicks clicks, int owner) );
+_PROTOTYPE( int cp32_mem_free, (phys_clicks base, int owner) );
+_PROTOTYPE( int cp32_mem_owned, (phys_clicks base, phys_clicks clicks, int owner) );
 
 /* clock.c */
 _PROTOTYPE( void clock_task, (void)					);
@@ -59,6 +62,7 @@ _PROTOTYPE( void clock_stop, (void)					);
 _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( void systimer_irq_start, (void)			);
 _PROTOTYPE( void cp32_timer_irq_dispatch, (cp32_irq_frame_t *frame) );
+_PROTOTYPE( void cp32_irq_dispatch, (cp32_irq_frame_t *frame, uint32_t pending) );
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
 /* tty.c */

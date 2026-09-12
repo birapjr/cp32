@@ -1,6 +1,101 @@
 #include "kernel.h"
 #include "proc.h"
 #include <string.h>
+#include <minix/com.h>
+#include <minix/callnr.h>
+
+/* Private CP32 MM protocol.  Message fields use MINIX m1 semantics. */
+#define CP32_MM_ALLOCATE 1001
+#define CP32_MM_RELEASE  1002
+
+#define CP32_MAX_MEM_BLOCKS 64
+struct cp32_mem_block { phys_clicks base, size; int owner, used; };
+static struct cp32_mem_block cp32_mem_blocks[CP32_MAX_MEM_BLOCKS];
+static int cp32_mem_allocator_ready;
+
+static void cp32_mem_allocator_init(void)
+{
+    int i;
+    for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
+        cp32_mem_blocks[i].base = 0;
+        cp32_mem_blocks[i].size = 0;
+        cp32_mem_blocks[i].owner = -1;
+        cp32_mem_blocks[i].used = FALSE;
+    }
+    cp32_mem_blocks[0].base = mem[1].base;
+    cp32_mem_blocks[0].size = mem[1].size;
+    cp32_mem_allocator_ready = TRUE;
+}
+
+PUBLIC phys_clicks cp32_mem_alloc(phys_clicks clicks, int owner)
+{
+    int i, j;
+    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS) return 0;
+    if (!cp32_mem_allocator_ready) cp32_mem_allocator_init();
+    for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
+        if (cp32_mem_blocks[i].used || cp32_mem_blocks[i].size < clicks) continue;
+        for (j = 1; j < CP32_MAX_MEM_BLOCKS; j++)
+            if (cp32_mem_blocks[j].size == 0) break;
+        if (j == CP32_MAX_MEM_BLOCKS) return 0;
+        cp32_mem_blocks[j] = cp32_mem_blocks[i];
+        cp32_mem_blocks[j].base += clicks;
+        cp32_mem_blocks[j].size -= clicks;
+        cp32_mem_blocks[i].size = clicks;
+        cp32_mem_blocks[i].owner = owner;
+        cp32_mem_blocks[i].used = TRUE;
+        return cp32_mem_blocks[i].base;
+    }
+    return 0;
+}
+
+PUBLIC int cp32_mem_free(phys_clicks base, int owner)
+{
+    int i, j;
+    for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
+        if (cp32_mem_blocks[i].used && cp32_mem_blocks[i].base == base) {
+            if (cp32_mem_blocks[i].owner != owner) return EACCES;
+            cp32_mem_blocks[i].used = FALSE;
+            cp32_mem_blocks[i].owner = -1;
+            /* Coalesce adjacent free blocks so repeated IPC allocation and
+             * release does not permanently fragment the CP32 heap. */
+            for (j = 0; j < CP32_MAX_MEM_BLOCKS; j++) {
+                if (j == i || cp32_mem_blocks[j].used ||
+                    cp32_mem_blocks[j].size == 0) continue;
+                if (cp32_mem_blocks[j].base + cp32_mem_blocks[j].size ==
+                    cp32_mem_blocks[i].base) {
+                    cp32_mem_blocks[j].size += cp32_mem_blocks[i].size;
+                    cp32_mem_blocks[i].base = 0;
+                    cp32_mem_blocks[i].size = 0;
+                    i = j;
+                    j = -1;
+                } else if (cp32_mem_blocks[i].base + cp32_mem_blocks[i].size ==
+                           cp32_mem_blocks[j].base) {
+                    cp32_mem_blocks[i].size += cp32_mem_blocks[j].size;
+                    cp32_mem_blocks[j].base = 0;
+                    cp32_mem_blocks[j].size = 0;
+                    j = -1;
+                }
+            }
+            return OK;
+        }
+    }
+    return EINVAL;
+}
+
+PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
+{
+    int i;
+    if (clicks == 0) return FALSE;
+    for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
+        if (cp32_mem_blocks[i].used && cp32_mem_blocks[i].owner == owner &&
+            base >= cp32_mem_blocks[i].base &&
+            clicks <= cp32_mem_blocks[i].size &&
+            base - cp32_mem_blocks[i].base <=
+                cp32_mem_blocks[i].size - clicks)
+            return TRUE;
+    }
+    return FALSE;
+}
 
 /* 
  * numap: translate virtual address to physical address.
@@ -58,16 +153,29 @@ PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst
 /* Basic MM Task entry point */
 PUBLIC void mm_task()
 {
-    usbj_print("[MM] mm_task starting...\r\n");
-    
-    /* In a real MINIX system, this would manage process memory allocation.
-     * For CP32, we start with static mapping handled by the kernel. */
-    
-    usbj_print("[MM] MM foundation initialized\r\n");
-    
-    /* Idle loop for the MM task */
-    while(1) {
-        // The MM task typically waits for messages from the kernel/processes.
-        // We'll implement the message loop once IPC is operational.
+    message m;
+    phys_clicks base;
+
+    usbj_print("[MM_TASK]\r\n");
+    for (;;) {
+        /* A real server must block here.  This makes MM ownership visible to
+         * the scheduler and exercises the normal IPC suspension/resumption
+         * path instead of consuming CPU in a private idle loop. */
+        receive(ANY, &m);
+
+        switch (m.m_type) {
+        case CP32_MM_ALLOCATE:
+            base = cp32_mem_alloc((phys_clicks)m.m1_i1, m.m_source);
+            m.m1_i1 = base;
+            m.m_type = base != 0 ? OK : ENOMEM;
+            break;
+        case CP32_MM_RELEASE:
+            m.m_type = cp32_mem_free((phys_clicks)m.m1_i1, m.m_source);
+            break;
+        default:
+            m.m_type = E_BAD_FCN;
+            break;
+        }
+        send(m.m_source, &m);
     }
 }

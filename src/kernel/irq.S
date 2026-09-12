@@ -8,8 +8,8 @@
  *   4. Never use call0/call4 — the ABI stack frame is not set up on entry.
  *   5. Double exception handler must never rfi — it is a terminal state.
  *
- * Bring-up stubs: all handlers currently spin or return immediately.
- * Replace them one at a time as real functionality is needed.
+ * Level-1 is the production dispatch path on ESP32-S3: mapped peripheral
+ * IRQs arrive as EXCCAUSE_LEVEL1_INTERRUPT and use the full frame path below.
  *
  * Register ownership on interrupt entry (Xtensa LX7):
  *   a0..a15  — caller's registers, NOT saved by hardware
@@ -89,7 +89,7 @@ irq_level2:
 .type   irq_level3, @function
 irq_level3:
     HANDLER_ENTRY 3
-    /* TODO: dispatch */
+    /* No level-3 source is routed by CP32; preserve context and return. */
     HANDLER_EXIT  3
 .size irq_level3, .-irq_level3
 
@@ -275,7 +275,10 @@ irq_level1:
     mov     a2, a1
     /* Use current stack pointer as a base for a15 to avoid NULL dereference in printk */
     mov     a15, a1
-    call0   cp32_timer_irq_dispatch
+    /* Classify the pending CPU interrupt bitmap in C.  The dispatcher owns
+     * device routing; the timer is only one registered source. */
+    rsr     a3, interrupt
+    call0   cp32_irq_dispatch
     
 1:
     movi    a2, k_reenter

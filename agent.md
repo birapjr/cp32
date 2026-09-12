@@ -82,6 +82,20 @@ The expected toolchain is `xtensa-esp32s3-elf-gcc` and related binutils. Image g
 Serial diagnostics are deliberately compact because timer IRQs can interleave
 with output. Every hardware-visible diagnostic change gets a monotonically
 increasing version marker so the flashed image can be identified immediately.
+Also emit a short test-identity tag immediately before `main()` calls
+`kernel_idle_loop()`, naming the feature under test (for example,
+`[TEST IRQ-REG]`). Keep this tag stable for that image and update it when the
+feature under test changes, so every hardware log identifies what was flashed.
+The marker must be emitted immediately before the `kernel_idle_loop()` call
+in `main()` on every feature-change build.
+When a plan item is completed, mark its line with `[x]` at the beginning in
+`plan.md`. Do not mark partially implemented or hardware-unverified work as
+complete; describe the remaining work on a following line instead.
+For execution tracing, put feature markers in a dedicated removable function,
+call it only from the normal production path (never from a manual trigger),
+and rate-limit it. IPC markers should identify the operation and count, with
+the first use visible and later output limited to an infrequent interval
+(currently every 5000 calls for the clock receive loop).
 Use the marker families consistently:
 
 - `[IMG Vn]` identifies an image only when a new image distinction is needed.
