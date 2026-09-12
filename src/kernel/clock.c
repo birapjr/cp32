@@ -125,7 +125,7 @@ FORWARD _PROTOTYPE( void do_setsyn_alrm,  (message *m_ptr) );
 FORWARD _PROTOTYPE( int  clock_handler,   (int irq) );
 PUBLIC int cp32_clock_task_dispatch(int opcode);
 
-PUBLIC int cp32_irq_register(unsigned line, cp32_irq_handler_t handler)
+CP32_IRAM_EXT PUBLIC int cp32_irq_register(unsigned line, cp32_irq_handler_t handler)
 {
   if (line >= 32 || handler == (cp32_irq_handler_t)0)
     return -1;
@@ -134,7 +134,7 @@ PUBLIC int cp32_irq_register(unsigned line, cp32_irq_handler_t handler)
 }
 
 /* Dispatch each asserted CPU line through its registered device handler. */
-PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pending)
+CP32_IRAM_EXT PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pending)
 {
   unsigned line;
   for (line = 0; line < 32; line++) {
@@ -196,7 +196,7 @@ CP32_IRAM_EXT PUBLIC void clock_task()
 
 /* Dispatch one already-received CLOCK message.  Keeping this separate makes
  * the task-context behavior testable before its blocking loop is enabled. */
-PUBLIC int cp32_clock_task_dispatch(int opcode)
+CP32_IRAM_EXT PUBLIC int cp32_clock_task_dispatch(int opcode)
 {
   cp32_clock_dispatch_count++;
   lock();
@@ -221,7 +221,7 @@ PUBLIC int cp32_clock_task_dispatch(int opcode)
 /*===========================================================================*
  *                              do_clocktick                                  *
  *===========================================================================*/
-PRIVATE void do_clocktick()
+CP32_IRAM_EXT PRIVATE void do_clocktick()
 {
 /* Called on clock ticks when significant work is needed (alarm expired,
  * or quantum used up).  Not called on every tick.
@@ -344,7 +344,7 @@ message *m_ptr;
 /*===========================================================================*
  *                              do_setsyn_alrm                                *
  *===========================================================================*/
-PRIVATE void do_setsyn_alrm(m_ptr)
+CP32_IRAM_EXT PRIVATE void do_setsyn_alrm(m_ptr)
 message *m_ptr;
 {
 /* A process wants a synchronous alarm. */
@@ -385,7 +385,7 @@ watchdog_t function;
 
 /* Bounded bring-up hook: arm a task watchdog without entering the clock task
  * service loop.  The normal clock ISR/do_clocktick path performs the expiry. */
-PRIVATE void cause_alarm()
+CP32_IRAM_EXT PRIVATE void cause_alarm()
 {
 /* Called when a synchronous alarm fires.  Notify the syn_alrm_task.
  * watchdog_proc holds the proc_nr of the target (set just before call).
@@ -400,7 +400,7 @@ PRIVATE void cause_alarm()
 /*===========================================================================*
  *                              syn_alrm_task                                 *
  *===========================================================================*/
-PUBLIC void syn_alrm_task()
+CP32_IRAM_EXT PUBLIC void syn_alrm_task()
 {
 /* Main program of the synchronous alarm task.
  * Receives wake-ups from cause_alarm() (clock task ISR context) and
@@ -729,7 +729,7 @@ PRIVATE void init_clock()
 /*===========================================================================*
  *                              clock_stop                                    *
  *===========================================================================*/
-PUBLIC void clock_stop()
+CP32_IRAM_EXT PUBLIC void clock_stop()
 {
 /* Shut down the clock interrupt.  Called during system reboot to prevent
  * spurious ticks while the kernel is tearing down.
@@ -751,7 +751,7 @@ PUBLIC void clock_stop()
 /*===========================================================================*
  *                              milli_start                                   *
  *===========================================================================*/
-PUBLIC void milli_start(msp)
+CP32_IRAM_EXT PUBLIC void milli_start(msp)
 struct milli_state *msp;
 {
 /* Snapshot the SYSTIMER UNIT0 counter as the start reference for
@@ -763,7 +763,7 @@ struct milli_state *msp;
 /*===========================================================================*
  *                              milli_elapsed                                 *
  *===========================================================================*/
-PRIVATE uint64_t cp32_u64_div_u32(uint64_t value, uint32_t divisor)
+CP32_IRAM_EXT PRIVATE uint64_t cp32_u64_div_u32(uint64_t value, uint32_t divisor)
 {
   uint64_t quotient = 0;
   uint64_t remainder = 0;
@@ -780,7 +780,7 @@ PRIVATE uint64_t cp32_u64_div_u32(uint64_t value, uint32_t divisor)
   return quotient;
 }
 
-PUBLIC unsigned milli_elapsed(msp)
+CP32_IRAM_EXT PUBLIC unsigned milli_elapsed(msp)
 struct milli_state *msp;
 {
 /* Return milliseconds elapsed since milli_start().

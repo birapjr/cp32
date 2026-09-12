@@ -13,7 +13,7 @@ struct cp32_mem_block { phys_clicks base, size; int owner, used; };
 static struct cp32_mem_block cp32_mem_blocks[CP32_MAX_MEM_BLOCKS];
 static int cp32_mem_allocator_ready;
 
-static void cp32_mem_allocator_init(void)
+CP32_IRAM_EXT static void cp32_mem_allocator_init(void)
 {
     int i;
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
@@ -27,7 +27,7 @@ static void cp32_mem_allocator_init(void)
     cp32_mem_allocator_ready = TRUE;
 }
 
-PUBLIC phys_clicks cp32_mem_alloc(phys_clicks clicks, int owner)
+CP32_IRAM_EXT PUBLIC phys_clicks cp32_mem_alloc(phys_clicks clicks, int owner)
 {
     int i, j;
     if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS) return 0;
@@ -48,7 +48,7 @@ PUBLIC phys_clicks cp32_mem_alloc(phys_clicks clicks, int owner)
     return 0;
 }
 
-PUBLIC int cp32_mem_free(phys_clicks base, int owner)
+CP32_IRAM_EXT PUBLIC int cp32_mem_free(phys_clicks base, int owner)
 {
     int i, j;
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
@@ -86,7 +86,7 @@ PUBLIC int cp32_mem_free(phys_clicks base, int owner)
  * beginning of a block they own.  The coalescing loop above deliberately
  * leaves zero-sized slots reusable, so this is safe under repeated IPC use. */
 
-PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
+CP32_IRAM_EXT PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
 {
     int i;
     if (clicks == 0) return FALSE;
@@ -105,7 +105,7 @@ PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
  * numap: translate virtual address to physical address.
  * Returns 0 if address is out of bounds for the process.
  */
-PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
+CP32_IRAM_EXT PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
 {
     /* proc_nr is a MINIX process number, not a raw proc[] index. */
     struct proc *rp;
@@ -146,7 +146,7 @@ PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
  * mem_copy: copy data from one process to another.
  * Uses numap to ensure both addresses are valid.
  */
-PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len)
+CP32_IRAM_EXT PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len)
 {
     phys_bytes src_phys = numap(src_proc, src_vir, len);
     phys_bytes dst_phys = numap(dst_proc, dst_vir, len);
@@ -164,7 +164,7 @@ PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst
     return OK;
 }
 
-PRIVATE int cp32_mm_source_valid(int source)
+CP32_IRAM_EXT PRIVATE int cp32_mm_source_valid(int source)
 {
     struct proc *rp;
     if (!isokprocn(source)) return FALSE;
@@ -172,7 +172,7 @@ PRIVATE int cp32_mm_source_valid(int source)
     return rp != NIL_PROC && !(rp->p_flags & P_SLOT_FREE) && rp->p_nr == source;
 }
 
-PUBLIC int cp32_mm_handle_request(message *m)
+CP32_IRAM_EXT PUBLIC int cp32_mm_handle_request(message *m)
 {
     if (m == (message *)0 || !cp32_mm_source_valid(m->m_source))
         return EINVAL;

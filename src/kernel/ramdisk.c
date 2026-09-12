@@ -25,7 +25,7 @@ CP32_IRAM_EXT static int valid_sector(unsigned sector)
   return sector < CP32_RAMDISK_SECTORS;
 }
 
-int cp32_ramdisk_read(unsigned sector, void *buffer)
+CP32_IRAM_EXT int cp32_ramdisk_read(unsigned sector, void *buffer)
 {
   if (!valid_sector(sector) || buffer == (void *)0) return -1;
   memcpy(buffer, &ramdisk[sector * CP32_RAMDISK_SECTOR_SIZE],
@@ -33,7 +33,7 @@ int cp32_ramdisk_read(unsigned sector, void *buffer)
   return 0;
 }
 
-int cp32_ramdisk_write(unsigned sector, const void *buffer)
+CP32_IRAM_EXT int cp32_ramdisk_write(unsigned sector, const void *buffer)
 {
   if (!valid_sector(sector) || buffer == (const void *)0) return -1;
   memcpy(&ramdisk[sector * CP32_RAMDISK_SECTOR_SIZE], buffer,
@@ -67,7 +67,7 @@ CP32_IRAM_EXT static int valid_range(unsigned offset, unsigned length)
   return offset <= RAMDISK_BYTES && length <= RAMDISK_BYTES - offset;
 }
 
-int cp32_ramdisk_read_bytes(unsigned offset, void *buffer, unsigned length)
+CP32_IRAM_EXT int cp32_ramdisk_read_bytes(unsigned offset, void *buffer, unsigned length)
 {
   if (!valid_range(offset, length) || (length != 0 && buffer == (void *)0))
     return -1;
@@ -75,7 +75,7 @@ int cp32_ramdisk_read_bytes(unsigned offset, void *buffer, unsigned length)
   return 0;
 }
 
-int cp32_ramdisk_write_bytes(unsigned offset, const void *buffer, unsigned length)
+CP32_IRAM_EXT int cp32_ramdisk_write_bytes(unsigned offset, const void *buffer, unsigned length)
 {
   if (!valid_range(offset, length) || (length != 0 && buffer == (const void *)0))
     return -1;
@@ -83,7 +83,7 @@ int cp32_ramdisk_write_bytes(unsigned offset, const void *buffer, unsigned lengt
   return 0;
 }
 
-int cp32_ramdisk_checksum(unsigned offset, unsigned length, unsigned *checksum)
+CP32_IRAM_EXT int cp32_ramdisk_checksum(unsigned offset, unsigned length, unsigned *checksum)
 {
   unsigned i;
   unsigned value = 2166136261u;

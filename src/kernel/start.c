@@ -116,7 +116,7 @@ void start() {
 /*==========================================================================*
  *				k_atoi					    *
  *==========================================================================*/
-PRIVATE int k_atoi(s)
+CP32_IRAM_EXT PRIVATE int k_atoi(s)
 register char *s;
 {
 /* Convert string to integer. */
@@ -128,7 +128,7 @@ register char *s;
 /*==========================================================================*
  *				k_getenv				    *
  *==========================================================================*/
-PUBLIC char *k_getenv(name)
+CP32_IRAM_EXT PUBLIC char *k_getenv(name)
 char *name;
 {
 /* Get environment value - kernel version of getenv to avoid setting up the

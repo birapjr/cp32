@@ -266,9 +266,9 @@ integration. Define the user ABI after one user process can run.
   at boot.
 - [x] 6f. Remove the accidental remaining RAM-disk boot write and restore a
   marker-only baseline after marker 110 still corrupted `.data`.
-- [ ] 5ag. Rotate ready-queue selection across task, server, and user classes
-  (reverted after task-frame/image-integrity regression; requires a frame-safe
-  scheduler handoff design).
+- [x] 5ag. Rotate ready-queue selection across task, server, and user classes
+  using a bounded queue cursor while preserving the existing frame-safe
+  scheduler handoff design.
 6. Add storage/RAM disk, FS, executable loading, libc, shell, and commands.
 7. Add optional networking and peripherals only when in scope.
 
@@ -363,3 +363,77 @@ marks hardware behavior complete.
   while retaining timer initialization and interrupt entry in low IRAM.
 - [x] 8af. Relocate runtime alarm service handlers into D/IRAM while retaining
   timer initialization and interrupt entry in low IRAM.
+- [x] 8ag. Relocate clock-task dispatch, tick, synchronous-alarm, and alarm
+  delivery helpers into D/IRAM while retaining the timer ISR path in low IRAM.
+- [x] 8ah. Relocate runtime clock timing helpers into D/IRAM while retaining
+  timer initialization and interrupt entry in low IRAM.
+- [x] 8ai. Relocate the C-side IRQ registration and dispatch layer into
+  D/IRAM while retaining assembly interrupt entry in low IRAM.
+- [x] 8aj. Relocate the runtime TTY ioctl handler into D/IRAM while retaining
+  boot-time keyboard and TTY initialization in low IRAM.
+- [x] 8ak. Relocate the compatibility TTY ioctl handler into D/IRAM while
+  retaining boot-time keyboard and TTY initialization in low IRAM.
+- [x] 8al. Relocate runtime process unready helpers into D/IRAM while
+  retaining reset and startup process-table initialization in low IRAM.
+- [x] 8am. Relocate ready-queue validation and insertion helpers into D/IRAM
+  while retaining the public lock wrapper and scheduler entry contracts.
+- [x] 8an. Relocate the runtime `switch_to()` process handoff helper into
+  D/IRAM while retaining scheduler and startup handoff behavior.
+- [x] 8ao. Relocate the locked ready-queue wrapper into D/IRAM while
+  preserving its interrupt-lock protocol.
+- [x] 8ap. Relocate the locked process-selection wrapper into D/IRAM while
+  preserving its interrupt-lock protocol.
+- [x] 8aq. Relocate held-interrupt replay (`unhold`) into D/IRAM while
+  preserving lock ordering and interrupt delivery semantics.
+- [x] 8ar. Relocate the locked mini-send wrapper into D/IRAM while preserving
+  its lock-save/send/restore sequence.
+- [x] 8as. Relocate blocked-frame snapshot capture into D/IRAM while
+  preserving the process-frame validity contract.
+- [x] 8at. Relocate IPC message-copy and blocked-message delivery helpers into
+  D/IRAM while preserving sender validation and wakeup ordering.
+- [x] 8au. Relocate the IRQ message-buffer copy helper into D/IRAM while
+  retaining the interrupt entry and notification state machine in place.
+- [x] 8av. Relocate the optional IPC trace helper into D/IRAM without
+  changing IPC state transitions.
+- [x] 8aw. Relocate blocked-frame completion and wake/resume bookkeeping into
+  D/IRAM while preserving result publication and ready-queue insertion.
+- [x] 8ax. Relocate the C-level hardware notification handler into D/IRAM
+  while retaining assembly IRQ entry and frame handling in low IRAM.
+- [x] 8ay. Relocate the runtime mini-receive IPC implementation into D/IRAM
+  while preserving receive matching and blocked-wakeup semantics.
+- [x] 8az. Relocate the runtime mini-send IPC implementation into D/IRAM
+  while preserving destination validation and blocked-sender semantics.
+- [x] 8ba. Relocate the C-level `sys_call()` dispatcher into D/IRAM while
+  retaining the assembly trap entry and IPC contracts.
+- [x] 8bb. Relocate the user blocked-handoff dispatcher into D/IRAM while
+  retaining exception-vector entry and saved-frame validation.
+- [x] 8bc. Relocate five RAM-disk sector/byte I/O and checksum functions into
+  D/IRAM as one runtime storage-helper group.
+- [x] 8bd. Relocate five runtime TTY input/output, event, reply, and signal
+  helpers into D/IRAM while retaining boot-time TTY initialization in IRAM.
+- [x] 8be. Relocate five runtime TTY read/write/open/close/cancel handlers into
+  D/IRAM while retaining boot-time TTY initialization in IRAM.
+- [x] 8bf. Relocate five runtime TTY transfer/ioctl/attribute/cancel/wakeup
+  helpers into D/IRAM while retaining boot-time TTY initialization in IRAM.
+- [x] 8bg. Relocate five runtime TTY editing/output/no-op helpers into D/IRAM
+  while retaining boot-time TTY initialization in IRAM.
+- [x] 8bh. Relocate five runtime TTY timer, compatibility, and trace helpers
+  into D/IRAM while retaining serial/console initialization in IRAM.
+- [x] 8bi. Relocate five runtime keyboard/TTY compatibility helpers into
+  D/IRAM while retaining serial and console initialization in IRAM.
+- [x] 8bj. Relocate ten system-task runtime handlers into D/IRAM while
+  retaining system-task entry and startup plumbing in low IRAM.
+- [x] 8bk. Relocate the remaining ten system-task signal, memory, boot, and
+  tracing handlers into D/IRAM while retaining system-task entry in IRAM.
+- [x] 8bl. Relocate ten runtime memory-management allocator, mapping, copy,
+  ownership, and validation functions into D/IRAM.
+- [x] 8bm. Relocate ten Cardputer I2C GPIO and transaction helpers into D/IRAM
+  as one hardware-access group.
+- [x] 8bn. Relocate ten remaining TTY/Cardputer/clock/memory runtime and
+  setup helpers into D/IRAM while retaining vector and assembly entry points.
+- [x] 8bo. Relocate ten remaining runtime system, library, and memory helpers
+  into D/IRAM while retaining loader and vector-critical code in IRAM.
+- [x] 8bp. Relocate five remaining diagnostic/environment/serial-output helpers
+  into D/IRAM while retaining panic and vector/timer-critical entry routines.
+- [x] 8bq. Reject duplicate RECEIVE requests from an already-blocked receiver
+  without overwriting its saved source selector or message buffer.

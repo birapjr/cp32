@@ -181,7 +181,7 @@ CP32_IRAM_EXT PUBLIC void sys_task()
 /*===========================================================================*
  *				do_fork					     *
  *===========================================================================*/
-PRIVATE int do_fork(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_fork(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_fork().  m_ptr->PROC1 has forked.  The child is m_ptr->PROC2. */
@@ -239,7 +239,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_newmap				     *
  *===========================================================================*/
-PRIVATE int do_newmap(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_newmap(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_newmap().  Fetch the memory map from MM. */
@@ -281,7 +281,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *				do_getmap				     *
  *===========================================================================*/
-PRIVATE int do_getmap(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_getmap(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_getmap().  Report the memory map to MM. */
@@ -314,7 +314,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *				do_exec					     *
  *===========================================================================*/
-PRIVATE int do_exec(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_exec(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_exec().  A process has done a successful EXEC. Patch it up. */
@@ -358,7 +358,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_xit					     *
  *===========================================================================*/
-PRIVATE int do_xit(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_xit(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_xit().  A process has exited. */
@@ -429,7 +429,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *				do_getsp				     *
  *===========================================================================*/
-PRIVATE int do_getsp(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_getsp(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_getsp().  MM wants to know what sp is. */
@@ -446,7 +446,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_times				     *
  *===========================================================================*/
-PRIVATE int do_times(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_times(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_times().  Retrieve the accounting information. */
@@ -471,7 +471,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_abort				     *
  *===========================================================================*/
-PRIVATE int do_abort(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_abort(m_ptr)
 message *m_ptr;
 {
   switch (m_ptr->m1_i1) {
@@ -495,7 +495,7 @@ message *m_ptr;
 /*===========================================================================*
  *                              system_reset                                *
  *===========================================================================*/
-PRIVATE void system_reset()
+CP32_IRAM_EXT PRIVATE void system_reset()
 {
 /* Minimal reset placeholder until the ESP32-S3 reset registers are wired in. */
   for (;;) {
@@ -507,7 +507,7 @@ PRIVATE void system_reset()
 /*===========================================================================*
  *				do_fresh				     *
  *===========================================================================*/
-PRIVATE int do_fresh(m_ptr)     /* for 68000 only */
+CP32_IRAM_EXT PRIVATE int do_fresh(m_ptr)     /* for 68000 only */
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_fresh.  Start with fresh process image during EXEC. */
@@ -537,7 +537,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *			      do_sendsig				     *
  *===========================================================================*/
-PRIVATE int do_sendsig(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_sendsig(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_sendsig, POSIX-style signal */
@@ -601,7 +601,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *			      do_sigreturn				     *
  *===========================================================================*/
-PRIVATE int do_sigreturn(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_sigreturn(m_ptr)
 register message *m_ptr;
 {
 /* POSIX style signals require sys_sigreturn to put things in order before the
@@ -647,7 +647,7 @@ register message *m_ptr;
 /*===========================================================================*
  *				do_kill					     *
  *===========================================================================*/
-PRIVATE int do_kill(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_kill(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_kill(). Cause a signal to be sent to a process via MM.
@@ -665,7 +665,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *			      do_endsig					     *
  *===========================================================================*/
-PRIVATE int do_endsig(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_endsig(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Finish up after a KSIG-type signal, caused by a SYS_KILL message or a call
@@ -687,7 +687,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_copy					     *
  *===========================================================================*/
-PRIVATE int do_copy(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_copy(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_copy().  Copy data for MM or FS. */
@@ -741,7 +741,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_vcopy				     *
  *===========================================================================*/
-PRIVATE int do_vcopy(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_vcopy(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Handle sys_vcopy(). Copy multiple blocks of memory */
@@ -782,7 +782,7 @@ register message *m_ptr;	/* pointer to request message */
  *==========================================================================*/
 PUBLIC struct bparam_s boot_parameters;
 
-PRIVATE int do_gboot(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_gboot(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
 /* Copy the boot parameters.  Normally only called during fs init. */
@@ -801,7 +801,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *				do_mem					     *
  *===========================================================================*/
-PRIVATE int do_mem(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_mem(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Return the base and size of the next chunk of memory. */
@@ -822,7 +822,7 @@ register message *m_ptr;	/* pointer to request message */
 /*==========================================================================*
  *				do_umap					    *
  *==========================================================================*/
-PRIVATE int do_umap(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_umap(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
 /* Same as umap(), for non-kernel processes. */
@@ -844,7 +844,7 @@ register message *m_ptr;	/* pointer to request message */
 #define TR_DATA		(m_ptr->m2_l2)
 #define TR_VLSIZE	((vir_bytes) sizeof(long))
 
-PRIVATE int do_trace(m_ptr)
+CP32_IRAM_EXT PRIVATE int do_trace(m_ptr)
 register message *m_ptr;
 {
 /* Handle the debugging commands supported by the ptrace system call
@@ -963,7 +963,7 @@ register message *m_ptr;
 /*===========================================================================*
  *				cause_sig				     *
  *===========================================================================*/
-PUBLIC void cause_sig(proc_nr, sig_nr)
+CP32_IRAM_EXT PUBLIC void cause_sig(proc_nr, sig_nr)
 int proc_nr;			/* process to be signalled */
 int sig_nr;			/* signal to be sent, 1 to _NSIG */
 {
@@ -1004,7 +1004,7 @@ int sig_nr;			/* signal to be sent, 1 to _NSIG */
 /*===========================================================================*
  *				inform					     *
  *===========================================================================*/
-PUBLIC void inform()
+CP32_IRAM_EXT PUBLIC void inform()
 {
 /* When a signal is detected by the kernel (e.g., DEL), or generated by a task
  * (e.g. clock task for SIGALRM), cause_sig() is called to set a bit in the
@@ -1035,7 +1035,7 @@ PUBLIC void inform()
 /*===========================================================================*
  *				umap					     *
  *===========================================================================*/
-PUBLIC phys_bytes umap(rp, seg, vir_addr, bytes)
+CP32_IRAM_EXT PUBLIC phys_bytes umap(rp, seg, vir_addr, bytes)
 register struct proc *rp;	/* pointer to proc table entry for process */
 int seg;			/* T, D, or S segment */
 vir_bytes vir_addr;		/* virtual address in bytes within the seg */
@@ -1108,7 +1108,7 @@ vir_bytes bytes;		/* # of bytes to be copied */
 /*==========================================================================*
  *				alloc_segments				    *
  *==========================================================================*/
-PUBLIC void alloc_segments(rp)
+CP32_IRAM_EXT PUBLIC void alloc_segments(rp)
 register struct proc *rp;
 {
 /* This is called only by do_newmap, but is broken out as a separate function
@@ -1154,7 +1154,7 @@ register struct proc *rp;
 /*==========================================================================*
  *				alloc_segments				    *
  *==========================================================================*/
-PUBLIC void alloc_segments(rp)
+CP32_IRAM_EXT PUBLIC void alloc_segments(rp)
 register struct proc *rp;
 {
 /* Xtensa/ESP32-S3 has no Intel-style segment registers or LDT to program.

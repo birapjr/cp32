@@ -62,7 +62,7 @@
 static unsigned cp32_kbd_poll_reports;
 static unsigned cp32_tty_read_reports;
 FORWARD _PROTOTYPE( void in_transfer, (tty_t *tp) );
-static int cp32_read_keyboard_event(unsigned char *event)
+CP32_IRAM_EXT static int cp32_read_keyboard_event(unsigned char *event)
 {
 	int result;
 	lock();
@@ -100,7 +100,7 @@ CP32_IRAM_EXT static int cp32_cardputer_key(unsigned char event, char *ch)
 	(void)fn; (void)alt;
 	return 1;
 }
-static void cp32_queue_console_key(char ch)
+CP32_IRAM_EXT static void cp32_queue_console_key(char ch)
 {
 	tty_t *tp = &tty_table[0];
 	if (tp->tty_incount == buflen(tp->tty_inbuf)) return;
@@ -157,7 +157,7 @@ FORWARD _PROTOTYPE( void do_close, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_read, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_write, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( int in_process, (tty_t *tp, char *buf, int count)	);
-static void cp32_trace_tty_read(unsigned count)
+CP32_IRAM_EXT static void cp32_trace_tty_read(unsigned count)
 {
 	if (++cp32_tty_read_reports == 1 ||
 	    (cp32_tty_read_reports % 50) == 0) {
@@ -302,7 +302,7 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 /*===========================================================================*
  *				do_read					     *
  *===========================================================================*/
-PRIVATE void do_read(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_read(tp, m_ptr)
 register tty_t *tp;		/* pointer to tty struct */
 message *m_ptr;			/* pointer to message sent to the task */
 {
@@ -375,7 +375,7 @@ message *m_ptr;			/* pointer to message sent to the task */
 /*===========================================================================*
  *				do_write				     *
  *===========================================================================*/
-PRIVATE void do_write(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_write(tp, m_ptr)
 register tty_t *tp;
 register message *m_ptr;	/* pointer to message sent to the task */
 {
@@ -423,7 +423,7 @@ register message *m_ptr;	/* pointer to message sent to the task */
 /*===========================================================================*
  *				do_ioctl				     *
  *===========================================================================*/
-PRIVATE void do_ioctl(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_ioctl(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
@@ -629,7 +629,7 @@ message *m_ptr;			/* pointer to message sent to task */
 /*===========================================================================*
  *				do_open					     *
  *===========================================================================*/
-PRIVATE void do_open(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_open(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
@@ -656,7 +656,7 @@ message *m_ptr;			/* pointer to message sent to task */
 /*===========================================================================*
  *				do_close				     *
  *===========================================================================*/
-PRIVATE void do_close(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_close(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
@@ -678,7 +678,7 @@ message *m_ptr;			/* pointer to message sent to task */
 /*===========================================================================*
  *				do_cancel				     *
  *===========================================================================*/
-PRIVATE void do_cancel(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_cancel(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
@@ -714,7 +714,7 @@ message *m_ptr;			/* pointer to message sent to task */
 /*===========================================================================*
  *				handle_events				     *
  *===========================================================================*/
-PUBLIC void handle_events(tp)
+CP32_IRAM_EXT PUBLIC void handle_events(tp)
 tty_t *tp;			/* TTY to check for events. */
 {
 /* Handle any events pending on a TTY.  These events are usually device
@@ -762,7 +762,7 @@ tty_t *tp;			/* TTY to check for events. */
 /*===========================================================================*
  *				in_transfer				     *
  *===========================================================================*/
-PRIVATE void in_transfer(tp)
+CP32_IRAM_EXT PRIVATE void in_transfer(tp)
 register tty_t *tp;		/* pointer to terminal to read from */
 {
 /* Transfer bytes from the input queue to a process reading from a terminal. */
@@ -826,7 +826,7 @@ register tty_t *tp;		/* pointer to terminal to read from */
 /*===========================================================================*
  *				in_process				     *
  *===========================================================================*/
-PUBLIC int in_process(tp, buf, count)
+CP32_IRAM_EXT PUBLIC int in_process(tp, buf, count)
 register tty_t *tp;		/* terminal on which character has arrived */
 char *buf;			/* buffer with input characters */
 int count;			/* number of input characters */
@@ -990,7 +990,7 @@ int count;			/* number of input characters */
 /*===========================================================================*
  *				echo					     *
  *===========================================================================*/
-PRIVATE int echo(tp, ch)
+CP32_IRAM_EXT PRIVATE int echo(tp, ch)
 register tty_t *tp;		/* terminal on which to echo */
 register int ch;		/* pointer to character to echo */
 {
@@ -1052,7 +1052,7 @@ register int ch;		/* pointer to character to echo */
 /*==========================================================================*
  *				rawecho					    *
  *==========================================================================*/
-PRIVATE void rawecho(tp, ch)
+CP32_IRAM_EXT PRIVATE void rawecho(tp, ch)
 register tty_t *tp;
 int ch;
 {
@@ -1066,7 +1066,7 @@ int ch;
 /*==========================================================================*
  *				back_over				    *
  *==========================================================================*/
-PRIVATE int back_over(tp)
+CP32_IRAM_EXT PRIVATE int back_over(tp)
 register tty_t *tp;
 {
 /* Backspace to previous character on screen and erase it. */
@@ -1096,7 +1096,7 @@ register tty_t *tp;
 /*==========================================================================*
  *				reprint					    *
  *==========================================================================*/
-PRIVATE void reprint(tp)
+CP32_IRAM_EXT PRIVATE void reprint(tp)
 register tty_t *tp;		/* pointer to tty struct */
 {
 /* Restore what has been echoed to screen before if the user input has been
@@ -1136,7 +1136,7 @@ register tty_t *tp;		/* pointer to tty struct */
 /*==========================================================================*
  *				out_process				    *
  *==========================================================================*/
-PUBLIC void out_process(tp, bstart, bpos, bend, icount, ocount)
+CP32_IRAM_EXT PUBLIC void out_process(tp, bstart, bpos, bend, icount, ocount)
 tty_t *tp;
 char *bstart, *bpos, *bend;	/* start/pos/end of circular buffer */
 int *icount;			/* # input chars / input chars used */
@@ -1222,7 +1222,7 @@ out_done:
 /*===========================================================================*
  *				dev_ioctl				     *
  *===========================================================================*/
-PRIVATE void dev_ioctl(tp)
+CP32_IRAM_EXT PRIVATE void dev_ioctl(tp)
 tty_t *tp;
 {
 /* The ioctl's TCSETSW, TCSETSF and TCDRAIN wait for output to finish to make
@@ -1248,7 +1248,7 @@ tty_t *tp;
 /*===========================================================================*
  *				setattr					     *
  *===========================================================================*/
-PRIVATE void setattr(tp)
+CP32_IRAM_EXT PRIVATE void setattr(tp)
 tty_t *tp;
 {
 /* Apply the new line attributes (raw/canonical, line speed, etc.) */
@@ -1304,7 +1304,7 @@ tty_t *tp;
 /*===========================================================================*
  *				tty_reply				     *
  *===========================================================================*/
-PUBLIC void tty_reply(code, replyee, proc_nr, status)
+CP32_IRAM_EXT PUBLIC void tty_reply(code, replyee, proc_nr, status)
 int code;			/* TASK_REPLY or REVIVE */
 int replyee;			/* destination address for the reply */
 int proc_nr;			/* to whom should the reply go? */
@@ -1325,7 +1325,7 @@ int status;			/* reply code */
 /*===========================================================================*
  *				sigchar					     *
  *===========================================================================*/
-PUBLIC void sigchar(tp, sig)
+CP32_IRAM_EXT PUBLIC void sigchar(tp, sig)
 register tty_t *tp;
 int sig;			/* SIGINT, SIGQUIT, SIGKILL or SIGHUP */
 {
@@ -1350,7 +1350,7 @@ int sig;			/* SIGINT, SIGQUIT, SIGKILL or SIGHUP */
 /*==========================================================================*
  *				tty_icancel				    *
  *==========================================================================*/
-PRIVATE void tty_icancel(tp)
+CP32_IRAM_EXT PRIVATE void tty_icancel(tp)
 register tty_t *tp;
 {
 /* Discard all pending input, tty buffer or device. */
@@ -1364,7 +1364,7 @@ register tty_t *tp;
 /*==========================================================================*
  *				tty_init				    *
  *==========================================================================*/
-PRIVATE void tty_init(tp)
+CP32_IRAM_EXT PRIVATE void tty_init(tp)
 tty_t *tp;			/* TTY line to initialize. */
 {
 /* Initialize tty structure and call device initialization routines. */
@@ -1388,7 +1388,7 @@ tty_t *tp;			/* TTY line to initialize. */
 /*==========================================================================*
  *				tty_wakeup				    *
  *==========================================================================*/
-PUBLIC void tty_wakeup(now)
+CP32_IRAM_EXT PUBLIC void tty_wakeup(now)
 clock_t now;				/* current time */
 {
 /* Wake up TTY when something interesting is happening on one of the terminal
@@ -1417,7 +1417,7 @@ clock_t now;				/* current time */
 /*===========================================================================*
  *				settimer				     *
  *===========================================================================*/
-PRIVATE void settimer(tp, on)
+CP32_IRAM_EXT PRIVATE void settimer(tp, on)
 tty_t *tp;			/* line to set or unset a timer on */
 int on;				/* set timer if true, otherwise unset */
 {
@@ -1451,21 +1451,21 @@ int on;				/* set timer if true, otherwise unset */
 /*==========================================================================*
  *				tty_devnop				    *
  *==========================================================================*/
-PUBLIC void tty_devnop(tp)
+CP32_IRAM_EXT PUBLIC void tty_devnop(tp)
 tty_t *tp;
 {
   /* Some functions need not be implemented at the device level. */
 }
 
 /* Minimal ESP32-S3 stubs until console and UART drivers are connected. */
-PUBLIC void scr_init(tp)
+CP32_IRAM_EXT PUBLIC void scr_init(tp)
 tty_t *tp;
 {
   tp->tty_devread = tty_devnop;
   tp->tty_devwrite = tty_devnop;
 }
 
-PUBLIC void rs_init(tp)
+CP32_IRAM_EXT PUBLIC void rs_init(tp)
 tty_t *tp;
 {
   tp->tty_devread = tty_devnop;
@@ -1477,7 +1477,7 @@ tty_t *tp;
 /*===========================================================================*
  *				compat_getp				     *
  *===========================================================================*/
-PRIVATE int compat_getp(tp, sg)
+CP32_IRAM_EXT PRIVATE int compat_getp(tp, sg)
 tty_t *tp;
 struct sgttyb *sg;
 {
@@ -1530,7 +1530,7 @@ struct sgttyb *sg;
 /*===========================================================================*
  *				compat_getc				     *
  *===========================================================================*/
-PRIVATE int compat_getc(tp, tc)
+CP32_IRAM_EXT PRIVATE int compat_getc(tp, tc)
 tty_t *tp;
 struct tchars *tc;
 {
@@ -1549,7 +1549,7 @@ struct tchars *tc;
 /*===========================================================================*
  *				compat_setp				     *
  *===========================================================================*/
-PRIVATE int compat_setp(tp, sg)
+CP32_IRAM_EXT PRIVATE int compat_setp(tp, sg)
 tty_t *tp;
 struct sgttyb *sg;
 {
@@ -1661,7 +1661,7 @@ struct sgttyb *sg;
 /*===========================================================================*
  *				compat_setc				     *
  *===========================================================================*/
-PRIVATE int compat_setc(tp, tc)
+CP32_IRAM_EXT PRIVATE int compat_setc(tp, tc)
 tty_t *tp;
 struct tchars *tc;
 {
@@ -1712,7 +1712,7 @@ PRIVATE struct s2s {
 /*===========================================================================*
  *				tspd2sgspd				     *
  *===========================================================================*/
-PRIVATE int tspd2sgspd(tspd)
+CP32_IRAM_EXT PRIVATE int tspd2sgspd(tspd)
 speed_t tspd;
 {
 /* Translate a termios speed to sgtty speed. */
@@ -1728,7 +1728,7 @@ speed_t tspd;
 /*===========================================================================*
  *				sgspd2tspd				     *
  *===========================================================================*/
-PRIVATE speed_t sgspd2tspd(sgspd)
+CP32_IRAM_EXT PRIVATE speed_t sgspd2tspd(sgspd)
 int sgspd;
 {
 /* Translate a sgtty speed to termios speed. */
@@ -1745,7 +1745,7 @@ int sgspd;
 /*===========================================================================*
  *				do_ioctl_compat				     *
  *===========================================================================*/
-PRIVATE void do_ioctl_compat(tp, m_ptr)
+CP32_IRAM_EXT PRIVATE void do_ioctl_compat(tp, m_ptr)
 tty_t *tp;
 message *m_ptr;
 {

@@ -17,7 +17,7 @@ extern char _stack_bottom[];
 struct memory mem[3];
 phys_clicks tot_mem_size;
 
-static phys_clicks bytes_to_clicks(phys_bytes bytes)
+CP32_IRAM_EXT static phys_clicks bytes_to_clicks(phys_bytes bytes)
 {
 	return (phys_clicks)((bytes + CLICK_SIZE - 1u) >> CLICK_SHIFT);
 }
@@ -25,7 +25,7 @@ static phys_clicks bytes_to_clicks(phys_bytes bytes)
 /*=========================================================================*
  *				mem_init				   *
  *=========================================================================*/
-PUBLIC void mem_init()
+CP32_IRAM_EXT PUBLIC void mem_init()
 {
 	phys_bytes usable_bytes = (phys_bytes)(_stack_bottom - _heap_start);
 
@@ -45,7 +45,7 @@ PUBLIC void mem_init()
 /*=========================================================================*
  *				env_parse				   *
  *=========================================================================*/
-PUBLIC int env_parse(env, fmt, field, param, min, max)
+CP32_IRAM_EXT PUBLIC int env_parse(env, fmt, field, param, min, max)
 char *env;		/* environment variable to inspect */
 char *fmt;		/* template to parse it with */
 int field;		/* field number of value to return */
@@ -116,7 +116,7 @@ badenv:
 /*=========================================================================*
  *				bad_assertion				   *
  *=========================================================================*/
-PUBLIC void bad_assertion(file, line, what)
+CP32_IRAM_EXT PUBLIC void bad_assertion(file, line, what)
 char *file;
 int line;
 char *what;
@@ -128,7 +128,7 @@ char *what;
 /*=========================================================================*
  *				bad_compare				   *
  *=========================================================================*/
-PUBLIC void bad_compare(file, line, lhs, what, rhs)
+CP32_IRAM_EXT PUBLIC void bad_compare(file, line, lhs, what, rhs)
 char *file;
 int line;
 int lhs;

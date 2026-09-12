@@ -17,30 +17,30 @@
 #define KBD_ADDR 0x34u
 static volatile unsigned kbd_trace_stage;
 
-static void wait_i2c(void) { volatile unsigned n = 80; while (n--) ; }
-static void release(unsigned pin) { *(volatile uint32_t *)GPIO_ENABLE_W1TC = 1u << pin; }
-static void pull_low(unsigned pin) {
+CP32_IRAM_EXT static void wait_i2c(void) { volatile unsigned n = 80; while (n--) ; }
+CP32_IRAM_EXT static void release(unsigned pin) { *(volatile uint32_t *)GPIO_ENABLE_W1TC = 1u << pin; }
+CP32_IRAM_EXT static void pull_low(unsigned pin) {
   *(volatile uint32_t *)GPIO_OUT_W1TC = 1u << pin;
   *(volatile uint32_t *)GPIO_ENABLE_W1TS = 1u << pin;
 }
-static int read_pin(unsigned pin) { return (*(volatile uint32_t *)GPIO_IN >> pin) & 1; }
-static void configure_pads(void) {
+CP32_IRAM_EXT static int read_pin(unsigned pin) { return (*(volatile uint32_t *)GPIO_IN >> pin) & 1; }
+CP32_IRAM_EXT static void configure_pads(void) {
   *(volatile uint32_t *)IO_MUX_PIN(KBD_SDA) |= IO_MUX_FUN_PU | IO_MUX_FUN_IE;
   *(volatile uint32_t *)IO_MUX_PIN(KBD_SCL) |= IO_MUX_FUN_PU | IO_MUX_FUN_IE;
   *(volatile uint32_t *)IO_MUX_PIN(KBD_INT) |= IO_MUX_FUN_PU | IO_MUX_FUN_IE;
 }
-static void start_i2c(void) {
+CP32_IRAM_EXT static void start_i2c(void) {
   release(KBD_SDA); release(KBD_SCL); wait_i2c(); pull_low(KBD_SDA); wait_i2c(); pull_low(KBD_SCL);
 }
-static void restart_i2c(void) {
+CP32_IRAM_EXT static void restart_i2c(void) {
   /* A repeated START must release SDA while SCL is high before asserting it. */
   release(KBD_SDA); release(KBD_SCL); wait_i2c();
   pull_low(KBD_SDA); wait_i2c(); pull_low(KBD_SCL);
 }
-static void stop_i2c(void) {
+CP32_IRAM_EXT static void stop_i2c(void) {
   pull_low(KBD_SDA); release(KBD_SCL); wait_i2c(); release(KBD_SDA); wait_i2c();
 }
-static int write_byte(uint8_t value) {
+CP32_IRAM_EXT static int write_byte(uint8_t value) {
   unsigned bit;
   for (bit = 0; bit < 8; bit++) {
     if (value & 0x80) release(KBD_SDA); else pull_low(KBD_SDA);
@@ -49,7 +49,7 @@ static int write_byte(uint8_t value) {
   release(KBD_SDA); release(KBD_SCL); wait_i2c(); bit = !read_pin(KBD_SDA); pull_low(KBD_SCL); return (int)bit;
 }
 
-static uint8_t read_byte(int acknowledge) {
+CP32_IRAM_EXT static uint8_t read_byte(int acknowledge) {
   unsigned bit;
   uint8_t value = 0;
   release(KBD_SDA);
@@ -63,7 +63,7 @@ static uint8_t read_byte(int acknowledge) {
   return value;
 }
 
-static int write_register(uint8_t reg, uint8_t value)
+CP32_IRAM_EXT static int write_register(uint8_t reg, uint8_t value)
 {
   int ack;
   start_i2c();
@@ -74,7 +74,7 @@ static int write_register(uint8_t reg, uint8_t value)
   return ack;
 }
 
-static int read_register(uint8_t reg, unsigned char *value)
+CP32_IRAM_EXT static int read_register(uint8_t reg, unsigned char *value)
 {
   int ack;
   kbd_trace_stage = 1;
@@ -134,7 +134,7 @@ CP32_IRAM_EXT int cardputer_keyboard_read_event(unsigned char *event)
   return ack ? (*event != 0) : -1;
 }
 
-int cardputer_keyboard_init(void)
+CP32_IRAM_EXT int cardputer_keyboard_init(void)
 {
   int ok = 1;
   /* Match M5Cardputer's TCA8418KeyboardReader: Cardputer Adv is a 7x8
@@ -160,7 +160,7 @@ int cardputer_keyboard_init(void)
   return ok;
 }
 
-int cardputer_keyboard_probe(void)
+CP32_IRAM_EXT int cardputer_keyboard_probe(void)
 {
   int ack;
   configure_pads();

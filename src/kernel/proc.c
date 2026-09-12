@@ -29,12 +29,12 @@
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
 extern struct proc *current_proc;
-PRIVATE int copy_message(struct proc *sender, message *src,
+CP32_IRAM_EXT PRIVATE int copy_message(struct proc *sender, message *src,
                          struct proc *receiver, message *dst);
-PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
+CP32_IRAM_EXT PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
                                     struct proc *receiver, message *dst);
 
-PRIVATE void cp32_save_blocked_frame(struct proc *rp)
+CP32_IRAM_EXT PRIVATE void cp32_save_blocked_frame(struct proc *rp)
 {
   if (rp == NIL_PROC) return;
   rp->p_blocked_frame_valid = TRUE;
@@ -286,7 +286,7 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
  * blocked owner to be returned through its stale exception frame.  The
  * assembly entry calls this only after dispatch has recorded the blocked
  * frame; the gate stays disabled until hardware proves the selected frame. */
-PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
+CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
                                      cp32_user_frame_t *frame)
 {
   struct proc *next;
@@ -516,7 +516,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   return OK;
 }
 
-PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
+CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
   if (rp == NIL_PROC) return;
   if (rp->p_blocked_frame_valid &&
@@ -587,14 +587,14 @@ FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
 
-PRIVATE int proc_queue(struct proc *rp)
+CP32_IRAM_EXT PRIVATE int proc_queue(struct proc *rp)
 {
   if (rp->p_nr < 0) return TASK_Q;
   if (rp->p_nr < LOW_USER) return SERVER_Q;
   return USER_Q;
 }
 
-PRIVATE int blocked_handoff_eligible(struct proc *rp)
+CP32_IRAM_EXT PRIVATE int blocked_handoff_eligible(struct proc *rp)
 {
   uint32_t reasons = 0;
   if (cp32_blocked_handoff_gate) reasons |= 1u << 0;
@@ -642,12 +642,16 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
   return eligible;
 }
 
-PRIVATE int proc_is_ready_queued(struct proc *target)
+CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
 {
   int q;
+  int offset;
+  static int next_queue;
   struct proc *rp;
 
-  for (q = 0; q < NQ; q++) {
+  if (next_queue < 0 || next_queue >= NQ) next_queue = 0;
+  for (offset = 0; offset < NQ; offset++) {
+    q = (next_queue + offset) % NQ;
     for (rp = rdy_head[q]; rp != NIL_PROC; rp = rp->p_nextready) {
       if (rp == target) return TRUE;
     }
@@ -669,7 +673,7 @@ struct proc *held_tail = NIL_PROC;
 /*===========================================================================*
  *				interrupt				     * 
  *===========================================================================*/
-PRIVATE int interrupt_message(struct proc *rp, message *buffer)
+CP32_IRAM_EXT PRIVATE int interrupt_message(struct proc *rp, message *buffer)
 {
   int header[2] = { HARDWARE, HARD_INT };
   phys_bytes dst = numap(rp->p_nr, (vir_bytes)buffer, MESS_SIZE);
@@ -678,7 +682,7 @@ PRIVATE int interrupt_message(struct proc *rp, message *buffer)
   return OK;
 }
 
-PUBLIC void interrupt(int task)
+CP32_IRAM_EXT PUBLIC void interrupt(int task)
 {
   struct proc *rp;
   int saved_ps;
@@ -722,7 +726,7 @@ PUBLIC void interrupt(int task)
 }
 
 /* Optional IPC execution trace, isolated for easy removal. */
-PRIVATE void cp32_trace_ipc(int operation, int endpoint)
+CP32_IRAM_EXT PRIVATE void cp32_trace_ipc(int operation, int endpoint)
 {
   cp32_ipc_trace_calls++;
   /* CLOCK performs a receive on every tick; keep the first-use proof while
@@ -741,7 +745,7 @@ PRIVATE void cp32_trace_ipc(int operation, int endpoint)
 /*===========================================================================*
  *				sys_call				     * 
  *===========================================================================*/
-PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 {
   struct proc *rp = proc_ptr;
   int result;
@@ -819,7 +823,7 @@ PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
   return OK;
 }
 
-PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   struct proc *dest_ptr, *next_ptr;
   int result;
@@ -879,7 +883,7 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 /*===========================================================================*
  *				mini_rec				     * 
  *===========================================================================*/
-PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 {
   struct proc *sender_ptr;
   struct proc *previous_ptr;
@@ -887,6 +891,10 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isoksrc_dest(src)) return E_BAD_SRC;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
+  /* A blocked receiver owns its receive buffer and source selector until a
+   * matching sender or hardware notification completes the call.  Do not
+   * overwrite that state with a second RECEIVE request. */
+  if (caller_ptr->p_flags & RECEIVING) return ELOCKED;
 
   if (!(caller_ptr->p_flags & SENDING)) {
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
@@ -930,10 +938,14 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 PRIVATE void pick_proc()
 {
   int q;
+  int offset;
+  static int next_queue;
   struct proc *rp = NIL_PROC;
   static unsigned pick_trace_count;
 
-  for (q = 0; q < NQ; q++) {
+  if (next_queue < 0 || next_queue >= NQ) next_queue = 0;
+  for (offset = 0; offset < NQ; offset++) {
+    q = (next_queue + offset) % NQ;
     while (rdy_head[q] != NIL_PROC && rdy_head[q]->p_flags != 0) {
       rp = rdy_head[q]; rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
@@ -947,6 +959,7 @@ PRIVATE void pick_proc()
         rdy_tail[q] = NIL_PROC;
       }
       rp->p_nextready = NIL_PROC;
+      next_queue = (q + 1) % NQ;
       break;
     }
     rp = NIL_PROC;
@@ -988,7 +1001,7 @@ PRIVATE void pick_proc()
 /*===========================================================================*
  *				ready					     * 
  *===========================================================================*/
-PRIVATE void ready(struct proc *rp)
+CP32_IRAM_EXT PRIVATE void ready(struct proc *rp)
 {
   int q;
 
@@ -1008,7 +1021,7 @@ PRIVATE void ready(struct proc *rp)
   rdy_tail[q] = rp;
 }
 
-PRIVATE void unready(struct proc *rp)
+CP32_IRAM_EXT PRIVATE void unready(struct proc *rp)
 {
   int q;
   struct proc *prev, *cur;
@@ -1032,7 +1045,7 @@ PRIVATE void unready(struct proc *rp)
 /*===========================================================================*
  *				switch_to				     * 
  *===========================================================================*/
-PRIVATE void switch_to(struct proc *next)
+CP32_IRAM_EXT PRIVATE void switch_to(struct proc *next)
 {
     if (next != NIL_PROC) current_proc = next;
 }
@@ -1060,7 +1073,7 @@ CP32_IRAM_EXT void sched()
 /*==========================================================================*
  *				lock_mini_send				    *
  *==========================================================================*/
-PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   int result;
   int saved_ps = lock_save();
@@ -1074,7 +1087,7 @@ PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 /*==========================================================================*
  *				lock_pick_proc				    *
  *==========================================================================*/
-PUBLIC void lock_pick_proc()
+CP32_IRAM_EXT PUBLIC void lock_pick_proc()
 {
   switching = TRUE;
   pick_proc();
@@ -1084,7 +1097,7 @@ PUBLIC void lock_pick_proc()
 /*==========================================================================*
  *				lock_ready				    *
  *==========================================================================*/
-PUBLIC void lock_ready(struct proc *rp)
+CP32_IRAM_EXT PUBLIC void lock_ready(struct proc *rp)
 {
   switching = TRUE;
   ready(rp);
@@ -1094,7 +1107,7 @@ PUBLIC void lock_ready(struct proc *rp)
 /*==========================================================================*
  *				lock_unready				    *
  *==========================================================================*/
-PUBLIC void lock_unready(struct proc *rp)
+CP32_IRAM_EXT PUBLIC void lock_unready(struct proc *rp)
 {
   switching = TRUE;
   unready(rp);
@@ -1114,7 +1127,7 @@ CP32_IRAM_EXT PUBLIC void lock_sched()
 /*==========================================================================*
  *				unhold					    *
  *==========================================================================*/
-PUBLIC void unhold()
+CP32_IRAM_EXT PUBLIC void unhold()
 {
   struct proc *rp;
   int saved_ps;

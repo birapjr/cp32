@@ -218,7 +218,7 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-  usbj_print("[TEST CARDPUTER-KBD 155]\r\n");
+    usbj_print("[TEST CARDPUTER-KBD 193]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();

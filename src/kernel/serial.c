@@ -1,7 +1,15 @@
 /* function to log/write to serial */
 #include "kernel.h"
 
-static void usbj_putc(char c) {
+/* Keep this fallback local because serial.c is also used by freestanding
+ * builds that do not include kernel.h. */
+#if defined(__XTENSA__)
+#define CP32_IRAM_EXT __attribute__((section(".iram_ext.text")))
+#else
+#define CP32_IRAM_EXT
+#endif
+
+CP32_IRAM_EXT static void usbj_putc(char c) {
     volatile uint32_t t = 200000;
     while (!(USBJ_EP1_CONF & USBJ_IN_EP_DATA_FREE))
         if (!--t) return;

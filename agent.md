@@ -72,6 +72,19 @@ The expected toolchain is `xtensa-esp32s3-elf-gcc` and related binutils. Image g
 - The build uses `-mabi=call0`, `-ffreestanding`, `-nostdlib`, `-nostartfiles`, `-O0`, and `-mlongcalls`. Assembly must preserve the calling convention and match the C-visible stack/register assumptions.
 - The linker entry point is `CP32`. The ESP image loader places the linked IRAM/DRAM runtime segments at their VMAs before `CP32`; `mpx32.S` zeros `.bss`, establishes the stack/vector base, and enters C. Do not add software LMA copy loops without changing and revalidating the image format.
 - The linker places vectors and kernel `.text` in IRAM and `.data`/`.rodata` in DRAM. A fixed 128 KiB heap and 32 KiB downward-growing stack are reserved in DRAM.
+- D/IRAM placement policy: use the extended internal D/IRAM region for
+  ordinary C runtime code that does not need to execute from the low loader
+  IRAM window. Good candidates include TTY/keyboard user-path handlers,
+  system-task services, IPC helpers, memory-management services, diagnostics,
+  parsing, and other code reached after startup. It can also hold persistent
+  kernel buffers or small data structures when their placement is explicitly
+  mapped and accounted for. Keep low IRAM reserved for exception vectors,
+  reset/loader entry, assembly trampolines, interrupt entry/exit, and code with
+  a demonstrated latency or cache-off requirement. D/IRAM is still internal
+  SRAM: it is not a substitute for external PSRAM, and code placed there must
+  not assume flash/cache availability. Place a function with `CP32_IRAM_EXT`,
+  verify its literals and callees are valid for that region, and inspect both
+  `_iram_end` and `_iram_ext_end` in the linker map after every move.
 - Peripheral access is direct memory-mapped I/O through `volatile` register macros. Do not use ESP-IDF APIs unless the project is explicitly migrated to that runtime.
 - The USB Serial/JTAG endpoint is the current diagnostic console. Keep early diagnostics simple and safe before interrupts, scheduling, or normal TTY services are operational.
 - The ESP32-S3 SYSTIMER is the intended clock source: UNIT0 is treated as a 16 MHz counter and TARGET0 runs periodically at the 60 Hz MINIX rate. TARGET0 maps to CPU interrupt 2, an Xtensa level-1 interrupt on this core; it enters through the kernel/user exception dispatchers and returns with `rfe`.
