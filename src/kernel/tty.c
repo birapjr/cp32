@@ -57,6 +57,17 @@
 #include <minix/keymap.h>
 #endif
 #include "tty.h"
+#include "cardputer.h"
+
+static unsigned cp32_kbd_poll_reports;
+static int cp32_read_keyboard_event(unsigned char *event)
+{
+	int result;
+	lock();
+	result = cardputer_keyboard_read_event(event);
+	unlock();
+	return result;
+}
 #include "proc.h"
 
 /* Address of a tty structure. */
@@ -142,6 +153,7 @@ PUBLIC void tty_task()
   message tty_mess;		/* buffer for all incoming messages */
   register tty_t *tp;
   unsigned line;
+  unsigned char key_event;
 
   /* Initialize the terminal lines. */
   for (tp = FIRST_TTY; tp < END_TTY; tp++) tty_init(tp);
@@ -150,6 +162,17 @@ PUBLIC void tty_task()
 	/* Handle any events on any of the ttys. */
 	for (tp = FIRST_TTY; tp < END_TTY; tp++) {
 		if (tp->tty_events) handle_events(tp);
+	}
+	/* Normal operation is INT-driven; do not poll the FIFO when INT is idle. */
+	if (cardputer_keyboard_interrupt_asserted() &&
+	    cp32_read_keyboard_event(&key_event) > 0) {
+		/* Raw TCA8418 event is exposed until the Adv keymap is installed. */
+		usbj_print("[KBD event="); usbj_print_u32(key_event);
+		usbj_print("]\r\n");
+	}
+	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 1000) == 0) {
+		usbj_print("[KBD poll="); usbj_print_u32(cp32_kbd_poll_reports);
+		usbj_print("]\r\n");
 	}
 
 	receive(ANY, &tty_mess);
@@ -1717,5 +1740,3 @@ message *m_ptr;
 }
 #endif /* ENABLE_BINCOMPAT */
 #endif /* ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT */
-
-

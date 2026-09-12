@@ -88,6 +88,9 @@ Also emit a short test-identity tag immediately before `main()` calls
 feature under test changes, so every hardware log identifies what was flashed.
 The marker must be emitted immediately before the `kernel_idle_loop()` call
 in `main()` on every feature-change build.
+Append an incrementing decimal counter to the marker, for example
+`[TEST CARDPUTER-KBD 2]`, and increment it for every later image change so
+hardware logs can prove which build is running.
 When a plan item is completed, mark its line with `[x]` at the beginning in
 `plan.md`. Do not mark partially implemented or hardware-unverified work as
 complete; describe the remaining work on a following line instead.

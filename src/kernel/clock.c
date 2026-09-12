@@ -460,6 +460,10 @@ int irq;
    * otherwise the ISR re-fires immediately.                               */
   REG_WRITE(SYSTIMER_INT_CLR_REG, SYSTIMER_TARGET0_INT_BIT);
 
+  /* Until the TCA8418 GPIO interrupt is routed, clock ticks provide the
+   * periodic wakeup that lets TTY poll the keyboard FIFO. */
+  interrupt(TTY);
+
   /* Step 2: Reload next alarm (TARGET0 is one-shot, must reschedule).
    * Use current counter value as base to avoid drift on missed ticks.    */
   {
@@ -600,7 +604,6 @@ PUBLIC void systimer_irq_start()
   /* Startup may leave PS.INTLEVEL raised while boot diagnostics run.
    * enable_irq() preserves that state; explicitly open the CPU gate before
    * entering the idle loop so the mapped level-1 IRQ can be taken. */
-  unlock();
 }
 
 

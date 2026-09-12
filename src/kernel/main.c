@@ -1,6 +1,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include "irq_frame.h"
+#include "cardputer.h"
 #include <string.h>
 #include <minix/com.h>
 
@@ -25,6 +26,9 @@ void kernel_idle_loop(void)
   static uint32_t executions;
   static int announced;
 
+  /* main() enters here with the boot lock held so its test marker cannot be
+   * interrupted; open the CPU gate at the first instruction of the loop. */
+  unlock();
   if (!announced) {
     announced = 1;
     status_line("\r\nkernel_idle_loop()", 2);
@@ -108,11 +112,19 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  systimer_irq_start();
 
+  usbj_print("[KBD probe=");
+  usbj_print_u32((uint32_t)cardputer_keyboard_probe());
+  usbj_print("]\r\n");
+  usbj_print("[KBD init=");
+  usbj_print_u32((uint32_t)cardputer_keyboard_init());
+  usbj_print("]\r\n");
+  /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
+  lock();
+  systimer_irq_start();
+  usbj_print("[TEST CARDPUTER-KBD 31]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
-  usbj_print("[TEST MM-DESC]\r\n");
   kernel_idle_loop();
 }
 

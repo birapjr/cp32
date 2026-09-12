@@ -112,6 +112,13 @@ PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
     rp = proc_addr(proc_nr);
     if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE)) return 0;
 
+    /* Kernel tasks pass IPC buffers on their kernel stacks.  Those buffers
+     * are already physical flat addresses on ESP32-S3 and do not fit the
+     * synthetic MINIX segment map used for user processes. */
+    if (istaskp(rp) && (uint64_t)vir >= 0x3FC00000ULL &&
+        (uint64_t)vir + len <= 0x3FD00000ULL)
+        return (phys_bytes)vir;
+
     for (i = 0; i < NR_SEGS; i++) {
         uint64_t base = rp->p_map[i].mem_vir;
         uint64_t size = (uint64_t)rp->p_map[i].mem_len << CLICK_SHIFT;
