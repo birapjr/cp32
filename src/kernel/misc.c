@@ -109,6 +109,7 @@ badenv:
   printf("Bad environment setting: '%s = %s'\n", env, k_getenv(env));
   panic("", NO_NUM);
   /*NOTREACHED*/
+  return EP_UNSET;
 }
 
 #if DEBUG

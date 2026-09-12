@@ -14,7 +14,7 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = start.c hardware_init.c main.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c
+C_SRCS = start.c hardware_init.c main.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c mem.c
 LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
@@ -33,6 +33,21 @@ BUILD_DIR = build
 
 # Default target
 all: $(BUILD_DIR)/$(TARGET).bin
+
+# Host-side tests do not require the Xtensa toolchain. Keep the test runner
+# outside src/, while retaining a single project Makefile.
+tests:
+	@set -e; \
+	status=0; \
+	for test in $$(find ../tests -maxdepth 1 -type f -name 'test_*.sh' | sort); do \
+		printf '%s\n' "==> $$test"; \
+		if sh "$$test"; then \
+			printf '%s\n' "PASS $$test"; \
+		else \
+			printf '%s\n' "FAIL $$test"; status=1; \
+		fi; \
+	done; \
+	exit $$status
 
 # Compile all .c files
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
