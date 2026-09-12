@@ -147,8 +147,9 @@ PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pending)
   }
 }
 
-PRIVATE void cp32_print_irq_status(void)
+CP32_IRAM_EXT PRIVATE void cp32_print_irq_status(void)
 {
+#if CP32_VERBOSE_DIAGNOSTICS
   int owner = cp32_irq_saved_owner != NIL_PROC ? cp32_irq_saved_owner->p_nr : 9999;
   int selected = proc_ptr != NIL_PROC ? proc_ptr->p_nr : 9999;
   int handed_off = cp32_irq_saved_owner != NIL_PROC &&
@@ -162,12 +163,13 @@ PRIVATE void cp32_print_irq_status(void)
   usbj_print(" unknown="); usbj_print_u32(cp32_irq_unknown_count);
   usbj_print("]\r\n");
   cp32_irq_status_reports++;
+#endif
 }
 
 /*===========================================================================*
  *                              clock_task                                    *
  *===========================================================================*/
-PUBLIC void clock_task()
+CP32_IRAM_EXT PUBLIC void clock_task()
 {
   static unsigned clock_task_reports;
 /* Main program of clock task.  It corrects realtime by adding pending
@@ -176,8 +178,10 @@ PUBLIC void clock_task()
  */
   int opcode;
 
+  #if CP32_VERBOSE_DIAGNOSTICS
   if (++clock_task_reports == 1 || (clock_task_reports % 50) == 0)
     usbj_print("[CLOCK_TASK]\r\n");
+  #endif
 
   init_clock();           /* initialize SYSTIMER and register IRQ handler */
 
@@ -267,7 +271,7 @@ PRIVATE void do_clocktick()
 /*===========================================================================*
  *                              do_getuptime                                  *
  *===========================================================================*/
-PRIVATE void do_getuptime()
+CP32_IRAM_EXT PRIVATE void do_getuptime()
 {
 /* Return the current clock uptime in ticks. */
   mc.NEW_TIME = realtime;
@@ -277,7 +281,7 @@ PRIVATE void do_getuptime()
 /*===========================================================================*
  *                              get_uptime                                    *
  *===========================================================================*/
-PUBLIC clock_t get_uptime()
+CP32_IRAM_EXT PUBLIC clock_t get_uptime()
 {
 /* Return uptime in ticks for callers outside the clock task.
  * Guards pending_ticks with lock/unlock to get a consistent snapshot.
@@ -294,7 +298,7 @@ PUBLIC clock_t get_uptime()
 /*===========================================================================*
  *                              do_get_time                                   *
  *===========================================================================*/
-PRIVATE void do_get_time()
+CP32_IRAM_EXT PRIVATE void do_get_time()
 {
 /* Return the current wall-clock time in seconds. */
   mc.NEW_TIME = boot_time + realtime / HZ;
@@ -304,7 +308,7 @@ PRIVATE void do_get_time()
 /*===========================================================================*
  *                              do_set_time                                   *
  *===========================================================================*/
-PRIVATE void do_set_time(m_ptr)
+CP32_IRAM_EXT PRIVATE void do_set_time(m_ptr)
 message *m_ptr;
 {
 /* Set the real time clock.  Only the superuser can use this call. */
@@ -315,7 +319,7 @@ message *m_ptr;
 /*===========================================================================*
  *                              do_setalarm                                   *
  *===========================================================================*/
-PRIVATE void do_setalarm(m_ptr)
+CP32_IRAM_EXT PRIVATE void do_setalarm(m_ptr)
 message *m_ptr;
 {
 /* A process wants an alarm signal or a task wants a watchdog function
@@ -360,7 +364,7 @@ message *m_ptr;
 /*===========================================================================*
  *                              common_setalarm                               *
  *===========================================================================*/
-PRIVATE void common_setalarm(proc_nr, delta_ticks, function)
+CP32_IRAM_EXT PRIVATE void common_setalarm(proc_nr, delta_ticks, function)
 int        proc_nr;
 long       delta_ticks;
 watchdog_t function;
@@ -524,7 +528,7 @@ int irq;
 }
 
 /* Called from the level-1 handler; disabled until scheduler handoff is safe. */
-PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
+CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 {
   static unsigned rfe_trace_count;
   cp32_clock_irq_bridge_calls++;
@@ -588,6 +592,7 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_irq_dispatch_active = 0;
   if (cp32_irq_return_proc == NIL_PROC ||
       cp32_irq_return_proc->p_flags != 0) {
+    #if CP32_VERBOSE_DIAGNOSTICS
     if (cp32_irq_return_proc != NIL_PROC &&
         cp32_irq_return_proc->p_nr == FS_PROC_NR) {
       usbj_print("[RFE overwrite fs-flags=");
@@ -596,8 +601,10 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       usbj_print_u32((uint32_t)proc_ptr->p_nr);
       usbj_print("]\r\n");
     }
+    #endif
     cp32_irq_return_proc = proc_ptr;
   }
+  #if CP32_VERBOSE_DIAGNOSTICS
   if (rfe_trace_count == 0) {
     usbj_print("[RFE publish target=");
     usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
@@ -607,7 +614,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print_u32(cp32_sched_sequence);
     usbj_print("]\r\n");
   }
-
   /* This is intentionally adjacent to the scheduler call: it records the
    * frame selected for the assembly rfi path, without tracing every IRQ. */
   if (cp32_irq_return_proc != NIL_PROC &&
@@ -625,6 +631,7 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print_hex32((uint32_t)cp32_irq_return_proc->p_reg.psw);
     usbj_print("]\r\n");
   }
+  #endif
 
   /* Stable bring-up status: first IRQ, then every 50 IRQs. */
   if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 50) == 0)
@@ -795,7 +802,7 @@ struct milli_state *msp;
 /*===========================================================================*
  *                              milli_delay                                   *
  *===========================================================================*/
-PUBLIC void milli_delay(millisec)
+CP32_IRAM_EXT PUBLIC void milli_delay(millisec)
 unsigned millisec;
 {
 /* Busy-wait for at least 'millisec' milliseconds.

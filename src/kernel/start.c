@@ -24,7 +24,6 @@ extern char _vectors_end[];
 extern char _stack_bottom[];
 extern char _stack_top[];
 extern char _heap_start[];
-
 void start() {
       /* Step 1 — strobe the Super WDT before anything else. */
     wdt_feed_super_wdt();

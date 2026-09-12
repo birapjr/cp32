@@ -138,7 +138,7 @@ FORWARD _PROTOTYPE( int do_fresh, (message *m_ptr) );
 /*===========================================================================*
  *				sys_task				     *
  *===========================================================================*/
-PUBLIC void sys_task()
+CP32_IRAM_EXT PUBLIC void sys_task()
 {
 /* Main entry point of sys_task.  Get the message and dispatch on type. */
 

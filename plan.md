@@ -293,3 +293,73 @@ marks hardware behavior complete.
   RAM-disk block-device geometry contract.
 - [x] 6n. Add bounded byte-range RAM-disk access for filesystem metadata and
   records, with zero-length and out-of-range contract tests.
+- [x] 6o. Add deterministic bounded RAM-disk checksums for metadata integrity
+  checks, with host-side validation.
+- [x] 6p. Add an explicit RAM-disk format signature and validation operation,
+  leaving formatting dormant during boot for filesystem integration.
+- [x] 6q. Add version and checksum validation to the dormant RAM-disk format
+  header, preventing stale or partially corrupted metadata from being used.
+- [x] 8a. Change the CP32 TTY bring-up client to request bounded canonical
+  lines and report completed line data, preserving the existing TTY task path.
+- [x] 8b. Revert the line-buffered TTY bring-up client after it changed the
+  boot image sentinel; restore the proven one-byte diagnostic read path.
+- [x] 8c. Add phased startup diagnostics for `.data`/`.bss` bounds and the
+  data sentinel to localize loader versus startup corruption.
+- [x] 8d. Revert phased startup diagnostics after they changed the image
+  layout and reproduced sentinel corruption; restore the compact startup path.
+- [x] 8e. Add one retained main-stage data-layout diagnostic reporting the
+  sentinel and linker section bounds before marker 131.
+- [x] 8f. Remove the oversized diagnostic and enforce the discovered 32 KiB
+  CP32 loader IRAM window with a link-time assertion before marker 132.
+- [x] 8g. Add a minimal post-entry stability trace after the kernel reaches
+  `kernel_idle_loop()`, preserving the enforced 32 KiB image limit.
+- [x] 8h. Encode the stability trace in the existing idle-entry status line
+  after the additional print exceeded the hard 32 KiB loader window.
+- [x] 8i. Split IRAM into a 32 KiB bootstrap window and a second contiguous
+  internal-IRAM window so kernel text can grow beyond the loader bootstrap limit.
+- [x] 8j. Keep the complete pre-boot C dependency set in the bootstrap IRAM
+  segment while placing the remaining kernel text in extended IRAM.
+- [x] 8k. Revert the multi-segment IRAM experiment after it produced no USB
+  output; restore the validated single-segment 32 KiB loader model.
+- [x] 8l. Compile out repetitive IRQ, RFE, CLOCK, and keyboard polling traces
+  by default, preserving functional input and the compact validated image.
+- [x] 8m. Add an ESP-IDF-style D/IRAM linker window with its DRAM alias
+  reservation, and place the isolated RAM-disk code in the extended window.
+- [x] 8n. Move the D/IRAM DRAM-alias reservation before `.data` placement so
+  initialized data cannot overlap extended executable SRAM.
+- [x] 8o. Execute the RAM-disk capacity accessor from extended D/IRAM during
+  boot, providing a minimal hardware validation of the new code window.
+- [x] 8p. Re-enable the retained verbose diagnostics after confirming that
+  extended D/IRAM code executes correctly on hardware.
+- [x] 8q. Relocate timer IRQ dispatch and its diagnostic helper into D/IRAM
+  after verbose diagnostics exceeded the bootstrap window by 44 bytes.
+- [x] 8r. Relocate the runtime `clock_task()` implementation into D/IRAM,
+  keeping reset and startup dependencies in the bootstrap IRAM window.
+- [x] 8s. Relocate the runtime `tty_task()` implementation into D/IRAM,
+  preserving the keyboard and TTY execution path while reducing low-IRAM use.
+- [x] 8t. Relocate the runtime `sys_task()` implementation into D/IRAM,
+  preserving the assembly interrupt entry and reset path in low IRAM.
+- [x] 8u. Relocate the runtime `mm_task()` memory server into D/IRAM while
+  keeping reset/startup and interrupt-entry code in low IRAM.
+- [x] 8v. Relocate runtime keyboard event translation into D/IRAM while
+  retaining boot-time keyboard probing, initialization, and I²C access below.
+- [x] 8w. Relocate runtime keyboard event reads and interrupt-state checks
+  into D/IRAM while retaining boot-time probe/configuration code in low IRAM.
+- [x] 8x. Relocate non-boot keyboard status/configuration and diagnostic
+  accessors into D/IRAM, retaining the boot probe/init path in low IRAM.
+- [x] 8y. Relocate the post-start `kernel_idle_loop()` into D/IRAM while
+  retaining all reset and boot diagnostics in low IRAM.
+- [x] 8z. Relocate the runtime TTY client loop into D/IRAM while preserving
+  the boot-time process setup and diagnostic path.
+- [x] 8aa. Relocate the runtime scheduler implementation into D/IRAM while
+  preserving low-IRAM reset, startup, and interrupt-entry dependencies.
+- [x] 8ab. Relocate runtime `lock_sched()` into D/IRAM while preserving the
+  low-IRAM reset and startup path.
+- [x] 8ac. Relocate the runtime millisecond delay helper into D/IRAM while
+  retaining low-level timer interrupt and startup setup in low IRAM.
+- [x] 8ad. Relocate the runtime `get_uptime()` helper into D/IRAM while
+  retaining timer initialization and interrupt entry in low IRAM.
+- [x] 8ae. Relocate runtime clock time/uptime service handlers into D/IRAM
+  while retaining timer initialization and interrupt entry in low IRAM.
+- [x] 8af. Relocate runtime alarm service handlers into D/IRAM while retaining
+  timer initialization and interrupt entry in low IRAM.

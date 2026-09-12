@@ -70,7 +70,7 @@ static int cp32_read_keyboard_event(unsigned char *event)
 	unlock();
 	return result;
 }
-static int cp32_cardputer_key(unsigned char event, char *ch)
+CP32_IRAM_EXT static int cp32_cardputer_key(unsigned char event, char *ch)
 {
 	static const char keys[4][14] = {
 		"`1234567890-=\b", "\tqwertyuiop[]\\",
@@ -207,7 +207,7 @@ PRIVATE struct winsize winsize_defaults;	/* = all zeroes */
 /*===========================================================================*
  *				tty_task				     *
  *===========================================================================*/
-PUBLIC void tty_task()
+CP32_IRAM_EXT PUBLIC void tty_task()
 {
 /* Main routine of the terminal task. */
 
@@ -237,14 +237,18 @@ PUBLIC void tty_task()
 					unlock();
 				}
 			}
+			#if CP32_VERBOSE_DIAGNOSTICS
 			usbj_print("[KBD event="); usbj_print_u32(key_event);
 			usbj_print("]\r\n");
+			#endif
 		}
 	}
+	#if CP32_VERBOSE_DIAGNOSTICS
 	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 1000) == 0) {
 		usbj_print("[KBD poll="); usbj_print_u32(cp32_kbd_poll_reports);
 		usbj_print("]\r\n");
 	}
+	#endif
 
 	receive(ANY, &tty_mess);
 

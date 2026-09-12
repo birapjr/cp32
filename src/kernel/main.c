@@ -2,6 +2,7 @@
 #include "proc.h"
 #include "irq_frame.h"
 #include "cardputer.h"
+#include "ramdisk.h"
 #include <string.h>
 #include <minix/com.h>
 
@@ -21,7 +22,7 @@ extern volatile int cp32_user_handoff_gate;
 extern volatile uint32_t cp32_timer_irq_ticks;
 extern int _sendrec(int dest, message *m);
 
-static void cp32_tty_read_client(void)
+CP32_IRAM_EXT static void cp32_tty_read_client(void)
 {
   message m;
   char byte;
@@ -49,7 +50,7 @@ static void cp32_tty_read_client(void)
   }
 }
 
-void kernel_idle_loop(void)
+CP32_IRAM_EXT void kernel_idle_loop(void)
 {
   static uint32_t heartbeat;
   static uint32_t executions;
@@ -60,7 +61,7 @@ void kernel_idle_loop(void)
   unlock();
   if (!announced) {
     announced = 1;
-    status_line("\r\nkernel_idle_loop()", 2);
+    status_line("\r\nSTABLE idle-entry", 2);
   }
 
   for (;;) {
@@ -202,6 +203,9 @@ void main(void)
   usbj_print("[KBD init=");
   usbj_print_u32((uint32_t)cardputer_keyboard_init());
   usbj_print("]\r\n");
+  usbj_print("[RAMDISK capacity=");
+  usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
+  usbj_print("]\r\n");
   usbj_print("[TTY user-ready nr=");
   usbj_print_u32((uint32_t)FS_PROC_NR);
   usbj_print(" pc=");
@@ -214,7 +218,7 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-  usbj_print("[TEST CARDPUTER-KBD 123]\r\n");
+  usbj_print("[TEST CARDPUTER-KBD 155]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();

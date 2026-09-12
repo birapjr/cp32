@@ -12,3 +12,10 @@ unsigned cardputer_keyboard_bus_idle(void);
 unsigned cardputer_keyboard_trace_stage(void);
 
 #endif
+#ifndef CP32_IRAM_EXT
+#if defined(__XTENSA__)
+#define CP32_IRAM_EXT __attribute__((section(".iram_ext.text")))
+#else
+#define CP32_IRAM_EXT
+#endif
+#endif

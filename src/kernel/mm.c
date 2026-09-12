@@ -188,7 +188,7 @@ PUBLIC int cp32_mm_handle_request(message *m)
 }
 
 /* Basic MM Task entry point */
-PUBLIC void mm_task()
+CP32_IRAM_EXT PUBLIC void mm_task()
 {
     message m;
 

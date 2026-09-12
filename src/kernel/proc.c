@@ -1041,7 +1041,7 @@ PRIVATE void switch_to(struct proc *next)
 /*===========================================================================*
  *				sched					     * 
  *===========================================================================*/
-void sched()
+CP32_IRAM_EXT void sched()
 {
     /* Requeue every runnable non-idle process. Restricting this to users
      * consumes the task queue after its first pick and starves task entries. */
@@ -1104,7 +1104,7 @@ PUBLIC void lock_unready(struct proc *rp)
 /*==========================================================================*
  *				lock_sched				    *
  *==========================================================================*/
-PUBLIC void lock_sched()
+CP32_IRAM_EXT PUBLIC void lock_sched()
 {
   switching = TRUE;
   sched();

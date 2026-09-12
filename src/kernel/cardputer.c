@@ -98,14 +98,14 @@ static int read_register(uint8_t reg, unsigned char *value)
   return ack;
 }
 
-int cardputer_keyboard_read_status(unsigned char *status, unsigned char *count)
+CP32_IRAM_EXT int cardputer_keyboard_read_status(unsigned char *status, unsigned char *count)
 {
   if (status == (unsigned char *)0 || count == (unsigned char *)0) return -1;
   if (!read_register(0x02, status) || !read_register(0x03, count)) return -1;
   return 0;
 }
 
-int cardputer_keyboard_read_config(unsigned char *rows, unsigned char *cols0,
+CP32_IRAM_EXT int cardputer_keyboard_read_config(unsigned char *rows, unsigned char *cols0,
                                    unsigned char *cols1, unsigned char *cfg)
 {
   if (!rows || !cols0 || !cols1 || !cfg) return -1;
@@ -114,7 +114,7 @@ int cardputer_keyboard_read_config(unsigned char *rows, unsigned char *cols0,
   return 0;
 }
 
-int cardputer_keyboard_read_event(unsigned char *event)
+CP32_IRAM_EXT int cardputer_keyboard_read_event(unsigned char *event)
 {
   int ack;
   if (event == (unsigned char *)0) return -1;
@@ -171,21 +171,21 @@ int cardputer_keyboard_probe(void)
   return ack;
 }
 
-int cardputer_keyboard_interrupt_asserted(void)
+CP32_IRAM_EXT int cardputer_keyboard_interrupt_asserted(void)
 {
   /* TCA8418 INT is active low and open drain on Cardputer Adv G11. */
   release(KBD_INT);
   return read_pin(KBD_INT) == 0;
 }
 
-unsigned cardputer_keyboard_bus_idle(void)
+CP32_IRAM_EXT unsigned cardputer_keyboard_bus_idle(void)
 {
   release(KBD_SDA);
   release(KBD_SCL);
   return (unsigned)read_pin(KBD_SDA) | ((unsigned)read_pin(KBD_SCL) << 1);
 }
 
-unsigned cardputer_keyboard_trace_stage(void)
+CP32_IRAM_EXT unsigned cardputer_keyboard_trace_stage(void)
 {
   return kbd_trace_stage;
 }

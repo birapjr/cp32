@@ -10,10 +10,11 @@ MEMORY {
     /* Flash: LMA home for all IRAM sections               */
     irom  (RX) : ORIGIN = 0x42010000, LENGTH = 7936K
 
-    /* SRAM0: instruction bus only, full 448 KiB window    */
-    /* The ROM can load the bare-metal executable across the full contiguous
-       instruction SRAM window, as used by the reference no-SDK project. */
-    iram  (RX) : ORIGIN = 0x40370000, LENGTH = 448K
+    /* First 32 KiB: fixed instruction-cache/bootstrap IRAM window. */
+    iram  (RX) : ORIGIN = 0x40370000, LENGTH = 32K
+
+    /* ESP-IDF D/IRAM instruction alias. Its DRAM alias is reserved below. */
+    diram_i (RX) : ORIGIN = 0x40378000, LENGTH = 448K
 
     /* SRAM1: data bus, 480 KB                             */
     dram  (RW) : ORIGIN = 0x3FC88000, LENGTH = 448K
@@ -62,9 +63,27 @@ SECTIONS {
     /* End of the runtime IRAM image (useful for image/size inspection). */
     _iram_end = .;
 
+    /* Optional post-bootstrap code in the ESP-IDF-style D/IRAM window. */
+    .iram_ext.text : ALIGN(4) {
+        _iram_ext_start = .;
+        KEEP(*(.iram_ext.text))
+        KEEP(*(.iram_ext.text.*))
+        . = ALIGN(4);
+        _iram_ext_end = .;
+    } > diram_i AT > irom
+
     /* Image metadata symbols. These are not CPU copy-source addresses. */
     _iram_lma = LOADADDR(.vectors);   /* image payload location */
     _iram_vma = ORIGIN(iram);         /* runtime load address   */
+
+    /* Reserve the DRAM alias before ordinary data placement, matching
+       ESP-IDF's dram0.dummy ordering. D/IRAM instructions and DRAM data are
+       two address aliases of the same physical SRAM, so data must start after
+       the bytes occupied by extended IRAM code. */
+    .dram0.dummy (NOLOAD) : ALIGN(4) {
+        . = ORIGIN(dram) + ((_iram_ext_end > ORIGIN(diram_i)) ?
+                            (_iram_ext_end - ORIGIN(diram_i)) : 0);
+    } > dram
 
     /* --------------------------------------------------
        INITIALIZED DATA — VMA in DRAM, LMA metadata for the image builder.
@@ -139,8 +158,10 @@ SECTIONS {
     /* --------------------------------------------------
        Sanity assertions — caught at link time
     -------------------------------------------------- */
-    ASSERT(_iram_end <= 0x403E0000,
-        "ERROR: kernel code overflows IRAM (448 KiB limit)")
+    ASSERT(_iram_end <= 0x40378000,
+        "ERROR: kernel code exceeds the 32 KiB CP32 loader window")
+    ASSERT(_iram_ext_end <= 0x403E0000,
+        "ERROR: extended IRAM/DIRAM overflow")
     ASSERT(_stack_top <= 0x3FD00000,
         "ERROR: DRAM overflow — reduce heap or stack")
     ASSERT(_heap_end <= _stack_bottom,

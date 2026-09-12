@@ -6,6 +6,8 @@ int main(void)
   unsigned char in[CP32_RAMDISK_SECTOR_SIZE];
   unsigned char out[CP32_RAMDISK_SECTOR_SIZE];
   unsigned i;
+  unsigned checksum_a;
+  unsigned checksum_b;
   if (cp32_ramdisk_sector_size() != CP32_RAMDISK_SECTOR_SIZE) return 1;
   if (cp32_ramdisk_sector_count() != CP32_RAMDISK_SECTORS) return 1;
   if (cp32_ramdisk_capacity() !=
@@ -13,6 +15,11 @@ int main(void)
   if (cp32_ramdisk_write_bytes(3, in, 7) != 0) return 1;
   if (cp32_ramdisk_read_bytes(3, out, 7) != 0 || memcmp(in, out, 7) != 0) return 1;
   if (cp32_ramdisk_read_bytes(cp32_ramdisk_capacity() - 1, out, 2) == 0) return 1;
+  if (cp32_ramdisk_checksum(3, 7, &checksum_a) != 0) return 1;
+  if (cp32_ramdisk_checksum(3, 7, &checksum_b) != 0 || checksum_a != checksum_b) return 1;
+  if (cp32_ramdisk_checksum(3, 7, (unsigned *)0) == 0) return 1;
+  if (cp32_ramdisk_is_formatted()) return 1;
+  if (cp32_ramdisk_format() != 0 || !cp32_ramdisk_is_formatted()) return 1;
   for (i = 0; i < sizeof(in); ++i) in[i] = (unsigned char)i;
   cp32_ramdisk_reset();
   if (cp32_ramdisk_read(0, out) != 0) return 1;
