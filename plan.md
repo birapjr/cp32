@@ -296,8 +296,10 @@ Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
       and nested-entry policy against the reference `proc.c` behavior.
 - [ ] Port clock tick accounting, lost ticks, alarms, TTY timers, quantum
       expiration, and deferred rescheduling onto ESP32-S3 SYSTIMER.
-- [ ] Replace simplified process setup with explicit task/server descriptors,
-      stacks, initial frames, maps, and privilege state.
+- [x] Validate MINIX-style task/server descriptor metadata and stack budgets.
+- [ ] Use task descriptors for production task/server initialization: assign
+      entry points, stacks, initial frames, maps, and privilege state with a
+      guarded startup handoff.
 - [ ] Implement a panic/fatal path that preserves a short diagnostic marker.
 - [ ] Start real kernel tasks incrementally: system, clock, and TTY.
 
@@ -331,6 +333,36 @@ Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
       without exceptions or queue leaks.
 
 ## Build status
+
+- 2026-09-12 build-only: added a MINIX-style task descriptor table in
+  `src/kernel/main.c` for TTY, synchronous alarms, idle, memory, clock, SYS,
+  hardware, MM, and FS entries, preserving CP32-specific entry points and
+  stack budgets. `[TASK V1 descriptor-table]` validates descriptor count and
+  required startup entries. Production task startup remains hardware-gated.
+- 2026-09-12 build correction: deferred non-active task entry pointers until
+  production startup is enabled, preventing unused TTY/clock/system code from
+  entering the normal image. `make clean && make` passes layout validation
+  with 9,968 bytes of IRAM margin.
+
+- 2026-09-12 hardware validation: normal-image boot reported `[TASK V1
+  descriptor-table pass=1 count=9]`; descriptor count, active idle entry, and
+  stack-budget checks passed, with IRQ/context execution stable through IRQ
+  144. The next slice is production task startup from these descriptors.
+- 2026-09-12 build-only: added guarded `test-task-startup` support that uses
+  the descriptor table to initialize the canonical IDLE task entry point and
+  aligned stack frame. TTY/CLOCK/SYS startup remains disabled pending separate
+  service contracts.
+- 2026-09-12 hardware validation: `test-task-startup` reported `[TASK V2
+  idle-startup pass=1 pc=1077351872 sp=1070278928]`. Descriptor-driven IDLE
+  entry and aligned stack initialization passed, with IRQ/context execution
+  stable through IRQ 160. The next startup slice is the CLOCK task.
+- 2026-09-12 build-only: added `test-task-startup-clock`, a guarded
+  descriptor-driven CLOCK entry/frame initialization probe. The image-layout
+  check passes with 7,780 bytes of IRAM margin; hardware validation is pending.
+- 2026-09-12 hardware validation: `test-task-startup-clock` reported `[TASK
+  V3 clock-startup pass=1 pc=1077364700 sp=1070296016]`. Descriptor-driven
+  CLOCK frame initialization passed, with IRQ/clock/context execution stable
+  through IRQ 128. The next startup slice is SYS.
 
 - 2026-09-12 build-only: completed the architecture-independent MINIX
   interrupt-notification slice in `src/kernel/proc.c`. Deferred, delivered,

@@ -1,5 +1,27 @@
 # CP32 Port – Current Issues and Handoff
 
+## TASK V1 — task descriptor table
+
+Added the reference-style nine-entry task descriptor metadata and a boot
+marker validating its required entry points and stack budgets. Build and image
+layout pass. Hardware validation is pending; descriptors are not yet used for
+production context startup.
+
+The descriptor table was corrected to avoid referencing inactive task bodies
+in the normal image. This restores the IRAM margin to 9,968 bytes while
+retaining the metadata and `[TASK V1]` validation path.
+
+Hardware validation then reported `[TASK V1 descriptor-table pass=1 count=9]`
+and remained stable through IRQ 144. Metadata validation is complete; using
+the descriptors to launch production tasks is still pending.
+
+`test-task-startup` now provides the next guarded slice for hardware testing:
+descriptor-driven IDLE startup. The normal image does not enable it.
+
+Hardware validation passed `[TASK V2 idle-startup pass=1]`; the task remained
+stable with the existing IRQ/context stream through IRQ 160. CLOCK startup is
+the next guarded descriptor migration.
+
 ## IRQ V1 — interrupt notification contract
 
 The MINIX `interrupt()`/`unhold()` feature now records deferred, delivered,
@@ -1065,3 +1087,10 @@ unexpected `e=1`.
 - 2026-09-11 hardware validation: the SYSTIMER probe confirms the corrected
   unarmed alarm state (`next=2147483647`, `expiries=0`) through IRQ 160.
   Tick accounting remained monotonic and no exception occurred.
+
+2026-09-12 build-only: `make test-task-startup-clock` adds the guarded
+descriptor-driven CLOCK entry/frame initialization probe. Image layout passes
+with 7,780 bytes of IRAM margin; hardware validation is pending.
+
+Hardware validation passed `[TASK V3 clock-startup pass=1]` and remained
+stable through IRQ 128. SYS descriptor startup is the next guarded slice.

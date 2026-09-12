@@ -13,6 +13,28 @@
 #include "kernel.h"
 #include "proc.h"
 #include "irq_frame.h"
+
+extern void kernel_idle_loop(void);
+extern void clock_task(void);
+
+#ifndef CP32_ENABLE_CLOCK_STARTUP
+#define CP32_ENABLE_CLOCK_STARTUP 0
+#endif
+
+/* MINIX task-table metadata, kept separate from the ESP32-S3 frame setup.
+ * The entry points and stack sizes are descriptors only until production task
+ * startup is enabled. */
+static struct tasktab cp32_tasktab[] = {
+  { 0,             4096, "TTY" },
+  { 0,             2048, "SYN_AL" },
+  { kernel_idle_loop, 2048, "IDLE" },
+  { 0,             2048, "MEMORY" },
+  { CP32_ENABLE_CLOCK_STARTUP ? clock_task : 0, 4096, "CLOCK" },
+  { 0,             4096, "SYS" },
+  { 0,                0, "HARDWAR" },
+  { 0,                0, "MM" },
+  { 0,                0, "FS" }
+};
 #include "esp32s3/systimer.h"
 #include <minix/com.h>
 #include <string.h>
@@ -74,6 +96,10 @@ extern volatile int cp32_user_probe_mode;
 
 #ifndef CP32_ENABLE_USER_PROBE
 #define CP32_ENABLE_USER_PROBE 0
+#endif
+
+#ifndef CP32_ENABLE_TASK_STARTUP
+#define CP32_ENABLE_TASK_STARTUP 0
 #endif
 
 static void cp32_task1_loop(void)
@@ -383,6 +409,20 @@ void main(void) {
 
   /* Set up proc table entries for tasks and servers. */
   status_line("initializing proc table", 0);
+
+  {
+    int tasktab_ok = (sizeof(cp32_tasktab) / sizeof(cp32_tasktab[0]) == NR_TASKS) &&
+        cp32_tasktab[2].initial_pc != 0 &&
+        cp32_tasktab[0].stksize >= 2048 &&
+        cp32_tasktab[4].stksize >= 2048 &&
+        cp32_tasktab[5].stksize >= 2048;
+    usbj_print("[TASK V1 descriptor-table pass=");
+    usbj_print_u32(tasktab_ok);
+    usbj_print(" count=");
+    usbj_print_u32((uint32_t)(sizeof(cp32_tasktab) / sizeof(cp32_tasktab[0])));
+    usbj_print("]\r\n");
+    if (!tasktab_ok) panic("task descriptor table", 1);
+  }
   
   // Use the existing ktsb declaration from line 39
   ktsb = (reg_t)_stack_bottom + 0x4000; // Offset from bottom to avoid overlap
@@ -442,6 +482,50 @@ void main(void) {
     }
     rp->p_flags = 0; // Runnable
   }
+
+#if CP32_ENABLE_TASK_STARTUP
+  /* First production descriptor handoff: IDLE is safe to validate because it
+   * never returns and does not require a device or IPC service.  TTY/CLOCK/SYS
+   * remain disabled until their own startup contracts are proven. */
+  {
+    struct proc *idle = proc_addr(IDLE);
+    int startup_ok = cp32_tasktab[2].initial_pc != 0 &&
+        cp32_tasktab[2].stksize >= 2048 && idle->p_reg.sp != 0 &&
+        (idle->p_reg.sp & 0x0F) == 0;
+    if (startup_ok) {
+      idle->p_reg.pc = (reg_t)cp32_tasktab[2].initial_pc;
+      idle->p_reg.a[1] = idle->p_reg.sp;
+    }
+    usbj_print("[TASK V2 idle-startup pass=");
+    usbj_print_u32(startup_ok);
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)idle->p_reg.pc);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)idle->p_reg.sp);
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("idle task startup", 2);
+  }
+#if CP32_ENABLE_CLOCK_STARTUP
+  {
+    struct proc *clock = proc_addr(CLOCK);
+    int startup_ok = cp32_tasktab[4].initial_pc != 0 &&
+        cp32_tasktab[4].stksize >= 4096 && clock->p_reg.sp != 0 &&
+        (clock->p_reg.sp & 0x0F) == 0 && clock->p_nr == CLOCK;
+    if (startup_ok) {
+      clock->p_reg.pc = (reg_t)cp32_tasktab[4].initial_pc;
+      clock->p_reg.a[1] = clock->p_reg.sp;
+    }
+    usbj_print("[TASK V3 clock-startup pass=");
+    usbj_print_u32(startup_ok);
+    usbj_print(" pc=");
+    usbj_print_u32((uint32_t)clock->p_reg.pc);
+    usbj_print(" sp=");
+    usbj_print_u32((uint32_t)clock->p_reg.sp);
+    usbj_print("]\r\n");
+    if (!startup_ok) panic("clock task startup", 3);
+  }
+#endif
+#endif
   
   bill_ptr = proc_addr(IDLE);
 #if CP32_ENABLE_USER_PROBE

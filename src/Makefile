@@ -90,6 +90,16 @@ test-user-probe:
 	$(MAKE) clean
 	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_USER_PROBE=1" all
 
+# Hardware test: initialize the canonical MINIX IDLE task from tasktab.
+test-task-startup:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1" all
+
+# Hardware test: initialize IDLE and CLOCK from the MINIX task descriptors.
+test-task-startup-clock:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="$(CFLAGS) -DCP32_ENABLE_TASK_STARTUP=1 -DCP32_ENABLE_CLOCK_STARTUP=1" all
+
 # Hardware test: route BOTH/SENDREC through the user trap gate with an
 # invalid destination so the frame decode and rejection are bounded.
 test-both-probe:
