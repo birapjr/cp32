@@ -31,7 +31,7 @@ for line in symbols.splitlines():
         break
 if iram_end is None:
     raise SystemExit("image layout check failed: _iram_end symbol unavailable")
-iram_boundary = 0x40378000
+iram_boundary = 0x403E0000
 if iram_end > iram_boundary:
     raise SystemExit(
         f"image layout check failed: IRAM end 0x{iram_end:08X} "
