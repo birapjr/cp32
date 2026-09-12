@@ -11,12 +11,22 @@ extern struct proc *current_proc;
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
+extern volatile uint32_t cp32_timer_irq_ticks;
 
 void kernel_idle_loop(void)
 {
+  status_line("\r\nkernel_idle_loop()", 2);
+  static uint32_t heartbeat;
+
   for (;;) {
     wdt_feed_all();
     delay(1000000);
+    /* Keep a low-rate boot heartbeat while the full scheduler is being restored. */
+    usbj_print("[CTX kernel-running ticks=");
+    usbj_print_u32(cp32_timer_irq_ticks);
+    usbj_print(" heartbeat=");
+    usbj_print_u32(++heartbeat);
+    usbj_print("]\r\n");
   }
 }
 
@@ -78,7 +88,6 @@ void main(void)
   status_line("systemer irq start", 0);
   systimer_irq_start();
   
-  status_line("kernel idle loop", 0);
   kernel_idle_loop();
 }
 

@@ -91,7 +91,7 @@ and `milli_delay`, then connect scheduling.
 
 Reference: `minix-2.0.0/src/kernel/system.c` (`umap`, `do_copy`, `do_vcopy`,
 `alloc_segments`) and `memory.c`.
-CP32: `src/kernel/mm.c`, `mem.c`, `system.c`, `proc.h`.
+CP32: `src/kernel/mm.c`, `system.c`, `proc.h`.
 
 Present: maps, wide range checks, `numap`, `umap`, physical copy, and basic
 system handlers. Missing: a memory inventory/resource allocator, MM task loop,
@@ -168,7 +168,6 @@ integration. Define the user ABI after one user process can run.
 - `src/kernel/proc.c` and `port.c`: diagnostics and blocked flags exist, but
   no production suspension/resume boundary.
 - `src/kernel/mm.c`: `mm_task()` is an initialization message plus idle loop.
-- `src/kernel/mem.c`: memory inventory is hard-coded to zero.
 - `src/kernel/tty.c`: ESP32-S3 device stubs are disconnected.
 - `src/kernel/system.c`: `system_reset()` is a placeholder.
 - `src/kernel/main.c`: `panic()` spins without required panic diagnostics.
