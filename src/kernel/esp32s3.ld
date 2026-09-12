@@ -16,7 +16,7 @@ MEMORY {
     iram  (RX) : ORIGIN = 0x40370000, LENGTH = 448K
 
     /* SRAM1: data bus, 480 KB                             */
-    dram  (RW) : ORIGIN = 0x3FC88000, LENGTH = 480K
+    dram  (RW) : ORIGIN = 0x3FC88000, LENGTH = 448K
 }
 
 SECTIONS {
@@ -93,6 +93,7 @@ SECTIONS {
     } > dram AT > irom
 
     _rodata_lma = LOADADDR(.rodata);
+
 
     /* --------------------------------------------------
        BSS — zero-initialized, no flash storage needed

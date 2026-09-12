@@ -230,7 +230,42 @@ integration. Define the user ABI after one user process can run.
   stale return-owner cleanup, and ready-queue insertion now share one resume
   boundary for SEND and RECEIVE wakeups.
 - [x] 5ai. Guard ready-queue insertion against duplicate runnable links during
-  repeated IPC wakeups and interrupt replay.
+  repeated IPC wakeups and interrupt replay using the existing queue scan.
+- [ ] 5aj. Bound IPC caller-queue append and receive traversal (deferred after
+  image-integrity regression; requires an assembly/layout-safe implementation).
+- [x] 5ak. Reject duplicate SEND attempts from an already blocked sender so
+  each suspended process retains one owned caller-queue link and wakeup frame.
+- [ ] 5al. Reject duplicate RECEIVE attempts from an already blocked receiver
+  (deferred after early image-integrity regression; requires an
+  assembly/layout-safe implementation).
+- [x] 5am. Confirm marker 89 hardware checkpoint: valid `.data`/`.bss`, stable
+  IRQ handoff, CLOCK task execution, and continued RFE returns.
+- [x] 5an. Confirm marker 90 hardware checkpoint: stable IRQ dispatch and
+  repeated task handoffs after IPC queue hardening rollbacks.
+- [x] 5ao. Confirm marker 91 hardware checkpoint: clean image sentinel and
+  stable repeated RFE/IPC/CLOCK handoffs with marker-only rebuild.
+- [x] 5ap. Add a host-side blocked-RECEIVE ownership contract test while the
+  hardware frame-boundary implementation remains deferred.
+- [x] 5aq. Extend the host-side IPC ownership contract coverage to blocked
+  SEND completion and mixed SEND/RECEIVE flag cleanup.
+- [x] 5ar. Add host-side bounded caller-queue traversal coverage for valid
+  chains and cycle/limit rejection.
+- [x] 5as. Add host-side IPC endpoint validation coverage for accepted and
+  rejected source/destination ranges.
+- [x] 6a. Add a link-isolated CP32 RAM-disk sector core with bounds-checked
+  read/write/reset operations and host-side tests.
+- [x] 6b. Confirm marker 97 hardware checkpoint: RAM-disk code addition leaves
+  the boot sentinel, IRQ dispatch, IPC, CLOCK, and RFE handoffs stable.
+- [x] 6c. Reserve RAM-disk storage inside DRAM before the heap, expose linker
+  bounds, start allocation after it, and activate reset without an ELF data
+  segment or static C storage.
+- [ ] 6e. Expand the contiguous RAM-disk reservation to the full 128 KiB
+  reserved DRAM window (deferred: expanded layout corrupts `.data`).
+- [x] 6g. Implement the RAM-disk as a permanent ordinary kernel `.bss` array
+  in the proven SRAM1 model, accessed through sector interfaces and reset once
+  at boot.
+- [x] 6f. Remove the accidental remaining RAM-disk boot write and restore a
+  marker-only baseline after marker 110 still corrupted `.data`.
 - [ ] 5ag. Rotate ready-queue selection across task, server, and user classes
   (reverted after task-frame/image-integrity regression; requires a frame-safe
   scheduler handoff design).
@@ -244,3 +279,17 @@ and CP32 invariant, add a focused `tests/` test when feasible, run
 `make clean && make` from `src/`, inspect ELF sections/segments for low-level
 changes, and record hardware results in `issues.md`. Build success alone never
 marks hardware behavior complete.
+- [x] 6h. Reduce the active RAM-disk probe to one 10-byte sector and use a
+  byte-wise reset to isolate storage-size and alignment effects.
+- [x] 6i. Disable boot-time RAM-disk activation after the 10-byte probe still
+  corrupted the `.data` sentinel; retain the isolated interface for later use.
+- [x] 6j. Expand the dormant ordinary-memory RAM-disk probe to 1 KiB while
+  keeping boot-time activation disabled, isolating static-size image effects.
+- [x] 6k. Expand the dormant ordinary-memory RAM-disk probe to 64 KiB while
+  keeping boot-time activation disabled, isolating the larger `.bss` footprint.
+- [x] 6l. Add non-mutating RAM-disk geometry accessors for sector size and
+  sector count, with host-side contract coverage.
+- [x] 6m. Add a non-mutating total-capacity accessor to complete the minimal
+  RAM-disk block-device geometry contract.
+- [x] 6n. Add bounded byte-range RAM-disk access for filesystem metadata and
+  records, with zero-length and out-of-range contract tests.

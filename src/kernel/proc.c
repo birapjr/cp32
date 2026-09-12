@@ -87,7 +87,6 @@ volatile uint32_t cp32_blocked_frame_save_count;
 volatile uint32_t cp32_blocked_frame_wake_count;
 volatile uint32_t cp32_blocked_resume_count;
 volatile uint32_t cp32_blocked_frame_restore_count;
-volatile uint32_t cp32_ready_duplicate_skip_count;
 volatile uint32_t cp32_user_blocked_return_count;
 volatile int cp32_user_dispatch_blocked;
 volatile int cp32_user_handoff_gate;
@@ -828,6 +827,10 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isokprocn(dest)) return E_BAD_DEST;
   if (dest == caller_ptr->p_nr) return ELOCKED;
+  /* A blocked sender owns exactly one caller-queue link until its saved
+   * syscall frame is completed.  Reject a duplicate SEND instead of
+   * overwriting that link and losing the wakeup path. */
+  if (caller_ptr->p_flags & SENDING) return ELOCKED;
   dest_ptr = proc_addr(dest);
   if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
@@ -997,14 +1000,8 @@ PRIVATE void ready(struct proc *rp)
   q = proc_queue(rp);
   
   if (q < 0 || q >= NQ) return;
-  /* Wakeups can race with a replayed interrupt or a second matching sender.
-   * Never append the same runnable process twice: duplicate links can create
-   * a cycle and make the next scheduler pass lose the queue tail. */
-  if (proc_is_ready_queued(rp)) {
-    cp32_ready_duplicate_skip_count++;
-    return;
-  }
-
+  /* A replayed wakeup must not link a runnable process twice. */
+  if (proc_is_ready_queued(rp)) return;
   rp->p_nextready = NIL_PROC;
   if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
   else rdy_tail[q]->p_nextready = rp;

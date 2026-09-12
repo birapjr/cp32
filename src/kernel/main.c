@@ -179,7 +179,7 @@ void main(void)
                  block_a != 0 && cp32_mem_free(block_a, FS_PROC_NR) == OK;
     int released_not_owned = block_a != 0 &&
                              !cp32_mem_owned(block_a, 2, FS_PROC_NR);
-    usbj_print("[MM probe alloc=");
+  usbj_print("[MM probe alloc=");
     usbj_print_u32((uint32_t)(probe != 0));
     usbj_print(" release=");
     usbj_print_u32((uint32_t)released);
@@ -214,7 +214,7 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-  usbj_print("[TEST CARDPUTER-KBD 82]\r\n");
+  usbj_print("[TEST CARDPUTER-KBD 123]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();
