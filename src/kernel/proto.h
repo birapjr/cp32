@@ -42,9 +42,6 @@ _PROTOTYPE( void lock_sched, (void)					);
 _PROTOTYPE( void lock_unready, (struct proc *rp)			);
 _PROTOTYPE( int sys_call, (int function, int src_dest, message *m_ptr)	);
 _PROTOTYPE( void unhold, (void)						);
-_PROTOTYPE( int cp32_probe_blocked_handoff, (void)			);
-_PROTOTYPE( void cp32_reset_handoff_diagnostics, (void)		);
-_PROTOTYPE( int cp32_probe_all_blocked_queue, (void)		);
 
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);
@@ -60,8 +57,6 @@ _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 _PROTOTYPE( void clock_task, (void)					);
 _PROTOTYPE( void clock_stop, (void)					);
 _PROTOTYPE( clock_t get_uptime, (void)					);
-_PROTOTYPE( int systimer_probe, (void)					);
-_PROTOTYPE( int systimer_route_probe, (void)			);
 _PROTOTYPE( void systimer_irq_start, (void)			);
 _PROTOTYPE( void cp32_timer_irq_dispatch, (cp32_irq_frame_t *frame) );
 _PROTOTYPE( void syn_alrm_task, (void)					);

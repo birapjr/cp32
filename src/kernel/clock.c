@@ -57,8 +57,6 @@
 #include <minix/com.h>
 #include "proc.h"
 
-extern volatile uint32_t cp32_task1_ticks;
-extern volatile uint32_t cp32_task2_ticks;
 extern struct proc *current_proc;
 
 extern void sched(void);
@@ -96,13 +94,7 @@ PRIVATE struct proc *prev_ptr;                  /* last user process run by cloc
 volatile uint32_t cp32_timer_irq_ticks;
 volatile uint32_t cp32_clock_accounted_ticks;
 volatile uint32_t cp32_clock_alarm_expiries;
-volatile uint32_t cp32_clock_alarm_probe_fires;
 volatile uint32_t cp32_clock_dispatch_count;
-volatile uint32_t cp32_clock_request_probe_stage;
-volatile int cp32_clock_request_probe_error;
-volatile phys_bytes cp32_clock_request_sender_map;
-volatile phys_bytes cp32_clock_request_clock_map;
-extern void cp32_probe_wake_receiver(void);
 volatile int cp32_clock_irq_bridge_enabled;
 volatile uint32_t cp32_clock_irq_bridge_calls;
 volatile uint32_t cp32_clock_irq_frame_aligned_calls;
@@ -110,11 +102,6 @@ volatile uint32_t cp32_clock_irq_frame_stack_calls;
 volatile uint32_t cp32_handoff_owner_mismatch_count;
 volatile uint32_t cp32_handoff_blocked_target_count;
 
-PUBLIC void cp32_reset_handoff_diagnostics(void)
-{
-  cp32_handoff_owner_mismatch_count = 0;
-  cp32_handoff_blocked_target_count = 0;
-}
 extern char _stack_bottom[];
 extern char _stack_top[];
 
@@ -127,7 +114,6 @@ FORWARD _PROTOTYPE( void do_set_time,     (message *m_ptr) );
 FORWARD _PROTOTYPE( void do_setalarm,     (message *m_ptr) );
 FORWARD _PROTOTYPE( void init_clock,      (void) );
 FORWARD _PROTOTYPE( void cause_alarm,     (void) );
-PUBLIC void cp32_clock_alarm_probe_watchdog(void);
 FORWARD _PROTOTYPE( void do_setsyn_alrm,  (message *m_ptr) );
 FORWARD _PROTOTYPE( int  clock_handler,   (int irq) );
 PUBLIC int cp32_clock_task_dispatch(int opcode);
@@ -345,154 +331,6 @@ watchdog_t function;
 
 /* Bounded bring-up hook: arm a task watchdog without entering the clock task
  * service loop.  The normal clock ISR/do_clocktick path performs the expiry. */
-PUBLIC void cp32_clock_alarm_probe_arm(void)
-{
-  struct proc *rp = proc_addr(-1);
-  rp->p_alarm = realtime + 3;
-  watch_dog[-1 + NR_TASKS] = cp32_clock_alarm_probe_watchdog;
-  next_alarm = rp->p_alarm;
-}
-
-PUBLIC void cp32_clock_alarm_probe_watchdog(void)
-{
-  cp32_clock_alarm_probe_fires++;
-}
-
-PUBLIC void cp32_clock_alarm_probe_service(void)
-{
-  if (cp32_clock_alarm_probe_fires == 0 && next_alarm != LONG_MAX) {
-    realtime += pending_ticks;
-    pending_ticks = 0;
-    do_clocktick();
-  }
-}
-
-/* One-shot CLOCK task-context probe.  Avoids receive()/send() until IPC task
- * scheduling is complete, while validating one deferred HARD_INT pass. */
-PUBLIC int cp32_clock_task_probe_once(void)
-{
-  init_clock();
-  do_clocktick();
-  return sched_ticks == SCHED_RATE && next_alarm == LONG_MAX;
-}
-
-/* Exercise the real task receive/interrupt delivery path once. */
-PUBLIC int cp32_clock_ipc_probe_once(void)
-{
-  struct proc *clock = proc_addr(CLOCK);
-  int result = TRUE;
-  int cycle;
-  int saved_flags = clock->p_flags;
-  int saved_blocked = clock->p_int_blocked;
-  struct mem_map saved_data = clock->p_map[D];
-  struct proc *saved_proc_ptr = proc_ptr;
-  struct proc *saved_current_proc = current_proc;
-  struct proc *saved_bill_ptr = bill_ptr;
-  message saved_message = mc;
-
-  clock->p_flags = 0;
-  clock->p_int_blocked = 0;
-  clock->p_getfrom = ANY;
-  clock->p_messbuf = &mc;
-  clock->p_map[D].mem_vir = (vir_bytes)(uintptr_t)&mc & ~(CLICK_SIZE - 1);
-  clock->p_map[D].mem_phys = ((phys_bytes)(uintptr_t)&mc) >> CLICK_SHIFT;
-  clock->p_map[D].mem_len =
-      (((vir_bytes)(uintptr_t)&mc & (CLICK_SIZE - 1)) +
-       sizeof(mc) + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  for (cycle = 0; cycle < 2 && result; cycle++) {
-    int queued = 0;
-    int q;
-    struct proc *rp;
-    mc.m_type = 0;
-    result = mini_rec(clock, ANY, &mc);
-    if (result != OK || !(clock->p_flags & RECEIVING)) break;
-    interrupt(CLOCK);
-    for (q = 0; q < NQ; q++)
-      for (rp = rdy_head[q]; rp != NIL_PROC; rp = rp->p_nextready)
-        if (rp == clock) queued++;
-    result = mc.m_source == HARDWARE && mc.m_type == HARD_INT &&
-             clock->p_flags == 0 && clock->p_int_blocked == 0 && queued == 1;
-    if (result) {
-      uint32_t dispatch_before = cp32_clock_dispatch_count;
-      cp32_clock_task_dispatch(HARD_INT);
-      result = mc.m_type == OK &&
-               cp32_clock_dispatch_count == dispatch_before + 1;
-    }
-  }
-  clock->p_flags = saved_flags;
-  clock->p_int_blocked = saved_blocked;
-  clock->p_map[D] = saved_data;
-  proc_ptr = saved_proc_ptr;
-  current_proc = saved_current_proc;
-  bill_ptr = saved_bill_ptr;
-  mc = saved_message;
-  return result;
-}
-
-/* Validate one ordinary CLOCK request/reply transaction. */
-PUBLIC int cp32_clock_request_probe_once(void)
-{
-  struct proc *clock = proc_addr(CLOCK), *sender = proc_addr(1);
-  struct mem_map clock_data = clock->p_map[D], sender_data = sender->p_map[D];
-  int clock_flags = clock->p_flags, sender_flags = sender->p_flags;
-  int sender_nr = sender->p_nr;
-  int result;
-  cp32_clock_request_probe_stage = 0;
-  cp32_clock_request_probe_error = 0;
-  sender->p_nr = 1;
-  cp32_clock_request_sender_map = numap(sender->p_nr, (vir_bytes)&mc, MESS_SIZE);
-  cp32_clock_request_clock_map = numap(clock->p_nr, (vir_bytes)&mc, MESS_SIZE);
-  {
-    int i;
-    vir_bytes base = (vir_bytes)(uintptr_t)&mc & ~(CLICK_SIZE - 1);
-    phys_bytes phys = ((phys_bytes)(uintptr_t)&mc) >> CLICK_SHIFT;
-    vir_bytes len = ((vir_bytes)(uintptr_t)&mc & (CLICK_SIZE - 1)) +
-                    sizeof(mc) + CLICK_SIZE - 1;
-    len >>= CLICK_SHIFT;
-    for (i = 0; i < NR_SEGS; i++) {
-      clock->p_map[i].mem_vir = sender->p_map[i].mem_vir = base;
-      clock->p_map[i].mem_phys = sender->p_map[i].mem_phys = phys;
-      clock->p_map[i].mem_len = sender->p_map[i].mem_len = len;
-    }
-  }
-  clock->p_flags = sender->p_flags = 0;
-  cp32_clock_request_sender_map = numap(sender->p_nr, (vir_bytes)&mc, MESS_SIZE);
-  cp32_clock_request_clock_map = numap(clock->p_nr, (vir_bytes)&mc, MESS_SIZE);
-  mc.m_type = GET_UPTIME;
-  result = mini_rec(clock, ANY, &mc) == OK && (clock->p_flags & RECEIVING);
-  if (result) cp32_clock_request_probe_stage |= 1;
-  if (result)
-    { int ipc_result = mini_send(sender, CLOCK, &mc);
-      cp32_clock_request_probe_error = ipc_result;
-      result = ipc_result == OK && mc.m_source == 1; }
-  if (result) cp32_clock_request_probe_stage |= 2;
-  if (result) {
-    cp32_clock_task_dispatch(GET_UPTIME);
-    result = mini_rec(sender, CLOCK, &mc) == OK && (sender->p_flags & RECEIVING);
-    if (result) cp32_clock_request_probe_stage |= 4;
-  }
-  if (result)
-    result = mini_send(clock, 1, &mc) == OK && mc.m_type == OK &&
-             sender->p_flags == 0;
-  if (result) cp32_clock_request_probe_stage |= 8;
-  clock->p_flags = clock_flags;
-  sender->p_flags = sender_flags;
-  sender->p_nr = sender_nr;
-  clock->p_map[D] = clock_data;
-  sender->p_map[D] = sender_data;
-  return result;
-}
-
-/* Bounded service lifecycle: notifications followed by one client request. */
-PUBLIC int cp32_clock_service_probe_once(void)
-{
-  return cp32_clock_ipc_probe_once() && cp32_clock_request_probe_once();
-}
-
-
-/*===========================================================================*
- *                              cause_alarm                                   *
- *===========================================================================*/
 PRIVATE void cause_alarm()
 {
 /* Called when a synchronous alarm fires.  Notify the syn_alrm_task.
@@ -601,14 +439,6 @@ int irq;
   pending_ticks += ticks;
   now = realtime + pending_ticks;
 
-#if CP32_ENABLE_CLOCK_ALARM_PROBE
-  /* The probe image has no running clock task.  Execute one bounded alarm
-   * pass when the synthetic deadline is reached; production keeps this work
-   * deferred through the normal CLOCK notification path. */
-  if (cp32_clock_alarm_probe_fires == 0 && next_alarm <= now)
-    do_clocktick();
-#endif
-
   /* Step 5: Wake TTY if its timeout has expired. */
   if (tty_timeout != 0 && tty_timeout <= now) tty_wakeup(now);
 
@@ -645,17 +475,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
-#if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-  if (cp32_timer_irq_ticks == 16) {
-    cp32_probe_wake_receiver();
-    usbj_print("[CTX V164 post-wake-scheduler-continuity pass=");
-    usbj_print_u32((uint32_t)(current_proc == proc_addr(2) &&
-                              proc_ptr == proc_addr(2) &&
-                              (proc_addr(2)->p_flags &
-                               (SENDING | RECEIVING)) == 0));
-    usbj_print("]\r\n");
-  }
-#endif
   if ((((uintptr_t) frame) & 0x0Fu) == 0)
     cp32_clock_irq_frame_aligned_calls++;
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
@@ -666,8 +485,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print("[IRQ "); usbj_print_u32(cp32_timer_irq_ticks);
     usbj_print(" r="); usbj_print_u32((uint32_t) k_reenter);
     usbj_print(" f="); usbj_print_u32(cp32_clock_irq_frame_stack_calls);
-    usbj_print(" t1="); usbj_print_u32(cp32_task1_ticks);
-    usbj_print(" t2="); usbj_print_u32(cp32_task2_ticks);
     usbj_print("]\r\n");
     usbj_print("[CLOCK V1 tick-accounting ticks=");
     usbj_print_u32(cp32_clock_accounted_ticks);
@@ -685,11 +502,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
-#if CP32_ENABLE_CLOCK_ALARM_PROBE
-  /* Run after clock_handler has charged this interrupt into pending_ticks. */
-  if (cp32_timer_irq_ticks >= 3)
-    cp32_clock_alarm_probe_service();
-#endif
   unhold();
 
   /* The process handoff is deliberately a second gate.  This keeps the
@@ -720,31 +532,6 @@ PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 /* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies
  * that the free-running counter advances, but deliberately leaves TARGET0
  * interrupts disabled until the interrupt-matrix route is implemented. */
-PUBLIC int systimer_probe()
-{
-  uint64_t first, second;
-
-  REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_CLK_EN |
-              SYSTIMER_TIMER_UNIT0_WORK_EN);
-  REG_CLR_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
-  first = systimer_unit0_read();
-  delay(1000);
-  second = systimer_unit0_read();
-  return second > first ? OK : EINVAL;
-}
-
-/* Verify the route without enabling either the peripheral or CPU interrupt. */
-PUBLIC int systimer_route_probe()
-{
-  REG_WRITE(INTERRUPT_CORE0_SYSTIMER_TARGET0_INT_MAP_REG,
-            CP32_SYSTIMER_CPU_INT);
-  return REG_READ(INTERRUPT_CORE0_SYSTIMER_TARGET0_INT_MAP_REG) ==
-         CP32_SYSTIMER_CPU_INT ? OK : EINVAL;
-}
-
-/* Start a hardware-only periodic TARGET0 probe. The interrupt handler only
- * acknowledges the flag and counts deliveries; MINIX clock_handler remains
- * disconnected until this path is stable. */
 PUBLIC void systimer_irq_start()
 {
   /* The bring-up probe starts SYSTIMER before clock_task exists. Initialize

@@ -19,11 +19,6 @@ unsigned int processor;
 volatile uint32_t cp32_data_sentinel = 0xC032DA7Au;
 volatile uint32_t cp32_bss_sentinel;
 
-/* Set to 1 only for a hardware exception-handler test. */
-#ifndef CP32_TEST_EXCEPTION
-#define CP32_TEST_EXCEPTION 0
-#endif
-
 extern char _vectors_start[];
 extern char _vectors_end[];
 extern char _stack_bottom[];
@@ -47,7 +42,7 @@ void start() {
     print_diagnostics();
     status_line("\r\n => CP32 OS kernel booting", 2);
 
-
+    status_line("\r\nstart()", 2);
     status_line("checking initialized memory", 0);
     usbj_print(".data sentinel: ");
     usbj_print_hex32(cp32_data_sentinel);
@@ -92,11 +87,6 @@ void start() {
         usbj_print("FATAL: invalid call0 stack\r\n");
         for (;;) { }
     }
-
-#if CP32_TEST_EXCEPTION
-    status_line("triggering test exception", 0);
-    *(volatile uint32_t *)0 = 0xC032FA17u;
-#endif
 
     /* Step 5 — one more disable pass right before the main loop so any
      * ROM activity that happened during the diagnostic prints is cleared */

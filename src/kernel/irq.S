@@ -484,63 +484,6 @@ irq_user:
     call0   exception_dump
 .size irq_user, .-irq_user
 
-/* Controlled user-mode trap probe. The process table does not select this
- * entry yet; it is enabled only by a targeted hardware experiment. */
-.align 4
-.global cp32_user_probe_entry
-.type   cp32_user_probe_entry, @function
-cp32_user_probe_entry:
-#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
-    movi    a2, 3                 /* BOTH / SENDREC */
-    movi    a3, 3                 /* reply process */
-    movi    a4, cp32_probe_sender_message
-#elif defined(CP32_ENABLE_BOTH_PROBE)
-    movi    a2, 3                 /* BOTH / SENDREC */
-    movi    a3, 999               /* invalid destination: safe rejection */
-    movi    a4, cp32_probe_message
-#elif defined(CP32_ENABLE_BLOCKED_PROBE)
-    movi    a2, 2                 /* RECEIVE */
-    movi    a3, -1                /* ANY */
-    movi    a4, cp32_probe_message
-#elif defined(CP32_ENABLE_BLOCKED_SENDREC_PROBE)
-    movi    a2, 3                 /* SENDREC / BOTH */
-    movi    a3, 2                 /* receiver process */
-    movi    a4, cp32_probe_message
-#elif defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-    movi    a2, 1                 /* SEND */
-    movi    a3, 2                 /* receiver process */
-    movi    a4, cp32_probe_message
-#else
-    movi    a2, 1                 /* SEND */
-    movi    a3, 999               /* invalid destination: immediate EINVAL */
-    movi    a4, cp32_probe_message
-#endif
-    ill                         /* ESP32-S3 lacks a user syscall opcode;
-                                 * this is the controlled exception probe. */
-    j       cp32_user_probe_done
-.global cp32_user_probe_done
-cp32_user_probe_done:
-    j       cp32_user_probe_done
-.size cp32_user_probe_entry, .-cp32_user_probe_entry
-
-#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
-.align 4
-.global cp32_user_reply_entry
-.type   cp32_user_reply_entry, @function
-cp32_user_reply_entry:
-    movi    a2, 2                 /* RECEIVE */
-    movi    a3, 2                 /* caller runtime p_nr */
-    movi    a4, cp32_probe_message
-    ill
-    movi    a2, 1                 /* SEND */
-    movi    a3, 2                 /* caller process */
-    movi    a4, cp32_probe_message
-    ill
-cp32_user_reply_done:
-    j       cp32_user_reply_done
-.size cp32_user_reply_entry, .-cp32_user_reply_entry
-#endif
-
 .align 4
 .global cp32_enter_initial_user
 .type   cp32_enter_initial_user, @function

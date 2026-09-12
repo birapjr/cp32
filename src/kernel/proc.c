@@ -21,22 +21,14 @@
 #include "proc.h"
 #include "irq_frame.h"
 
-/* Keep the normal probe transcript compact.  Define this to 1 when the
- * individual handoff fields are needed while debugging a new frame ABI. */
-#ifndef CP32_VERBOSE_HANDOFF_DIAGNOSTICS
+/* TODO(clean-production): these three guarded print blocks still share the
+ * blocked-frame path. Remove the blocks first, then delete this compatibility
+ * constant without changing scheduler or IPC state transitions. */
 #define CP32_VERBOSE_HANDOFF_DIAGNOSTICS 0
-#endif
 
-extern reg_t cp32_context_probe_pc(struct proc *next);
-extern reg_t cp32_context_probe_sp(struct proc *next);
-extern reg_t cp32_context_probe_ps(struct proc *next);
 extern volatile int cp32_context_restore_gate;
 extern volatile int cp32_context_handoff_gate;
-extern volatile uint32_t cp32_task1_ticks;
-extern volatile uint32_t cp32_task2_ticks;
 extern struct proc *current_proc;
-extern message cp32_probe_message;
-extern message cp32_probe_sender_message;
 PRIVATE int copy_message(struct proc *sender, message *src,
                          struct proc *receiver, message *dst);
 PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
@@ -47,24 +39,6 @@ PRIVATE void ready(struct proc *rp);
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result);
 PRIVATE int proc_is_ready_queued(struct proc *target);
 PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr);
-
-#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
-PUBLIC void cp32_probe_ready_reply(void)
-{
-  struct proc *reply = proc_addr(3);
-  struct proc *caller = proc_addr(2);
-  int q;
-  /* Stress setup may have left a stale process-table object with the same
-   * synthetic number in a ready queue.  The reply probe must start with one
-   * canonical receiver, otherwise sched() can select the stale object. */
-  for (q = 0; q < NQ; q++) {
-    rdy_head[q] = NIL_PROC;
-    rdy_tail[q] = NIL_PROC;
-  }
-  if (caller->p_flags == 0) ready(caller);
-  if (reply->p_flags == 0) ready(reply);
-}
-#endif
 
 PRIVATE unsigned char cp32_wake_probe_reported;
 PRIVATE unsigned char cp32_wake_owner_release_reported;
@@ -119,125 +93,8 @@ volatile uint32_t cp32_user_rfe_sp;
 volatile uint32_t cp32_user_rfe_count;
 volatile int cp32_probe_wake_once;
 
-PUBLIC void cp32_probe_wake_receiver(void)
-{
-#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
-  struct proc *receiver = proc_addr(2);
-  struct proc *sender = proc_addr(1);
-  if (receiver->p_flags == 0) receiver->p_flags = RECEIVING;
-#else
-  struct proc *receiver = proc_addr(1);
-  struct proc *sender = proc_addr(2);
-#endif
-  if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-      !cp32_wake_probe_reported) {
-    cp32_wake_probe_reported = 1;
-    usbj_print("[CTX V105 wake-hook flags=");
-    usbj_print_u32((uint32_t)receiver->p_flags);
-    usbj_print(" armed=");
-    usbj_print_u32((uint32_t)cp32_probe_wake_once);
-    usbj_print("]\r\n");
-  }
-  if (!cp32_probe_wake_once || !(receiver->p_flags & RECEIVING)) return;
-  cp32_probe_wake_once = 0;
-  /* Preserve the receiver buffer validated at RECEIVE time. */
-  receiver->p_messbuf = &cp32_probe_message;
-  sender->p_map[D].mem_vir =
-      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
-  sender->p_map[D].mem_phys =
-      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
-  sender->p_map[D].mem_len =
-      (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
-       sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
-#ifndef CP32_ENABLE_BLOCKED_SEND_PROBE
-  sender->p_flags = 0;
-#endif
-  /* proc_addr() is keyed by p_nr; keep the synthetic sender's canonical
-   * lookup slot aligned with the object used by the probe. */
-  proc_addr(sender->p_nr)->p_map[D] = sender->p_map[D];
-  proc_addr(sender->p_nr)->p_flags = 0;
-  {
-    /* The probe objects carry synthetic p_nr values that do not round-trip
-     * through proc_addr().  Use the resolved objects directly, while keeping
-     * the normal copy, blocked-frame completion, and ready transition. */
-    int wake_result;
-#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
-    wake_result = mini_rec(receiver, sender->p_nr, receiver->p_messbuf);
-    if (wake_result == OK && sender->p_flags == 0 &&
-        sender->p_blocked_frame_valid)
-      cp32_complete_blocked_frame(sender, OK);
-    if (wake_result == OK && sender->p_flags == 0)
-      sender->p_blocked_frame_valid = FALSE;
-#else
-    wake_result = deliver_blocked_message(sender, &cp32_probe_sender_message,
-                                          receiver, receiver->p_messbuf);
-#endif
-    if (wake_result == EFAULT && (receiver->p_flags & RECEIVING)) {
-      /* The synthetic probe has no separate user address space. Its buffer
-       * was validated at trap entry, so complete this controlled wake using
-       * that slot while retaining the normal frame/queue transitions. */
-      cp32_probe_message.m_source = sender->p_nr;
-      receiver->p_flags &= ~RECEIVING;
-      cp32_complete_blocked_frame(receiver, OK);
-      if (receiver->p_flags == 0) ready(receiver);
-      wake_result = OK;
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK &&
-        receiver->p_flags == 0 && !receiver->p_blocked_frame_valid &&
-        cp32_blocked_return_proc != receiver &&
-        !cp32_wake_owner_release_reported) {
-      cp32_wake_owner_release_reported = 1;
-      usbj_print("[CTX V107 wake-owner-released pass=1]\r\n");
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK &&
-        cp32_probe_message.m_source == sender->p_nr &&
-        !cp32_wake_message_reported) {
-      cp32_wake_message_reported = 1;
-      usbj_print("[CTX V108 wake-message-source-validated pass=1]\r\n");
-    }
-#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
-    if (wake_result == OK && proc_addr(1)->p_flags == 0)
-      proc_addr(1)->p_blocked_frame_valid = FALSE;
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
-      usbj_print("[CTX V110 send-wake-state flags=");
-      usbj_print_u32((uint32_t)sender->p_flags);
-      usbj_print(" frame=");
-      usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
-      usbj_print(" result=");
-      usbj_print_u32((uint32_t)sender->p_blocked_frame_result);
-      usbj_print("]\r\n");
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK && sender->p_flags == 0 &&
-        !sender->p_blocked_frame_valid && !cp32_send_wake_reported) {
-      cp32_send_wake_reported = 1;
-      usbj_print("[CTX V109 send-wake-owner-complete pass=1]\r\n");
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK) {
-      usbj_print("[CTX V112 send-wake-final frame=");
-      usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
-      usbj_print(" flags=");
-      usbj_print_u32((uint32_t)sender->p_flags);
-      usbj_print("]\r\n");
-    }
-#endif
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
-      usbj_print("[CTX V106 wake-complete result=");
-      usbj_print_u32((uint32_t)wake_result);
-      usbj_print(" flags=");
-      usbj_print_u32((uint32_t)receiver->p_flags);
-      usbj_print(" count=");
-      usbj_print_u32(cp32_blocked_frame_wake_count);
-      usbj_print("]\r\n");
-    }
-  }
-}
 volatile int cp32_user_trap_gate;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
-PRIVATE unsigned char cp32_blocked_probe_active;
 PRIVATE unsigned char cp32_user_frame_marker_reported;
 PRIVATE unsigned char cp32_user_cause_marker_reported;
 PRIVATE unsigned char cp32_user_owner_marker_reported;
@@ -644,53 +501,6 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   return OK;
 }
 
-PUBLIC int cp32_user_trap_probe(struct proc *owner)
-{
-  cp32_user_frame_t frame;
-  struct proc *saved_proc = proc_ptr;
-  struct proc *saved_current = current_proc;
-  int saved_gate = cp32_user_trap_gate;
-  int result;
-  int cause_result;
-  reg_t saved_pc = owner->p_reg.pc;
-  cp32_user_frame_t bad_pointer_frame;
-  if (owner == NIL_PROC) return EINVAL;
-  cp32_blocked_wake_result_reported = 0;
-  for (int i = 0; i < 16; ++i) frame.a[i] = (uint32_t)owner->p_reg.a[i];
-  frame.pc = (uint32_t)owner->p_reg.pc;
-  frame.psw = (uint32_t)owner->p_reg.psw;
-  frame.sp = (uint32_t)owner->p_reg.sp;
-  /* An invalid function proves the enabled boundary rejects safely without
-   * entering IPC or attempting an exception return. */
-  frame.a[2] = 0;
-  proc_ptr = owner;
-  current_proc = owner;
-  cp32_user_trap_gate = 1;
-  result = cp32_user_trap_dispatch(owner, &frame, 0);
-  bad_pointer_frame = frame;
-  bad_pointer_frame.a[2] = SEND;
-  bad_pointer_frame.a[3] = 1;
-  bad_pointer_frame.a[4] = 0;
-  if (cp32_user_trap_dispatch(owner, &bad_pointer_frame, 0) != EFAULT ||
-      bad_pointer_frame.a[2] != (uint32_t)EFAULT)
-    result = EBADCALL;
-  cause_result = cp32_user_trap_dispatch(owner, &frame, 1);
-  if (cp32_user_probe_mode && cause_result == EBADCALL) {
-    cp32_user_cause_reject_count++;
-    usbj_print("[CTX V85 trap-cause-reject pass=1]\r\n");
-  }
-  cp32_user_trap_gate = saved_gate;
-  proc_ptr = saved_proc;
-  current_proc = saved_current;
-  /* The probe uses a synthetic trap frame. Do not leave its advanced PC in
-   * the process table or the initial user handoff would enter mid-instruction
-   * in cp32_user_probe_entry. */
-  owner->p_reg.pc = saved_pc;
-  if (result == EBADCALL || (cp32_user_probe_mode && result == OK))
-    cp32_user_trap_probe_count++;
-  return result;
-}
-
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
   if (rp == NIL_PROC) return;
@@ -773,8 +583,8 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
     reasons |= 1u << 5;
   if (rp != NIL_PROC && proc_ptr == rp && current_proc == rp)
     reasons |= 1u << 6;
-  if (rp != NIL_PROC && cp32_context_probe_sp(rp) != 0 &&
-      (cp32_context_probe_sp(rp) & 0x0F) == 0)
+  if (rp != NIL_PROC && rp->p_reg.sp != 0 &&
+      (rp->p_reg.sp & 0x0F) == 0)
     reasons |= 1u << 7;
   if (rp != NIL_PROC && rp->p_reg.a[15] != 0) reasons |= 1u << 8;
   if (rp != NIL_PROC && rp->p_blocked_frame_valid &&
@@ -787,8 +597,8 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
          rp == cp32_blocked_return_proc &&
          (rp->p_flags & (SENDING | RECEIVING)) != 0 &&
          proc_ptr == rp && current_proc == rp &&
-         cp32_context_probe_sp(rp) != 0 &&
-         (cp32_context_probe_sp(rp) & 0x0F) == 0 &&
+         rp->p_reg.sp != 0 &&
+         (rp->p_reg.sp & 0x0F) == 0 &&
          rp->p_reg.a[15] != 0 &&
          rp->p_blocked_frame_valid &&
          rp->p_blocked_frame_pc == rp->p_reg.pc &&
@@ -1150,150 +960,6 @@ PRIVATE void ready(struct proc *rp)
   rdy_tail[q] = rp;
 }
 
-PUBLIC void cp32_prepare_two_task_stress(void)
-{
-  int q;
-  struct proc *p1 = proc_addr(1);
-  struct proc *p2 = proc_addr(2);
-
-  /* Every bring-up run starts with experimental blocked-return handoff off. */
-  cp32_blocked_handoff_gate = 0;
-  cp32_blocked_return_proc = NIL_PROC;
-  cp32_blocked_handoff_count = 0;
-  cp32_blocked_ready_guard_count = 0;
-  cp32_ready_blocked_skip_count = 0;
-  cp32_blocked_frame_mismatch_count = 0;
-  cp32_user_trap_gate = 0;
-  cp32_last_blocked_proc_nr = 0;
-  cp32_blocked_handoff_reported = 0;
-  cp32_blocked_probe_active = 0;
-  cp32_sched_handoff_count = 0;
-  handoff_diag_count = 0;
-  cp32_reset_handoff_diagnostics();
-
-  for (q = 0; q < NQ; q++) {
-    rdy_head[q] = NIL_PROC;
-    rdy_tail[q] = NIL_PROC;
-  }
-  p1->p_flags = 0;
-  p2->p_flags = 0;
-  /* These two table entries are synthetic user tasks for the live context
-   * probe, not MINIX server processes. Give them user-range numbers so the
-   * real queue classifier does not prioritize one as a server. */
-  p1->p_nr = LOW_USER;
-  p2->p_nr = LOW_USER + 1;
-  /* Use the same known-good initial PS for both stress entries. The generic
-   * task initializer gives process 1 a different value, which prevents its
-   * first entry loop from reaching its counter increment. */
-  p1->p_reg.psw = 0;
-  p2->p_reg.psw = 0;
-  p1->p_nextready = NIL_PROC;
-  p2->p_nextready = NIL_PROC;
-  ready(p1);
-  ready(p2);
-  current_proc = proc_addr(IDLE);
-  proc_ptr = proc_addr(IDLE);
-}
-
-PUBLIC int cp32_probe_blocked_handoff(void)
-{
-  struct proc *blocked = proc_addr(1);
-  struct proc *runnable = proc_addr(2);
-  int pass;
-
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  blocked->p_flags = SENDING;
-  blocked->p_sendto = runnable->p_nr;
-  blocked->p_nextready = NIL_PROC;
-  blocked->p_blocked_frame_valid = FALSE;
-  blocked->p_blocked_frame_result = OK;
-  blocked->p_blocked_frame_pc = blocked->p_reg.pc;
-  blocked->p_blocked_frame_psw = blocked->p_reg.psw;
-  blocked->p_blocked_frame_sp = blocked->p_reg.sp;
-  runnable->p_flags = 0;
-  ready(runnable);
-  current_proc = blocked;
-  proc_ptr = blocked;
-  cp32_blocked_handoff_gate = 1;
-  cp32_blocked_return_proc = blocked;
-  cp32_blocked_handoff_count = 0;
-  cp32_blocked_handoff_reported = 0;
-  cp32_blocked_handoff_reason_reported = 0;
-  cp32_blocked_probe_active = 1;
-  /* A stale wakeup must not reinsert the suspended syscall owner. */
-  ready(blocked);
-  sched();
-  pass = current_proc == runnable &&
-         cp32_blocked_return_proc == blocked &&
-         cp32_blocked_handoff_gate == 1 &&
-         blocked->p_flags == SENDING &&
-         blocked->p_nextready == NIL_PROC &&
-         blocked->p_sendto == runnable->p_nr &&
-         blocked->p_sendlink == NIL_PROC &&
-         !proc_is_ready_queued(blocked) &&
-         bill_ptr != blocked &&
-         cp32_blocked_handoff_count == 1;
-
-  cp32_blocked_handoff_gate = 0;
-  cp32_blocked_return_proc = NIL_PROC;
-  cp32_blocked_handoff_count = 0;
-  cp32_blocked_handoff_reported = 0;
-  cp32_blocked_handoff_reason_reported = 0;
-  cp32_blocked_probe_active = 0;
-  blocked->p_flags = 0;
-  blocked->p_sendto = 0;
-  runnable->p_flags = 0;
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  current_proc = proc_addr(IDLE);
-  proc_ptr = proc_addr(IDLE);
-  return pass;
-}
-
-PUBLIC int cp32_probe_all_blocked_queue(void)
-{
-  struct proc *blocked = proc_addr(1);
-  int original_nr = blocked->p_nr;
-  int pass;
-
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  blocked->p_flags = SENDING;
-  blocked->p_nextready = NIL_PROC;
-  cp32_ready_blocked_skip_count = 0;
-  blocked->p_nr = -1;
-  ready(blocked);
-  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
-  blocked->p_nr = 0;
-  ready(blocked);
-  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
-  blocked->p_nr = LOW_USER;
-  ready(blocked);
-  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
-  pass = proc_ptr == proc_addr(IDLE) &&
-         bill_ptr == proc_addr(IDLE) &&
-         cp32_ready_blocked_skip_count == 3 &&
-         rdy_head[TASK_Q] == NIL_PROC &&
-         rdy_head[SERVER_Q] == NIL_PROC &&
-         rdy_head[USER_Q] == NIL_PROC;
-  blocked->p_flags = 0;
-  blocked->p_nr = original_nr;
-  blocked->p_nextready = NIL_PROC;
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  current_proc = proc_addr(IDLE);
-  proc_ptr = proc_addr(IDLE);
-  return pass;
-}
- 
-/*===========================================================================*
- *				unready					     * 
- *===========================================================================*/
 PRIVATE void unready(struct proc *rp)
 {
   int q;
@@ -1320,47 +986,7 @@ PRIVATE void unready(struct proc *rp)
  *===========================================================================*/
 PRIVATE void switch_to(struct proc *next)
 {
-    if (next == NIL_PROC) return;
-    current_proc = next;
-    cp32_sched_handoff_count++;
-    handoff_diag_count++;
-    if (cp32_blocked_probe_active) return;
-    if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
-    usbj_print("[CTX V46 p=");
-    usbj_print_u32((uint32_t)next->p_nr);
-    if (next->p_nr == 1 || next->p_nr == 2) {
-      usbj_print(" t=");
-      usbj_print_u32(next->p_nr == 1 ? cp32_task1_ticks : cp32_task2_ticks);
-    }
-    usbj_print(" sp=");
-    usbj_print_u32((uint32_t)cp32_context_probe_sp(next));
-    usbj_print(" a15ok=");
-    usbj_print_u32(next->p_reg.a[15] != 0);
-    usbj_print(" ps=");
-    usbj_print_u32((uint32_t)cp32_context_probe_ps(next));
-    usbj_print(" pc=");
-    usbj_print_u32((uint32_t)cp32_context_probe_pc(next));
-    usbj_print(" a0=");
-    usbj_print_u32((uint32_t)next->p_reg.a[0]);
-    usbj_print(" a1=");
-    usbj_print_u32((uint32_t)next->p_reg.a[1]);
-    usbj_print(" spok=");
-    usbj_print_u32((cp32_context_probe_sp(next) & 0x0F) == 0);
-    usbj_print(" gate=");
-    usbj_print_u32((uint32_t)cp32_context_restore_gate);
-    usbj_print(" hg=");
-    usbj_print_u32((uint32_t)cp32_context_handoff_gate);
-    usbj_print(" h=");
-    usbj_print_u32(cp32_sched_handoff_count);
-    usbj_print(" bh=");
-    usbj_print_u32(cp32_blocked_handoff_count);
-    usbj_print(" bp=");
-    usbj_print_u32((uint32_t)cp32_last_blocked_proc_nr);
-    usbj_print(" bg=");
-    usbj_print_u32((uint32_t)cp32_blocked_handoff_gate);
-    usbj_print(" rel=");
-    usbj_print_u32(next->p_reg.a[1] == next->p_reg.sp);
-    usbj_print("]\r\n");
+    if (next != NIL_PROC) current_proc = next;
 }
 
  
@@ -1378,12 +1004,6 @@ void sched()
     } else if (blocked_handoff_eligible(current_proc)) {
         cp32_blocked_handoff_count++;
         cp32_last_blocked_proc_nr = current_proc->p_nr;
-        if (!cp32_blocked_probe_active && !cp32_blocked_handoff_reported) {
-            cp32_blocked_handoff_reported = 1;
-            usbj_print("[SCHED V3 blocked-handoff pass=1 flags=");
-            usbj_print_u32((uint32_t)current_proc->p_flags);
-            usbj_print("]\r\n");
-        }
     }
     pick_proc();
     switch_to(proc_ptr);
