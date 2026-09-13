@@ -592,6 +592,67 @@ marks hardware behavior complete.
 
 ## Core-kernel phase after console bring-up
 
+- [x] 8dh. Validate the MINIX system-task descriptor (marker 49): confirm the
+  SYSTASK entry points at `sys_task`, has a valid aligned stack, and is live
+  before routing a real system-server message. Host build and tests pass;
+  hardware validation pending.
+
+- [x] 8dg. Restore the production TTY path at marker 48 by disabling the
+  receive-side fail-fast compile probe after hardware showed same-owner
+  blocked-return rejection prevents FS user-frame entry. The probe remains
+  available for a future isolated harness rather than the live console path.
+
+- [x] 8df. Correct fail-fast receive-probe target (marker 47): replace the
+  hard-coded MM process target with the runnable FS/TTY client so blocked
+  return-path testing does not starve keyboard service. Host build and tests
+  pass; hardware validation pending.
+
+- [x] 8de. Isolate the blocked-send fail-fast experiment (marker 46): retain
+  the receive-side probe, disable the send-side probe after hardware showed it
+  monopolized system-task returns and starved the TTY consumer. Keyboard
+  service is restored before the next subsystem experiment.
+
+- [ ] 8dd. Fail-fast send-side context experiment (marker 45): enable the
+  companion `CP32_ENABLE_BLOCKED_SEND_PROBE` path alongside the receive-side
+  probe. Marker 44 survived beyond 1,000 IRQs with clock task returns; this
+  change intentionally exercises blocked SEND handoff behavior on hardware.
+
+- [ ] 8dc. Fail-fast experiment (marker 44): enable the existing
+  `CP32_ENABLE_BLOCKED_PROBE` path so blocked user IPC performs a real context
+  handoff candidate instead of remaining compile-disabled. This is
+  intentionally untested hardware behavior; first failure location must be
+  captured before further expansion.
+
+- [x] 8db. Add kernel-task descriptor validation (marker 43): verify live
+  task slots have valid entry PCs, aligned stacks, matching stack registers,
+  and nonempty T/D/S maps before task activation work. Host build and tests
+  pass; hardware validation pending.
+
+- [x] 8da. Extend deferred-held queue validation (marker 42) with endpoint
+  range, process-number, and reverse process-table identity checks. The
+  scheduler/TTY handoff remains unchanged; host build and tests pass pending
+  hardware validation.
+
+- [x] 8cz. Extend scheduler ready-queue validation (marker 41) with live
+  endpoint identity and reverse process-table mapping checks for every queued
+  runnable process. Host build and tests pass; hardware validation pending.
+
+- [x] 8cy. Batch deferred-notification hardening (marker 40): validate ready
+  queue entries as live runnable processes, add bounded held-queue traversal,
+  enforce held-tail termination and non-runnable ownership, and cross-check
+  the active scheduler owner relationship. Host build and tests pass pending
+  hardware validation.
+
+- [x] 8cx. Batch lifecycle hardening (marker 39): reject duplicate process
+  table pointers and invalid/free deferred-interrupt ownership links while
+  retaining the stable scheduler and TTY execution path. Host build and tests
+  pass pending hardware validation.
+
+- [x] 8cw. Batch invariant hardening (marker 38): validate process-table
+  pointer ranges and reverse mappings, validate IPC link endpoint mappings and
+  reject free-process links, and reject contradictory free/sending/receiving
+  flags. Host build and tests pass pending hardware validation.
+
 - [x] 8cv. Batch hardening checkpoint (marker 37): reject oversized or
   invalid-owner allocator requests, reject zero-base frees, bound ownership
   arithmetic, validate IPC caller queues and free-slot cleanup, validate saved

@@ -17,6 +17,9 @@
  
 #include "kernel.h"
 #include <minix/callnr.h>
+
+extern struct proc *held_head;
+extern struct proc *held_tail;
 #include <minix/com.h>
 #include "proc.h"
 #include "irq_frame.h"
@@ -307,7 +310,10 @@ CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   unready(owner);
   current_proc = owner;
 #if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-  next = proc_addr(2);
+  /* Probe the blocked return path with the runnable FS/TTY client.  The
+   * previous fixed proc_addr(2) target selected MM and starved keyboard
+   * service, which made the probe observe the wrong subsystem. */
+  next = proc_addr(FS_PROC_NR);
 #else
   sched();
   next = proc_ptr;
@@ -671,6 +677,10 @@ CP32_IRAM_EXT PUBLIC int cp32_ready_queue_check(void)
     struct proc *rp = rdy_head[q], *last = NIL_PROC;
     int hops = 0;
     while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+      if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+          (rp->p_flags & (P_SLOT_FREE | SENDING | RECEIVING))) return FALSE;
+      if (rp->p_nr < -NR_TASKS || rp->p_nr >= NR_PROCS ||
+          pproc_addr[rp->p_nr + NR_TASKS] != rp) return FALSE;
       last = rp;
       rp = rp->p_nextready;
     }
@@ -680,13 +690,62 @@ CP32_IRAM_EXT PUBLIC int cp32_ready_queue_check(void)
   return TRUE;
 }
 
+CP32_IRAM_EXT PUBLIC int cp32_held_queue_check(void)
+{
+  struct proc *rp = held_head, *last = NIL_PROC;
+  int hops = 0;
+  while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+    if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+        (rp->p_flags & P_SLOT_FREE) || !rp->p_int_held ||
+        proc_is_ready_queued(rp) || rp->p_nr < -NR_TASKS ||
+        rp->p_nr >= NR_PROCS ||
+        pproc_addr[rp->p_nr + NR_TASKS] != rp) return FALSE;
+    last = rp;
+    rp = rp->p_nextheld;
+  }
+  if (rp != NIL_PROC || last != held_tail) return FALSE;
+  if (held_head == NIL_PROC && held_tail != NIL_PROC) return FALSE;
+  if (held_tail != NIL_PROC && held_tail->p_nextheld != NIL_PROC) return FALSE;
+  return TRUE;
+}
+
 CP32_IRAM_EXT PUBLIC int cp32_process_table_check(void)
 {
-  int i;
+  int i, j;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
-    if (pproc_addr[i] == NIL_PROC || pproc_addr[i]->p_nr != i - NR_TASKS)
+    if (pproc_addr[i] == NIL_PROC ||
+        pproc_addr[i] < BEG_PROC_ADDR || pproc_addr[i] >= END_PROC_ADDR ||
+        pproc_addr[i]->p_nr != i - NR_TASKS ||
+        pproc_addr[pproc_addr[i]->p_nr + NR_TASKS] != pproc_addr[i])
       return FALSE;
+    for (j = 0; j < i; j++)
+      if (pproc_addr[j] == pproc_addr[i]) return FALSE;
   }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_task_table_check(void)
+{
+  int n;
+  for (n = -NR_TASKS; n < 0; n++) {
+    struct proc *rp = proc_addr(n);
+    if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE) ||
+        rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+        (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp ||
+        rp->p_map[T].mem_len == 0 || rp->p_map[D].mem_len == 0 ||
+        rp->p_map[S].mem_len == 0) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_system_task_check(void)
+{
+  struct proc *rp = proc_addr(SYSTASK);
+  extern void sys_task(void);
+  if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE) ||
+      rp->p_reg.pc != (reg_t)sys_task || rp->p_reg.sp == 0 ||
+      (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp)
+    return FALSE;
   return TRUE;
 }
 
@@ -701,9 +760,15 @@ CP32_IRAM_EXT PUBLIC int cp32_ipc_link_check(void)
     links[1] = rp->p_sendlink;
     for (j = 0; j < 2; j++) {
       if (links[j] != NIL_PROC &&
-          (links[j] < BEG_PROC_ADDR || links[j] >= END_PROC_ADDR))
+          (links[j] < BEG_PROC_ADDR || links[j] >= END_PROC_ADDR ||
+           links[j]->p_nr < -NR_TASKS || links[j]->p_nr >= NR_PROCS ||
+           pproc_addr[links[j]->p_nr + NR_TASKS] != links[j] ||
+           (links[j]->p_flags & P_SLOT_FREE)))
         return FALSE;
     }
+    if (rp->p_nextheld != NIL_PROC &&
+        (rp->p_nextheld < BEG_PROC_ADDR || rp->p_nextheld >= END_PROC_ADDR ||
+         (rp->p_nextheld->p_flags & P_SLOT_FREE))) return FALSE;
   }
   return TRUE;
 }
@@ -798,7 +863,9 @@ CP32_IRAM_EXT PUBLIC int cp32_process_flags_check(void)
 {
   int i;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
-    if ((pproc_addr[i]->p_flags & ~0177) != 0) return FALSE;
+    if ((pproc_addr[i]->p_flags & ~0177) != 0 ||
+        ((pproc_addr[i]->p_flags & P_SLOT_FREE) &&
+         (pproc_addr[i]->p_flags & (SENDING | RECEIVING)))) return FALSE;
   }
   return TRUE;
 }
@@ -835,6 +902,7 @@ CP32_IRAM_EXT PUBLIC int cp32_runtime_owner_check(void)
         pproc_addr[rp->p_nr + NR_TASKS] != rp ||
         (rp->p_flags & P_SLOT_FREE) != 0)
       return FALSE;
+    if (rp == proc_ptr && current_proc != rp && !switching) return FALSE;
   }
   return TRUE;
 }

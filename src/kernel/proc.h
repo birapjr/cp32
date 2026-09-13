@@ -137,7 +137,10 @@ EXTERN struct proc *bill_ptr;	/* ptr to process to bill for clock ticks */
 EXTERN struct proc *rdy_head[NQ];	/* pointers to ready list headers */
 EXTERN struct proc *rdy_tail[NQ];	/* pointers to ready list tails */
 EXTERN int cp32_ready_queue_check(void);
+EXTERN int cp32_held_queue_check(void);
 EXTERN int cp32_process_table_check(void);
+EXTERN int cp32_task_table_check(void);
+EXTERN int cp32_system_task_check(void);
 EXTERN int cp32_ipc_link_check(void);
 EXTERN int cp32_ipc_queue_check(void);
 EXTERN int cp32_ipc_state_check(void);

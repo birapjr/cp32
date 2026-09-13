@@ -272,9 +272,12 @@ void main(void)
   lock();
   systimer_irq_start();
     usbj_print("[TEST CARDPUTER-KBD 245]\r\n");
-    usbj_print("[TEST CARDPUTER-CORE 37]\r\n");
+    usbj_print("[TEST CARDPUTER-CORE 49]\r\n");
     usbj_print("[CORE readyq=");
     usbj_print_u32((uint32_t)cp32_ready_queue_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE heldq=");
+    usbj_print_u32((uint32_t)cp32_held_queue_check());
     usbj_print("]\r\n");
     usbj_print("[CORE blockedowner=");
     usbj_print_u32((uint32_t)cp32_blocked_owner_check());
@@ -308,6 +311,12 @@ void main(void)
     usbj_print("]\r\n");
     usbj_print("[CORE proctab=");
     usbj_print_u32((uint32_t)cp32_process_table_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE tasks=");
+    usbj_print_u32((uint32_t)cp32_task_table_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE systask=");
+    usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
