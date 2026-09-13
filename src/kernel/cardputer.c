@@ -1,4 +1,6 @@
 #include "cardputer.h"
+
+unsigned cardputer_keyboard_stale_events;
 #include <stdint.h>
 
 #define GPIO_BASE 0x60004000UL
@@ -137,6 +139,7 @@ CP32_IRAM_EXT int cardputer_keyboard_read_event(unsigned char *event)
 CP32_IRAM_EXT int cardputer_keyboard_init(void)
 {
   int ok = 1;
+  unsigned char pending, stale;
   /* Match M5Cardputer's TCA8418KeyboardReader: Cardputer Adv is a 7x8
    * matrix.  The remaining pins are GPIO inputs with falling-edge events. */
   ok &= write_register(0x23, 0x00);
@@ -154,6 +157,17 @@ CP32_IRAM_EXT int cardputer_keyboard_init(void)
   ok &= write_register(0x1D, 0x7F);
   ok &= write_register(0x1E, 0xFF);
   ok &= write_register(0x1F, 0x00);
+  /* Discard events accumulated before this boot's TTY reader exists. */
+  stale = 0;
+  if (read_register(0x03, &pending)) {
+    while (pending != 0 && stale != 32) {
+      unsigned char event;
+      if (!cardputer_keyboard_read_event(&event)) break;
+      stale++;
+      if (!read_register(0x03, &pending)) break;
+    }
+  }
+  cardputer_keyboard_stale_events = stale;
   /* Clear stale GPIO/key interrupt state, then enable both sources. */
   ok &= write_register(0x02, 0x03);
   ok &= write_register(0x01, 0x03);

@@ -59,6 +59,8 @@
 #include "tty.h"
 #include "cardputer.h"
 
+extern volatile char cp32_tty_user_byte;
+
 static unsigned cp32_kbd_poll_reports;
 static unsigned cp32_tty_read_reports;
 FORWARD _PROTOTYPE( void in_transfer, (tty_t *tp) );
@@ -118,6 +120,39 @@ CP32_IRAM_EXT static void cp32_queue_console_key(char ch)
 		usbj_print("0x"); usbj_print_hex32((uint32_t)(unsigned char)ch);
 	}
 	usbj_print("]\r\n");
+}
+
+/* Cooperative poll used by the synthetic CP32 FS client while it is waiting
+ * for its first byte.  The normal TTY task remains the owner of the queue. */
+CP32_IRAM_EXT PUBLIC void cp32_tty_poll_keyboard(void)
+{
+	unsigned char event;
+	char input;
+	if (cp32_read_keyboard_event(&event) <= 0) return;
+	if (cp32_cardputer_key(event, &input)) {
+		lock();
+		cp32_queue_console_key(input);
+		unlock();
+	}
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_tty_read_char(char *out)
+{
+	tty_t *tp = &tty_table[0];
+	u16_t value;
+	if (out == (char *)0) return EINVAL;
+	lock();
+	if (tp->tty_incount == 0) {
+		unlock();
+		return EAGAIN;
+	}
+	value = *tp->tty_intail;
+	if (++tp->tty_intail == bufend(tp->tty_inbuf)) tp->tty_intail = tp->tty_inbuf;
+	tp->tty_incount--;
+	if (value & IN_EOT) tp->tty_eotct--;
+	unlock();
+	*out = (char)(value & IN_CHAR);
+	return 1;
 }
 #include "proc.h"
 
@@ -238,7 +273,7 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 				}
 			}
 			#if CP32_VERBOSE_DIAGNOSTICS
-			usbj_print("[KBD event="); usbj_print_u32(key_event);
+			usbj_print("[KBD session=238 event="); usbj_print_u32(key_event);
 			usbj_print("]\r\n");
 			#endif
 		}
@@ -771,9 +806,13 @@ register tty_t *tp;		/* pointer to terminal to read from */
   int count;
   phys_bytes buf_phys, user_base;
   char buf[64], *bp;
+  static int cp32_xfer_reported;
 
   /* Anything to do? */
-  if (tp->tty_inleft == 0 || tp->tty_eotct < tp->tty_min) return;
+  /* The CP32 bring-up FS client asks for one byte at a time.  It is not a
+   * canonical terminal consumer, so do not make it wait for a newline. */
+  if (tp->tty_inleft == 0 || tp->tty_incount == 0 ||
+      (tp->tty_inproc != FS_PROC_NR && tp->tty_eotct < tp->tty_min)) return;
 
   buf_phys = vir2phys(buf);
   /* CP32 uses flat SRAM addresses for the bring-up FS client.  tty_in_vir is
@@ -781,13 +820,30 @@ register tty_t *tp;		/* pointer to terminal to read from */
    * translate it twice and corrupt the user buffer. */
   user_base = 0;
   bp = buf;
-  while (tp->tty_inleft > 0 && tp->tty_eotct > 0) {
+  while (tp->tty_inleft > 0 && tp->tty_incount > 0 &&
+      (tp->tty_eotct > 0 || tp->tty_inproc == FS_PROC_NR)) {
 	ch = *tp->tty_intail;
 
 	if (!(ch & IN_EOF)) {
 		/* One character to be delivered to the user. */
 		*bp = ch & IN_CHAR;
 		tp->tty_inleft--;
+		/* CP32 user buffers are flat SRAM addresses.  Keep the legacy
+		 * temporary-buffer accounting, but write the byte directly to the
+		 * validated destination so segmented phys_copy cannot drop it. */
+		*(volatile char *)(uintptr_t)tp->tty_in_vir = (char)(ch & IN_CHAR);
+		if (tp->tty_inproc == FS_PROC_NR)
+			cp32_tty_user_byte = (char)(ch & IN_CHAR);
+		if (!cp32_xfer_reported) {
+			cp32_xfer_reported = 1;
+			usbj_print("[TTY xfer dst=");
+			usbj_print_hex32((uint32_t)tp->tty_in_vir);
+			usbj_print(" ch=");
+			usbj_print_hex32((uint32_t)(ch & IN_CHAR));
+			usbj_print("]\r\n");
+		}
+		tp->tty_in_vir++;
+		tp->tty_incum++;
 		if (++bp == bufend(buf)) {
 			/* Temp buffer full, copy to user space. */
 					phys_copy(buf_phys, numap(tp->tty_inproc,

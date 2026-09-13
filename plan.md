@@ -489,6 +489,54 @@ marks hardware behavior complete.
   incomplete blocked-receive return handoff while validating keyboard input.
 - [ ] 5bh. Make successful user exception returns consume the explicit
   `cp32_irq_return_proc` publication instead of mutable `proc_ptr`.
+- [ ] 5bi. Use the actual TTY `O_NONBLOCK` flag for the user read client;
+  `NO_BLOCK` is unrelated and evaluates to zero.
+- [ ] 5bj. Validate TTY reply status and clear the user byte before printing,
+  preventing stale stack data from appearing as a typed character.
+- [ ] 5bk. Write CP32 flat-SRAM TTY input bytes directly to the validated user
+  destination, bypassing the legacy segmented copy path.
+- [ ] 5bl. Report the first user TTY IPC return code and reply status to
+  distinguish empty input from a malformed `BOTH` transaction.
+- [ ] 5bm. Move the diagnostic TTY byte buffer from the transient FS stack to
+  persistent kernel SRAM to isolate user-stack return corruption.
+- [ ] 5bn. Trace the first TTY transfer destination and input character at
+  `in_transfer()` to locate loss between keyboard queue and user buffer.
+- [ ] 5bo. Remove the ineffective CHIP preprocessor guard so CP32 flat-SRAM
+  TTY transfer code is included in the actual build.
+- [x] 5bp. Allow the CP32 one-byte FS TTY client to receive canonical input
+  immediately, without waiting for an EOL; preserve canonical gating for other
+  terminal consumers.
+- [x] 5bq. Guard TTY transfer against draining an empty input queue, which was
+  producing false zero-valued user characters.
+- [x] 5br. Make the CP32 TTY client report the byte read back from the exact
+  transfer destination, eliminating a misleading stale-buffer diagnostic.
+- [x] 5bs. Suppress zero-byte TTY replies in the bring-up client so stale or
+  empty replies cannot be reported as keyboard input.
+- [x] 5bt. Preserve the TTY destination pointer across `_sendrec()`; reply
+  messages may overwrite the request's `ADDRESS` field.
+- [x] 5bu. Keep the diagnostic TTY destination in persistent kernel SRAM so
+  reconnect/context-switch paths cannot invalidate a stack-local pointer.
+- [x] 5bv. Remove unsafe post-IPC user-pointer readback; publish the delivered
+  byte from the kernel TTY transfer into persistent diagnostic SRAM.
+- [x] 5bw. Pin synthetic TTY `_sendrec()` calls to the FS process descriptor so
+  scheduler publication cannot replace the IPC caller between SEND and RECEIVE.
+- [x] 5bx. Poll/service the TTY input queue before synthetic user IPC, avoiding
+  the unsafe empty-read blocking return path.
+- [x] 5by. Stop invoking the kernel `handle_events()` directly from user
+  context; let the TTY task own queue servicing and prevent a null `tty_t`
+  handoff argument.
+- [x] 5bz. Drain the controller FIFO during keyboard initialization and tag
+  keyboard events with the firmware session marker to prevent stale replay
+  after USB-UART reconnects.
+- [x] 5ca. Add a cooperative empty-queue keyboard poll for the synthetic FS
+  client so its wait loop cannot starve the normal TTY polling task.
+- [x] 5cb. Prevent synthetic TTY retries while FS is already blocked, avoiding
+  repeated `SENDING|RECEIVING` state overwrites and lost user reads.
+- [x] 5cc. Add a direct atomic CP32 TTY queue read for the bring-up client,
+  bypassing the unstable synthetic blocked-IPC path while preserving normal
+  TTY IPC for later user processes.
+- [x] 5cd. Add a bounded diagnostic line buffer with backspace and Enter
+  submission handling on top of the stable per-character TTY path.
 
 ## TTY/user handoff diagnostic tree — marker 219
 

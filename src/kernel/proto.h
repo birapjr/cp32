@@ -68,6 +68,7 @@ _PROTOTYPE( void syn_alrm_task, (void)					);
 
 /* tty.c */
 _PROTOTYPE( void handle_events, (struct tty *tp)                 );
+_PROTOTYPE( int cp32_tty_read_char, (char *out)                  );
 _PROTOTYPE( void tty_reply, (int code, int replyee, int proc_nr,
 		int status)                                      );
 _PROTOTYPE( void tty_wakeup, (clock_t now)				);

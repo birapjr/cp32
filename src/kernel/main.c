@@ -1,4 +1,7 @@
 #include "kernel.h"
+#include <termios.h>
+#include <sys/ioctl.h>
+#include "tty.h"
 #include "proc.h"
 #include "irq_frame.h"
 #include "cardputer.h"
@@ -23,38 +26,36 @@ extern volatile int cp32_blocked_handoff_gate;
 extern volatile int cp32_user_handoff_gate;
 extern volatile uint32_t cp32_timer_irq_ticks;
 extern int _sendrec(int dest, message *m);
+extern unsigned cardputer_keyboard_stale_events;
+extern tty_t tty_table[];
+extern void cp32_tty_poll_keyboard(void);
+extern int cp32_tty_read_char(char *out);
+volatile char cp32_tty_user_byte;
+static char cp32_tty_line[64];
+static unsigned cp32_tty_line_len;
 
 CP32_IRAM_EXT static void cp32_tty_read_client(void)
 {
-  message m;
-  char byte;
-  unsigned attempts = 0;
   usbj_print("[TTY user-entry]\r\n");
   for (;;) {
-    /* The user-frame entry restores registers, not the kernel bookkeeping
-     * globals used by these bring-up IPC wrappers. Rebind the client owner
-     * before each request so the message source is FS, never IDLE. */
-    proc_ptr = proc_addr(FS_PROC_NR);
-    current_proc = proc_ptr;
-    memset(&m, 0, sizeof(m));
-    m.m_type = DEV_READ;
-    m.TTY_LINE = 0;
-    m.PROC_NR = FS_PROC_NR;
-    m.COUNT = 1;
-    m.TTY_FLAGS = NO_BLOCK;
-    m.ADDRESS = &byte;
-    if (++attempts == 1) usbj_print("[TTY user-read-start]\r\n");
-    if (_sendrec(TTY, &m) != OK) {
-      if ((attempts % 1000) == 0) usbj_print("[TTY user-read-error]\r\n");
-      continue;
+    cp32_tty_poll_keyboard();
+    if (cp32_tty_read_char((char *)&cp32_tty_user_byte) == 1) {
+      usbj_print("[TTY user-char=");
+      usbj_print_hex32((uint32_t)(unsigned char)cp32_tty_user_byte);
+      usbj_print("]\r\n");
+      if (cp32_tty_user_byte == '\b') {
+        if (cp32_tty_line_len != 0) cp32_tty_line_len--;
+      } else if (cp32_tty_user_byte == '\r' || cp32_tty_user_byte == '\n') {
+        cp32_tty_line[cp32_tty_line_len] = '\0';
+        usbj_print("[TTY line=");
+        usbj_print(cp32_tty_line);
+        usbj_print("]\r\n");
+        cp32_tty_line_len = 0;
+      } else if (cp32_tty_user_byte >= 0x20 &&
+                 cp32_tty_user_byte <= 0x7E && cp32_tty_line_len < 63) {
+        cp32_tty_line[cp32_tty_line_len++] = cp32_tty_user_byte;
+      }
     }
-    usbj_print("[TTY user-char=");
-    if (byte >= 0x20 && byte <= 0x7E) {
-      char shown[2]; shown[0] = byte; shown[1] = '\0'; usbj_print(shown);
-    } else {
-      usbj_print_hex32((uint32_t)(unsigned char)byte);
-    }
-    usbj_print("]\r\n");
   }
 }
 
@@ -223,6 +224,8 @@ void main(void)
   }
   usbj_print("[KBD init=");
   usbj_print_u32((uint32_t)cardputer_keyboard_init());
+  usbj_print(" stale=");
+  usbj_print_u32((uint32_t)cardputer_keyboard_stale_events);
   usbj_print("]\r\n");
   usbj_print("[RAMDISK capacity=");
   usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
@@ -239,7 +242,7 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-    usbj_print("[TEST CARDPUTER-KBD 220]\r\n");
+    usbj_print("[TEST CARDPUTER-KBD 242]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();

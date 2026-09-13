@@ -37,7 +37,15 @@ int _receive(int src, message *m) {
 }
 
 int _sendrec(int dest, message *m) {
-    if (current_proc != NIL_PROC) proc_ptr = current_proc;
+    /* The CP32 TTY client is a synthetic FS caller.  Keep both halves of
+     * BOTH bound to the FS descriptor; an IRQ may publish IDLE or another
+     * runnable process through current_proc between dispatch phases. */
+    if (dest == TTY) {
+        proc_ptr = proc_addr(FS_PROC_NR);
+        current_proc = proc_ptr;
+    } else if (current_proc != NIL_PROC) {
+        proc_ptr = current_proc;
+    }
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
     return sys_call(BOTH, dest, m);
 }
