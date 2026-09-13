@@ -128,6 +128,8 @@ CP32_IRAM_EXT PUBLIC void cp32_tty_poll_keyboard(void)
 {
 	unsigned char event;
 	char input;
+	/* Bit-banged I2C must never begin while servicing an interrupt. */
+	if (k_reenter != 0) return;
 	if (cp32_read_keyboard_event(&event) <= 0) return;
 	if (cp32_cardputer_key(event, &input)) {
 		lock();
@@ -259,7 +261,11 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 	for (tp = FIRST_TTY; tp < END_TTY; tp++) {
 		if (tp->tty_events) handle_events(tp);
 	}
-	/* Drain a bounded FIFO batch so rapid typing cannot overflow the TCA8418. */
+    /* Keyboard polling is owned by the CP32 bring-up FS client until the
+     * production TTY IRQ wakeup path is enabled. */
+
+#if 0
+    /* Drain a bounded FIFO batch so rapid typing cannot overflow the TCA8418. */
 	{
 		unsigned drained = 0;
 		while (drained++ < 8 && cardputer_keyboard_interrupt_asserted()) {
@@ -270,7 +276,7 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 					lock();
 					cp32_queue_console_key(input);
 					unlock();
-				}
+    }
 			}
 			#if CP32_VERBOSE_DIAGNOSTICS
 			usbj_print("[KBD session=238 event="); usbj_print_u32(key_event);
@@ -278,6 +284,7 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 			#endif
 		}
 	}
+#endif
 	#if CP32_VERBOSE_DIAGNOSTICS
 	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 10000) == 0) {
 		usbj_print("[KBD poll="); usbj_print_u32(cp32_kbd_poll_reports);

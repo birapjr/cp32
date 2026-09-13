@@ -1048,6 +1048,16 @@ CP32_IRAM_EXT PRIVATE void ready(struct proc *rp)
   if (q < 0 || q >= NQ) return;
   /* A replayed wakeup must not link a runnable process twice. */
   if (proc_is_ready_queued(rp)) return;
+  /* Reconcile a stale tail before linking through it. */
+  if (rdy_head[q] != NIL_PROC && rdy_tail[q] != NIL_PROC) {
+    struct proc *tail = rdy_head[q];
+    int hops = 0;
+    while (tail->p_nextready != NIL_PROC &&
+           hops++ < NR_TASKS + NR_PROCS)
+      tail = tail->p_nextready;
+    if (tail->p_nextready != NIL_PROC) return;
+    rdy_tail[q] = tail;
+  }
   rp->p_nextready = NIL_PROC;
   if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
   else rdy_tail[q]->p_nextready = rp;

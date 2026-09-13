@@ -272,7 +272,7 @@ void main(void)
   lock();
   systimer_irq_start();
     usbj_print("[TEST CARDPUTER-KBD 245]\r\n");
-    usbj_print("[TEST CARDPUTER-CORE 4]\r\n");
+    usbj_print("[TEST CARDPUTER-CORE 8]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();

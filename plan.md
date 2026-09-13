@@ -562,6 +562,10 @@ marks hardware behavior complete.
   cyclic or malformed ready link cannot hang scheduler maintenance; marker 3.
 - [x] 8cq. Fail closed when keyboard register initialization is incomplete;
   runtime I²C polling is disabled until the controller is fully ready; marker 4.
+- [x] 8cr. Reconcile stale ready-queue tails before runnable insertion and fail
+  closed on a cyclic queue; marker 5.
+- [x] 8cs. Make the TTY task the sole runtime keyboard-I²C poll owner; remove
+  competing FS-client hardware polling and advance the core marker to 6.
 
 ## TTY/user handoff diagnostic tree — marker 219
 
@@ -585,3 +589,8 @@ marks hardware behavior complete.
 - [ ] Keep the current nonblocking `NO_BLOCK` experiment isolated until the
   user-return ownership problem is resolved; do not expand diagnostics before
   capturing the first post-syscall assembly state.
+
+## Core-kernel phase after console bring-up
+
+- [x] 8cu. Reject FS-side keyboard I²C polling while `k_reenter` is nonzero,
+  preventing transactions from starting at interrupt level; marker 8.
