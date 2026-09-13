@@ -1,779 +1,596 @@
 # CP32 implementation plan
 
-## Current implementation approach
+This plan tracks the CP32 port feature-by-feature against `minix-2.0.0`.
+MINIX is the behavioral reference; ESP32-S3 replacements are valid when they
+preserve the MINIX invariant.
 
-Development now proceeds feature-by-feature rather than marker-by-marker.
-Each iteration implements one coherent MINIX feature slice, adds only the
-critical aggregate validation markers, builds the complete image, and then
-uses hardware output to identify any failures before starting the next slice.
-This keeps the port moving faster while preserving a clear validation boundary
-for every completed feature. Detailed field diagnostics remain available only
-when a focused failure investigation requires them.
+## Current boundary
 
-## Historical migration log
+CP32 currently boots through `start()` → `main()` → diagnostics → the
+ESP32-S3 SYSTIMER probe → an idle loop. The repository is kernel-focused and
+does not contain MM, FS, user processes, a shell, or applications.
 
-The detailed marker-by-marker entries below are retained as historical evidence
-and are not the active task list. The active implementation state is maintained
-in the concise sections near the end of this file.
+Preserve these invariants: bare-metal Xtensa `call0`; the 64-byte saved-frame
+contract; direct ESP32-S3 register access; MINIX process-number, queue, and
+message-copy semantics; and removable, versioned validation probes.
 
-The production user exception entry was tightened after review: the user
-frame now saves all interrupted call0 registers before reading `EXCCAUSE`,
-preserving the interrupted `a5` across non-level-1 traps. The normal image
-build and image-layout check pass. Hardware validation of the guarded image
-then passed through IRQ 112: `CTX V65` returned `EBADCALL` (`-102`), user-rfe
-count remained zero, handoff rejects remained zero, and `CTX V46` preserved
-aligned `sp`/`a1`, `a15`, and `rel=1`.
+## Feature status and remaining work
 
-The completed one-shot V1–V64 bring-up transcript is now excluded from the
-image; only compact live IRQ/context diagnostics remain enabled. The normal
-image layout check passes with 10,372 bytes of IRAM margin.
-The obsolete `[IMG V8]` startup banner was also removed; the rebuilt image
-has 10,384 bytes of IRAM margin.
-The remaining obsolete timer/startup banners were removed; the rebuilt image
-has 10,496 bytes of IRAM margin.
-Added `[CTX V82 user-frame-save-ready]` immediately before the gated user
-probe entry for the next hardware run; no hardware result is claimed yet.
-Normal-image hardware validation then passed through IRQ 96: memory, vectors,
-stack, IPC/MM, lock, invalid-syscall, and live context checks passed, with
-`a1==sp`, `a15ok=1`, `rel=1`, and no exception. V82 was correctly absent
-because `CP32_ENABLE_USER_PROBE` was disabled.
-The dedicated `test-user-probe` image also builds and passes the layout check;
-its IRAM margin is 10,184 bytes and awaits hardware validation of V82.
-The guarded BOTH/SENDREC reply-probe image also builds and passes the layout
-check, with 9,580 bytes of IRAM margin; it is ready for the next hardware run.
-Added the function/destination contract guard: `ANY` is accepted only for
-RECEIVE, while SEND and BOTH require a concrete destination. V92 marks the
-accepted contract; the reply-probe image builds and passes layout validation
-with 10,588 bytes of IRAM margin.
-Hardware validation passed through IRQ 128 with V92 following the frame,
-cause, owner, message, and destination markers; process 3 remained selected
-and no exception occurred.
-The high-frequency `CTX V78` scheduler trace was removed after probe
-validation; the normal image now has 10,744 bytes of IRAM margin.
-Removed the redundant high-frequency IPC V18/V24/V79/V80/V81 trace output;
-the normal image now has 11,308 bytes of IRAM margin.
-Removed redundant user-dispatch V67 entry/result messages; the user-probe
-image now has 11,072 bytes of IRAM margin.
-Removed the obsolete V68/V70–V77 probe trace family; the user-probe image now
-has 12,068 bytes of IRAM margin, with V82/V83 retained.
-Latest hardware output validated initialization, IPC/MM, syscall rejection,
-lock nesting, V83 C-boundary entry, aligned context restoration, and periodic
-IRQs through IRQ 112 with no exception. V82 was not observed in this capture,
-so its hardware validation remains unconfirmed.
-Hardware validation of that image passed through IRQ 80 with V82/V83 present,
-the reduced diagnostic output, valid context invariants, and no exception.
-The subsequent user-probe run reached V82 and V83 and remained stable through
-IRQ 96 with no exception; `a1==sp`, `a15ok=1`, and `rel=1` held. In this
-probe image `t1/t2=0` and `f=0` are expected because process 1 is the probe.
-The cleaned image then remained stable through IRQ 160 with V82/V83 present,
-reduced IPC output, valid frame alignment, and no exception.
-Added the production trap-cause gate: only the documented illegal-instruction
-cause (`EXCCAUSE=0`) reaches syscall dispatch; other user exception causes now
-fail closed. V84 marks the accepted cause in the probe image.
-Added the guarded non-syscall-cause probe and V85 marker; the rejected-cause
-path now has explicit coverage before production return handling is enabled.
-The latest live probe reached V82/V84/V83 and remained stable through IRQ 96,
-but did not emit V85 because `cp32_user_trap_probe()` is no longer called by
-the live path after the one-shot diagnostic block was disabled. V85 remains
-build-only until that probe is wired into the active test path.
-The invalid-cause probe is now wired into the active `test-user-probe` boot
-sequence; the image passes layout validation with 11,652 bytes of IRAM margin
-and awaits hardware validation of V85.
-Hardware validation completed through IRQ 96: V82, V84, V83, and V85 appeared
-in order, confirming accepted-cause dispatch and rejected-cause fail-closed
-behavior with stable context/IRQ operation and no exception.
-Added pre-dispatch destination validation and V89 for invalid destinations;
-the user-probe image builds and passes layout validation with 11,384 bytes of
-IRAM margin. Hardware validation is pending.
-Synchronized the owner saved PC after trap-PC advancement, including early
-rejection paths, and added V97 for that scheduler-visible contract. The
-user-probe image builds and passes layout validation with 10,776 bytes of IRAM
-margin; hardware validation is pending.
-Hardware validation passed through IRQ 112 with V84, V83, V87, V86, V94, V97,
-V88, V89, and V95 observed in order; owner-PC synchronization and rejection
-return remained stable with no exception.
-Added V90 for accepted destinations; the guarded BOTH/SENDREC reply-probe
-image builds and passes layout validation with 10,760 bytes of IRAM margin.
-Added V93 to mark syscall result propagation into both the trap frame and
-owner register state; the reply-probe image builds and passes layout
-validation with 10,544 bytes of IRAM margin.
-Syscall return PC advancement is now unconditional for accepted user syscalls;
-V94 marks the three-byte trap instruction skip. The reply-probe image builds
-and passes layout validation with 10,508 bytes of IRAM margin.
-Moved return-PC advancement before `sys_call` so blocked-frame snapshots retain
-the post-trap PC and do not re-execute the syscall on wake. V94 remains the
-hardware marker; the reply-probe image builds with 10,500 bytes of IRAM margin.
-Early invalid-destination returns now record `E_BAD_DEST` in the user frame
-before restoration, with V95 marking that error-result path. The user-probe
-image builds and passes layout validation with 10,984 bytes of IRAM margin.
-Hardware validation passed through IRQ 80: V82, V84, V83, V87, V85, V86, V88,
-V89, and V95 appeared in order; the rejection result was recorded and no
-exception occurred.
-Moved return-PC advancement ahead of all syscall argument validation, so
-invalid pointer/destination calls also resume past the trap instruction. V94
-marks this path; the user-probe image builds with 10,828 bytes of IRAM margin.
-Hardware validation passed through IRQ 80 with V94 preceding V96/V85/V88/V89/V95;
-rejected syscalls advanced past the trap and returned recorded errors without
-an exception.
-Extended early error-result propagation to invalid message pointers, with V96
-marking `EFAULT` recorded in the frame. The user-probe image builds and passes
-layout validation with 10,856 bytes of IRAM margin; hardware validation is
-pending.
-Hardware validation passed through IRQ 80: V96, V85, V88, V89, and V95 all
-appeared in the active rejection probe, confirming pointer, cause, destination,
-and error-result handling with no exception.
-Hardware validation passed through IRQ 80 with V94 present after V93;
-return-PC advancement, process-3 handoff, context, and IRQ operation remained
-stable with no exception.
-The follow-up run confirmed the corrected order V94 before V93, then remained
-stable through IRQ 64 with process 3 selected and no exception.
-Hardware validation passed through IRQ 144 with V93 present after V92;
-the result-recording path and process-3 handoff remained stable with valid
-context invariants and no exception.
-Added V91 for range-valid but free destination rejection; the reply-probe
-image builds and passes layout validation with 10,660 bytes of IRAM margin.
-Hardware validation of the valid-destination reply probe passed through IRQ
-64: V82, V84, V83, V87, V85, V86, V88, and V90 appeared, process 3 was
-selected, and no exception occurred. V91 was correctly absent.
-The latest invalid-destination probe validated V82, V84, V83, V87, V85, V86,
-V88, and V89 through IRQ 64 with no exception. V90 was correctly absent from
-this rejection-only image and remains reserved for the reply probe.
-The latest probe run observed V84, V83, V87, V86, V88, and V89, then remained
-stable through IRQ 80 with no exception. V89 safely rejected the invalid
-destination after mapped-message validation; V82/V85 were not present in this
-capture.
-Added unconditional user-trap owner/state validation and V86 for the accepted
-owner contract; the probe image builds and passes layout validation with
-11,616 bytes of IRAM margin. Hardware validation is pending.
-Strengthened the user-frame contract to enforce `a1 == sp` and nonzero `a15`,
-with V87 marking the validated shape. The probe image builds and passes layout
-validation with 11,552 bytes of IRAM margin; hardware validation is pending.
-Hardware validation completed through IRQ 80: V82, V84, V83, V87, V85, and V86
-appeared in order, confirming frame shape, cause, and owner validation with
-stable context/IRQ operation and no exception.
-Added pre-dispatch user message-pointer validation and V88; the active probe
-now supplies a mapped message buffer before exercising its invalid destination
-path. The probe image builds and passes layout validation with 11,460 bytes of
-IRAM margin; hardware validation is pending.
-Hardware validation completed through IRQ 64: V88 appeared after the frame,
-cause, and owner markers, confirming mapped message-pointer validation; context
-and IRQ operation remained stable with no exception.
-Hardware validation completed through IRQ 112: V82, V84, V83, V85, and V86
-appeared in order, with owner validation, cause rejection, context, and IRQ
-operation stable and no exception.
-Hardware validation passed through IRQ 112 with V82, V84, and V83 appearing in
-order, followed by stable context/IRQ diagnostics and no exception.
-Added one-shot `[CTX V83 user-frame-c-boundary]` at the C trap boundary. The
-user-probe image builds and passes layout validation with 10,136 bytes of IRAM
-margin; hardware validation is pending.
-Hardware validation of the user-probe image passed through IRQ 192: V82/V83
-were reached, the corrected frame crossed the C boundary, and the immediate
-probe return completed without exception. `a1==sp`, `a15ok=1`, and `rel=1`
-remained valid. The zero stress counters are expected because process 1 is
-occupied by the terminal user-probe entry in this image.
+### 1. Reset, boot, and kernel image — Partially implemented
 
-Latest hardware runs pass IPC/MM, lock, scheduler, and context probes. The
-live IRQ/context loop is stable through the latest reported IRQ samples, with
-`CTX V46` showing aligned stacks, preserved `a15`, `gate=1`, `hg=1`, and zero
-owner-mismatch and blocked-target rejections.
+Reference: `minix-2.0.0/src/kernel/start.c`, `main.c`, `mpx386.s`, `table.c`.
+CP32: `src/kernel/start.c`, `mpx32.S`, `vectors.S`, `main.c`, `esp32s3.ld`.
 
-Validated marker families retained in the current image:
+Present: Xtensa reset entry, BSS/stack setup, linker image, watchdog handling,
+process-table initialization, task metadata, and clean image builds.
+Missing: descriptor-driven production startup for all active tasks, a real boot
+task table, user-image loading, and entry into a scheduled task set.
+ESP32-S3 replaces BIOS/protected-mode setup and PIC/PIT startup with loader
+segments, Xtensa vectors, and SYSTIMER registers.
 
-- `IPC V18/V19/V20/V21`: blocked-state accounting and ownership reset.
-- `SCHED V1/V2/V4/V6/V7/V8/V9`: classification, baseline handoff,
-  blocked-owner protection, stale-ready filtering, and all-queue idle fallback.
-- `CTX V46/V47/V48/V49/V50/V51`: frame shape, gate readiness, owner alignment,
-  reset state, and rejected-handoff counters.
-- `LOCK V1/V4`, `IPC V9–V17`, and `MM V9/V11/V12` remain passing.
+Next: enable production task startup one task at a time and validate frame
+restore and stack ownership on hardware.
 
-The current probe image now exercises a complete guarded user BOTH/SENDREC
-request/reply path. Process 2 queues a request to process 3, process 3 receives
-it, the blocked process 2 is completed and made runnable, and both processes
-continue scheduling without an idle handoff or exception. The normal image
-also builds and passes the image-layout check. The production blocked-return
-path remains guarded until the probe logic is reduced to the real process and
-address-space setup.
+### 2. Interrupt and exception dispatch — Partially implemented
 
-Latest validated reply-probe markers:
+Reference: `minix-2.0.0/src/kernel/mpx386.s`, `i8259.c`, `exception.c`,
+`proc.c:interrupt()`.
+CP32: `src/kernel/vectors.S`, `irq.S`, `irq_frame.h`, `irq_const.h`, `proc.c`.
 
-- `[IPC V81 send-queued sender=2 dest=3]`
-- `[IPC V79 receive-delivery sender=2 flags=8 receiver=3 rflags=0]`
-- `[CTX V67 user-dispatch probe-ok]` after reply delivery
-- stable `CTX V46` and IRQ output through at least IRQ 240
-- no idle selection (`nr=4294967289`) or CP32 exception after reply wake
+Present: frame checks, exception diagnostics, masking, deferred/coalesced
+hardware notifications, and SYSTIMER entry. Missing: the real dispatch path
+(`src/kernel/irq.S` contains `TODO: dispatch`), complete cause/vector routing,
+and production return into the selected process frame.
+ESP32-S3 uses Xtensa causes and `rfe`, not an Intel frame or PIC acknowledgement.
 
-Committed as `c3b6da2` (`cp32: complete reply probe handoff`).
+Next: implement one complete IRQ-to-task return path, then test nested IRQs and
+fatal panic behavior.
 
-## Historical probe checklist
+### 3. Process creation, scheduling, and context switching — Missing for production
 
-- [x] Defined and documented the CP32 syscall return-frame contract in
-      `src/kernel/irq_frame.h`: saved `pc/sp/psw`, call0 result in `a2`, and
-      owner preservation across a blocked SEND/RECEIVE.
-- [x] Added `[CTX V52 syscall-frame pass=1]` to expose the contract layout
-      checks in the boot diagnostics.
-- [x] Added blocked-frame validity/result bookkeeping and `[CTX V53
-      blocked-frame-state pass=1]`; the experimental return gate remains off.
-- [x] Finalized the saved `a2` result slot on both sender and receiver wakeup
-      paths and added `[CTX V54 wake-result-slot pass=1]`.
-- [x] Centralized sender/receiver wake completion and added `[CTX V55
-      wake-contract pass=1]` for consistent saved-result bookkeeping.
-- [x] Added blocked-frame `pc/psw/sp` snapshots and `[CTX V56
-      frame-snapshot pass=1]`; restoration remains gated.
-- [ ] Implement blocked SEND/RECEIVE/SENDREC suspension and resumption using
-      that contract; do not enable the blocked-return gate until the frame is
-      saved and restored end to end.
-- [x] Use the task-owned `p1`/`p2` exchange for blocked sender/receiver
-      transitions, verifying message data, return values, and queues.
-- [x] Extended that task-owned exchange with blocked-frame
-      snapshot and wake-clear assertions (`[IPC V22 blocked-frame-wake]`).
-- [x] Guarded wakeup with saved `pc/psw/sp` preservation checking and added
-      `[CTX V57 frame-preservation-mismatch count=0]`.
-- [x] Centralized blocked-frame restore preconditions and added `[CTX V58
-      restore-guard pass=1]`; the handoff gate remains disabled pending trap
-      entry and end-to-end return validation.
-- [x] Added a distinct user/trap frame contract and `[CTX V59
-      user-frame-contract pass=1]`; trap entry wiring remains pending.
-- [x] Added the shared runtime user-frame validator used by V59; the user
-      exception vector remains terminal until trap restore is implemented.
-- [x] Added a guarded C-side user-trap dispatch boundary; it validates owner,
-      cause, and frame shape; the enabled path now decodes the call0 frame and
-      routes SEND/RECEIVE/BOTH through `sys_call` while the gate remains off.
-- [x] Added `[CTX V60 trap-boundary-guard pass=1]` to verify invalid trap
-      inputs fail closed before syscall dispatch.
-- [x] Added `[CTX V61 trap-dispatch-pending pass=1]` to verify valid frames
-      reach the guarded boundary and remain intentionally undispatched.
-- [x] Added an explicit disabled user-trap gate and `[CTX V62
-      user-trap-gate pass=1]`; it will remain off until `irq_user` constructs
-      and validates a real frame.
-- [x] Added `[CTX V63 user-blocked-return-guard]` so a blocked user syscall
-      cannot accidentally execute `rfe`; scheduler handoff is still pending.
-- [x] Added the gated user-frame scheduler-handoff contract and `[CTX V64
-      user-handoff-contract]`; selection and frame copy remain disabled until
-      a targeted hardware probe.
-- [x] Wired `irq_user` to attempt the guarded handoff on blocked returns;
-      immediate returns still use the validated frame restore, and rejected
-      handoffs fall back to the terminal diagnostic path.
-- [x] Added `[CTX V65 enabled-trap-probe]` to exercise the enabled C trap
-      boundary with a complete frame while leaving the production gate off.
-- [x] Added an isolated `cp32_user_probe_entry` containing a real Xtensa
-      exception instruction (`ill`) for hardware vector-entry validation; it
-      is not selected by boot until the hardware experiment is enabled.
-- [x] Added explicit `CP32_ENABLE_USER_PROBE` build-time activation, keeping
-      the normal image unchanged while making the real probe selectable.
-- [x] Added the `make -C src test-user-probe` hardware-test target so probe
-      activation cannot be accidentally omitted by an ordinary build.
-- [x] Initialized the probe task with a kernel-mode frame; ESP32-S3 has no
-      hardware `PS.UM`, so syscall isolation uses the software gate.
-- [x] Replaced unavailable `PS.UM` usage on ESP32-S3 with a kernel-mode
-      software syscall gate routed through the same validated user frame.
-- [x] Add hardware markers for blocked-frame save, wake, restore, and resumed
-- [x] Add hardware counters/markers for blocked-frame save, wake, and restore
-      eligibility; the actual resumed syscall return remains gated.
-- [x] Added `[CTX V69 resumed-syscall-return]` at the shared wake completion
-      point to record blocked-frame result restoration and resumed-return
-      eligibility.
-- [x] Verified the blocked RECEIVE wake through the mapped message-copy path;
-      `[IPC V24 real-send-wake]` now precedes the cleared receiver flags and
-      stable post-wake IRQ/context stream.
-- [x] Shared blocked-message delivery between normal `mini_send` and the
-      mapped probe, preserving copy, frame completion, and ready-queue rules.
-- [x] Added the guarded BOTH/SENDREC reply probe, including a real request
-      queue, receiver delivery, blocked-frame completion, reply wake, and
-      resumed scheduling.
-- [x] Stabilized reply-probe process identities by restoring canonical
-      `pproc_addr` mappings and clearing stale ready-queue entries after stress
-      setup.
-- [x] Added reply-path diagnostics V70/V72/V73/V74/V75/V76/V77/V78/V79/V80/V81
-      to distinguish trap dispatch, queue insertion, receive delivery, handoff,
-      and scheduler state.
-- [x] Verified both the reply-probe image and the normal image compile with
-      the image-layout check passing.
+Reference: `minix-2.0.0/src/kernel/proc.c`, `main.c`, `table.c`.
+CP32: `src/kernel/proc.c`, `proc.h`, `mpx32.S`, `klib32.S`, `main.c`.
 
-## Active implementation state
+Present: descriptors, ready queues, ready/unready/schedule helpers, billing,
+and frame-shape probes. Missing: a complete pick/dispatch boundary, real
+suspension/resumption, correct task/process classification, quantum switching,
+and production ownership of `proc_ptr`/`bill_ptr`.
 
-Current feature sequence:
+Next: prove one task-owned handoff and blocked-caller resume, then enable
+clock-driven scheduling.
 
-1. MINIX interrupt notification delivery and held replay — hardware validated
-   with `[IRQ V1 notify-contract pass=1 deferred=2 delivered=2 replayed=1]`.
-2. Task descriptor metadata — hardware validated with `[TASK V1 ... pass=1
-   count=9]`.
-3. Descriptor-driven IDLE startup — hardware validated with `[TASK V2 ...]`.
-4. Descriptor-driven CLOCK startup — hardware validated with `[TASK V3 ...]`.
-5. Descriptor-driven SYS startup — hardware validated with `[TASK V4 ...]`.
-6. Next: descriptor-driven TTY startup, then guarded service-loop startup.
+### 4. Kernel IPC — Partially implemented
 
-Every feature follows this boundary: copy the MINIX structure and behavior,
-adapt only ESP32-S3 hardware/ABI details, add one aggregate failure-prone
-marker, build the normal and feature image, then require a serial-console
-result before marking hardware complete.
+Reference: `minix-2.0.0/src/kernel/proc.c` (`sys_call`, `mini_send`,
+`mini_rec`, `interrupt`, `unhold`, `cp_mess`).
+CP32: `src/kernel/proc.c`, `port.c`, `mm.c`.
 
-## Remaining kernel work
+Present: SEND/RECEIVE/BOTH validation, deadlock checks, queues, interrupt
+notification replay, translated copies, and buffer/endpoint rejection.
+Missing: suspended wrapper execution and wake/resume through a real context
+switch; concurrent task-owned exchanges remain unproven.
 
-- [ ] Complete production Xtensa user exception/trap entry and separate
-      user-frame layout from the level-1 interrupt frame.
-- [ ] Generalize the validated probe path into production SEND, RECEIVE, and
-      BOTH syscall routing with real process/address-space ownership and
-      privilege/cause validation.
-- [ ] Complete MINIX interrupt delivery, held-interrupt replay, lock nesting,
-      and nested-entry policy against the reference `proc.c` behavior.
-- [ ] Port clock tick accounting, lost ticks, alarms, TTY timers, quantum
-      expiration, and deferred rescheduling onto ESP32-S3 SYSTIMER.
-- [x] Validate MINIX-style task/server descriptor metadata and stack budgets.
-- [x] Use task descriptors for guarded IDLE, CLOCK, and SYS entry/frame
-      initialization.
-- [ ] Use task descriptors for TTY entry/frame initialization and then enable
-      guarded service loops one task at a time.
-- [ ] Implement a panic/fatal path that preserves a short diagnostic marker.
-- [ ] Start real kernel tasks incrementally: system, clock, and TTY.
+Next: implement the handoff contract and test both blocking directions, BOTH,
+deadlock, and nested IRQ cases.
 
-## Hardware abstraction
+### 5. Clock, alarms, and time — Partially implemented
 
-- [ ] Add Cardputer Adv board configuration: GPIO, I2C, SPI, USB Serial/JTAG,
-      display, keyboard, battery/power, and storage wiring.
-- [ ] Implement and validate GPIO, I2C, SPI, console, and timeout primitives.
-- [ ] Implement keyboard input and prove raw events, modifiers, repeat, and
-      interrupt/polling behavior.
-- [ ] Implement a bounded display/framebuffer text path and connect keyboard
-      and display to the MINIX TTY line discipline.
+Reference: `minix-2.0.0/src/kernel/clock.c`; CP32: `src/kernel/clock.c`,
+`include/esp32s3/systimer.h`.
 
-## Storage, filesystem, and process loading
+Present: SYSTIMER setup, 60 Hz accounting, uptime/time/alarm logic, watchdog
+and synchronous-alarm structures, and dispatch helpers. Missing: production
+`clock_task()` execution, confirmed alarm delivery, `syn_alrm_task()`,
+`clock_stop`, and validated quantum switching.
+ESP32-S3 uses the 64-bit SYSTIMER and TARGET0 clear rather than PIT latching.
 
-- [ ] Select and validate the first persistent medium with read-only tests.
-- [ ] Port the block-device interface and cache after stable bounded reads.
-- [ ] Port filesystem essentials: superblock, inode lookup, directories,
-      open/close, read, then write/create/unlink.
-- [ ] Implement executable loading and CP32 user address-space setup with
-      bounds, alignment, permissions, stack, and initial PC validation.
+Next: start CLOCK from descriptors, route HARD_INT through IPC, validate alarms
+and `milli_delay`, then connect scheduling.
 
-## User space and milestone
+### 6. Memory mapping and copy — Partially implemented
 
-- [ ] Add syscall/library support for TTY, process lifecycle, memory, files,
-      and time.
-- [ ] Boot one statically linked user program through the complete trap path.
-- [ ] Add a bounded diagnostic shell and incremental utilities.
-- [ ] Reach the first usable milestone: shell input/output, one readable file,
-      two user processes that block/resume on IPC or TTY, and a stress run
-      without exceptions or queue leaks.
+Reference: `minix-2.0.0/src/kernel/system.c` (`umap`, `do_copy`, `do_vcopy`,
+`alloc_segments`) and `memory.c`.
+CP32: `src/kernel/mm.c`, `system.c`, `proc.h`.
 
-## Build status
+Present: maps, wide range checks, `numap`, `umap`, physical copy, and basic
+system handlers. Missing: a memory inventory/resource allocator, MM task loop,
+fork/exec memory setup, user image placement, and complete isolation.
+ESP32-S3 needs a flat DRAM/IRAM model instead of x86 segmentation.
 
-- 2026-09-12 build-only: added a MINIX-style task descriptor table in
-  `src/kernel/main.c` for TTY, synchronous alarms, idle, memory, clock, SYS,
-  hardware, MM, and FS entries, preserving CP32-specific entry points and
-  stack budgets. `[TASK V1 descriptor-table]` validates descriptor count and
-  required startup entries. Production task startup remains hardware-gated.
-- 2026-09-12 build correction: deferred non-active task entry pointers until
-  production startup is enabled, preventing unused TTY/clock/system code from
-  entering the normal image. `make clean && make` passes layout validation
-  with 9,968 bytes of IRAM margin.
+Next: define the physical-memory model, implement allocator/map ownership,
+and test every map/copy operation.
 
-- 2026-09-12 hardware validation: normal-image boot reported `[TASK V1
-  descriptor-table pass=1 count=9]`; descriptor count, active idle entry, and
-  stack-budget checks passed, with IRQ/context execution stable through IRQ
-  144. The next slice is production task startup from these descriptors.
-- 2026-09-12 build-only: added guarded `test-task-startup` support that uses
-  the descriptor table to initialize the canonical IDLE task entry point and
-  aligned stack frame. TTY/CLOCK/SYS startup remains disabled pending separate
-  service contracts.
-- 2026-09-12 hardware validation: `test-task-startup` reported `[TASK V2
-  idle-startup pass=1 pc=1077351872 sp=1070278928]`. Descriptor-driven IDLE
-  entry and aligned stack initialization passed, with IRQ/context execution
-  stable through IRQ 160. The next startup slice is the CLOCK task.
-- 2026-09-12 build-only: added `test-task-startup-clock`, a guarded
-  descriptor-driven CLOCK entry/frame initialization probe. The image-layout
-  check passes with 7,780 bytes of IRAM margin; hardware validation is pending.
-- 2026-09-12 hardware validation: `test-task-startup-sys` reported `[TASK V4
-  sys-startup pass=1 pc=1077367660 sp=1070300304]`. Descriptor-driven SYS
-  frame initialization passed, with IRQ/clock/context execution stable through
-  IRQ 176. The next startup slice is TTY.
-- 2026-09-12 hardware validation: `test-task-startup-clock` reported `[TASK
-  V3 clock-startup pass=1 pc=1077364700 sp=1070296016]`. Descriptor-driven
-  CLOCK frame initialization passed, with IRQ/clock/context execution stable
-  through IRQ 128. The next startup slice is SYS.
+### 7. System task and signals — Partially implemented
 
-- 2026-09-12 build-only: completed the architecture-independent MINIX
-  interrupt-notification slice in `src/kernel/proc.c`. Deferred, delivered,
-  and replayed `HARDWARE/HARD_INT` notifications now have aggregate counters,
-  and boot validates the full held/coalesced/replay contract with `[IRQ V1
-  notify-contract ...]`. Hardware validation is pending; ESP32-S3-specific
-  IRQ entry and interrupt-level behavior remain subject to serial validation.
-- 2026-09-12 hardware validation: the normal image reported `[IRQ V1
-  notify-contract pass=1 deferred=2 delivered=2 replayed=1]`. Held interrupt
-  coalescing and replay passed, and SYSTIMER IRQ/clock/context execution
-  remained stable through IRQ 176 with no exception.
+Reference: `minix-2.0.0/src/kernel/system.c`; CP32: `src/kernel/system.c`.
 
-The image builds and flashes with the kernel's call0 ABI and no known linker
-ABI warning. The 64-bit timer conversion uses a freestanding divider instead
-of importing the incompatible libgcc `__udivdi3` routine.
+Present: dispatcher and MINIX-shaped fork, map, exec, exit, time, copy,
+signal, tracing, and reboot handlers. Missing: active `sys_task()` execution,
+MM/FS integration, complete fork/exec/exit semantics, user signal frames, and
+hardware reset (`system_reset()` is a placeholder).
 
-- 2026-09-11 build-only: added `[CTX V98 blocked-frame-pc-validated]` to
-  verify that a blocked syscall snapshots the post-trap return PC. The
-  reply-probe image passes layout validation with 10,120 bytes of IRAM margin;
-  hardware validation is pending.
-- 2026-09-11 build-only: restored the owner PC after the synthetic user-trap
-  probe so the initial user handoff cannot jump into the middle of the probe
-  instruction stream. `make test-both-reply-probe` passes layout validation
-  with 10,104 bytes of IRAM margin.
-- 2026-09-11 hardware validation: blocked RECEIVE probe reached V98, V84,
-  V83, V87, V86, V94, V97, V88, V90, V92, and V93, then remained stable
-  through IRQ 192 with no exception. Timer readings remained consistent.
-- 2026-09-11 build-only: added `[CTX V99 blocked-handoff-ready]` for the
-  fully validated blocked-owner scheduler-handoff predicate; the return gate
-  remains fail-closed pending hardware validation.
-- 2026-09-11 build-only: corrected V100 to observe the real user-probe path,
-  not only the synthetic scheduler test. `make test-blocked-probe` passes
-  layout validation with 9,932 bytes of IRAM margin.
-- 2026-09-11 build-only: corrected the blocked-handoff predicate to require a
-  valid, matching saved frame and enabled its gate only for the dedicated
-  blocked probe. `make test-blocked-probe` passes layout validation with 9,948
-  bytes of IRAM margin.
-- 2026-09-11 build-only: added a bounded retry that rejects a stale blocked
-  owner selected from a legacy ready queue before exception return. `make
-  test-blocked-probe` passes layout validation with 9,916 bytes of IRAM margin.
-- 2026-09-11 build-only: explicitly unlinked the blocked owner from all ready
-  queues before scheduler handoff. `make test-blocked-probe` passes layout
-  validation with 9,908 bytes of IRAM margin.
-- 2026-09-11 build-only: added a blocked-probe-only process-2 replacement
-  fallback when the scheduler reports the blocked owner. `make
-  test-blocked-probe` passes layout validation with 9,876 bytes of IRAM margin.
-- 2026-09-11 build-only: assigned the replacement process a non-trapping
-  terminal user entry so the blocked handoff cannot re-enter the illegal-
-  instruction probe. `make test-blocked-probe` passes layout validation with
-  9,852 bytes of IRAM margin.
-- 2026-09-11 build-only: made the replacement process-2 selection explicit in
-  the blocked probe after scheduler evaluation. `make test-blocked-probe`
-  passes layout validation with 9,860 bytes of IRAM margin.
-- 2026-09-11 build-only: added V101 to dump the selected handoff frame's
-  process number, PC, SP, and a15 immediately before exception return.
-  `make test-blocked-probe` passes layout validation with 9,732 bytes of IRAM
-  margin.
-- 2026-09-11 build-only: isolated the blocked probe from the failing live
-  `sched`/`switch_to` path by selecting process 2's validated frame directly;
-  production scheduling remains unchanged. `make test-blocked-probe` passes
-  layout validation with 9,592 bytes of IRAM margin.
-- 2026-09-11 build-only: prevented `sys_call` from scheduling before the
-  guarded blocked-probe handoff. `make test-blocked-probe` passes layout
-  validation with 9,604 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V99 passed; V102 showed distinct owner and
-  replacement pointers, and V101 showed process 2's valid PC/SP/a15 frame.
-  Execution remained stable through IRQ 176 with no exception. V46 continues
-  to identify the interrupted owner during this diagnostic handoff.
-- 2026-09-11 build-only: aligned blocked-probe context ownership with the
-  restored process-2 frame for subsequent V46 diagnostics. `make
-  test-blocked-probe` passes layout validation with 9,588 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V103 user-rfe-frame-ready pass=1]` at
-  the validated replacement-frame return boundary. `make test-blocked-probe`
-  passes layout validation with 9,568 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V102, V103, and V101 confirmed the process-2
-  replacement frame at the pre-rfe boundary; execution remained stable through
-  IRQ 128 with no exception.
-- 2026-09-11 build-only: synchronized the probe's saved IRQ owner with the
-  process-2 replacement frame for post-rfe timer diagnostics. `make
-  test-blocked-probe` passes layout validation with 9,564 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V104 blocked-wake-result-slot pass=1]`
-  to validate wake completion's saved `a2` result slot. `make
-  test-blocked-probe` passes layout validation with 9,496 bytes of IRAM margin.
-- 2026-09-11 build-only: added V106 after the wake attempt to report delivery
-  result, receiver flags, and wake count. `make test-blocked-probe` passes
-  layout validation with 9,288 bytes of IRAM margin.
-- 2026-09-11 build-only: reset the one-shot V104 flag at user-probe start so
-  the hardware wake completion is reported independently of earlier wake
-  tests. `make test-blocked-probe` passes layout validation with 9,280 bytes
-  of IRAM margin.
-- 2026-09-11 hardware validation: V105 observed the blocked receiver, V104
-  confirmed the saved `a2` wake result, and V106 confirmed successful wake with
-  flags cleared. The replacement frame remained stable through IRQ 160.
-- 2026-09-11 build-only: added `[CTX V107 wake-owner-released pass=1]` for
-  post-wake runnable-state and blocked-owner release validation. `make
-  test-blocked-probe` passes layout validation with 9,204 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V104, V106, and V107 passed; the blocked
-  receiver's result slot was restored, flags cleared, and blocked-owner state
-  released. Execution remained stable through IRQ 160 with no exception.
-- 2026-09-11 build-only: added `[CTX V108 wake-message-source-validated
-  pass=1]` to validate the sender identity copied into the awakened message.
-  `make test-blocked-probe` passes layout validation with 9,144 bytes of IRAM
-  margin.
-- 2026-09-11 hardware validation: V108 passed; the awakened message source
-  matched the synthetic sender, with V104/V106/V107 also passing. Execution
-  remained stable through IRQ 128 with no exception.
-- 2026-09-11 build-only: added the dedicated `test-blocked-send-probe`
-  target and SEND probe entry for the next IPC lifecycle validation. Image
-  layout passes with 9,920 bytes of IRAM margin.
-- 2026-09-11 build-only: extended the guarded user/blocked handoff gate to
-  the SEND probe. `make test-blocked-send-probe` passes layout validation with
-  9,900 bytes of IRAM margin.
-- 2026-09-11 build-only: routed blocked SEND through the same direct validated
-  replacement-frame path and suppressed its premature live scheduler call.
-  `make test-blocked-send-probe` passes layout validation with 9,892 bytes of
-  IRAM margin.
-- 2026-09-11 hardware validation: blocked SEND reached V99, V102, V103, and
-  V101; the replacement process 2 resumed and V46 reported process 2 through
-  IRQ 160 with advancing timer values and no exception.
-- 2026-09-11 build-only: configured process 2 as the waiting receiver and
-  reversed the timer wake roles for the dedicated blocked-SEND probe. `make
-  test-blocked-send-probe` passes layout validation with 9,860 bytes of IRAM
-  margin.
-- 2026-09-11 build-only: moved blocked-SEND receiver setup to the final
-  pre-entry stage so generic initialization cannot clear `RECEIVING`. `make
-  test-blocked-send-probe` passes layout validation with 9,828 bytes of IRAM
-  margin.
-- 2026-09-11 build-only: corrected SEND probe ordering so process 1 blocks
-  before process 2 enters RECEIVE during the timer wake. `make
-  test-blocked-send-probe` passes layout validation with 9,828 bytes of IRAM
-  margin.
-- 2026-09-11 build-only: enabled the timer wake hook for blocked SEND so the
-  receiver-side completion path can run at tick 16. `make
-  test-blocked-send-probe` passes layout validation with 9,156 bytes of IRAM
-  margin.
-- 2026-09-11 hardware validation: blocked SEND reached V99/V102/V103/V101,
-  then V105/V104/V107/V108/V106 passed. Process 2 resumed and timer values
-  advanced through IRQ 160 with no exception.
-- 2026-09-11 build-only: routed blocked-SEND wake completion through
-  `mini_rec()` so the queued sender, rather than only the receiver, receives
-  the saved result and wake transition. `make test-blocked-send-probe` passes
-  layout validation with 9,132 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V109 send-wake-owner-complete pass=1]`
-  to validate blocked sender flags and frame completion after `mini_rec()`.
-  `make test-blocked-send-probe` passes layout validation with 9,068 bytes of
-  IRAM margin.
-- 2026-09-11 hardware validation: blocked SEND wake completed with V110
-  `frame=0`, V109 pass, and V112 final `frame=0 flags=0`; process 2 remained
-  stable through IRQ 160 with advancing timer values.
-- 2026-09-11 build-only: added the dedicated `test-blocked-sendrec-probe`
-  target and BOTH/SENDREC probe entry. `make test-blocked-sendrec-probe`
-  passes layout validation with 8,788 bytes of IRAM margin.
-- 2026-09-11 hardware validation: blocked SENDREC completed the handoff and
-  wake markers through V112; sender frame cleared, process 2 resumed, and
-  execution remained stable through IRQ 128 with advancing timer values.
-- 2026-09-11 build-only: removed the unused superseded blocked-frame restore
-  helper; explicit saved-frame checks remain in the active handoff path.
-  `make test-blocked-sendrec-probe` passes layout validation with 8,792 bytes
-  of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V100 blocked-handoff-mask]` to identify
-  the first unmet blocked-handoff predicate during the guarded probe.
-  `make test-blocked-probe` passes layout validation with 9,932 bytes of IRAM
-  margin.
-- 2026-09-11 build-only: added `[CTX V120 user-process-identity-ready pass=1]`
-  to validate process 1's canonical identity and non-free slot before user
-  entry. `make clean && make test-user-probe` passes layout validation with
-  9,176 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V121 user-process-table-map-ready
-  pass=1]` to verify the canonical process-table slot resolves to the same
-  process validated by V120. `make clean && make test-user-probe` passes image
-  layout validation with 9,108 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V122 user-entry-handoff-ready pass=1]`
-  to verify the user trap gate is armed after all process setup checks and
-  before initial user entry. `make clean && make test-user-probe` passes image
-  layout validation with 9,020 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V123 user-entry-contract-ready pass=1]`
-  to verify the initial PC targets the probe entry and the assembly handoff
-  routine is linked. `make clean && make test-user-probe` passes image layout
-  validation with 8,924 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V124 user-entry-mode-ready pass=1]` to
-  verify probe mode activation and entry alignment before assembly handoff.
-  `make clean && make test-user-probe` passes image layout validation with
-  8,828 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V125 user-trap-preflight-returned pass=1]`
-  after the guarded trap preflight succeeds and before initial user entry.
-  `make clean && make test-user-probe` passes image layout validation with
-  8,812 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V126 user-trap-probe-count pass=1]` to
-  confirm the trap preflight executed its runtime probe path. `make clean &&
-  make test-user-probe` passes image layout validation with 8,728 bytes of
-  IRAM margin.
-- 2026-09-11 build-only: added `[CTX V127 user-trap-owner-stable pass=1]` to
-  verify the preflight leaves `proc_ptr` on canonical process 1 before the
-  initial handoff. `make clean && make test-user-probe` passes image layout
-  validation with 8,620 bytes of IRAM margin.
-- 2026-09-11 build-only fix: restored canonical `proc_ptr` and `current_proc`
-  after trap preflight before V127, correcting the observed owner panic.
-  `make clean && make test-user-probe` passes image layout validation with
-  8,600 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V128 user-trap-current-owner-aligned
-  pass=1]` to verify `current_proc` agrees with canonical `proc_ptr` before
-  user entry. `make clean && make test-user-probe` passes image layout
-  validation with 8,508 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V128 passed; `current_proc` and `proc_ptr`
-  were aligned to process 1, with the user rejection probe stable through IRQ
-  128 and no exception.
-- 2026-09-11 build-only: added `[CTX V129 handoff-frame-copy pass=1]` after
-  blocked handoff frame construction to validate copied PC, PSW, SP, and
-  `a15` against the selected process. `make clean && make
-  test-blocked-send-probe` passes image layout validation with 7,272 bytes of
-  IRAM margin.
-- 2026-09-11 hardware validation: V129 passed on blocked SEND; process 2 was
-  selected with a matching frame, wake completed with `frame=0`, and execution
-  remained stable through IRQ 160.
-- 2026-09-11 build-only: added `[CTX V130 handoff-owner-selected pass=1]`
-  after installing the selected process as `proc_ptr`, `current_proc`, and
-  saved IRQ owner. `make clean && make test-blocked-send-probe` passes image
-  layout validation with 7,160 bytes of IRAM margin.
-- 2026-09-11 build-only: added `[CTX V131 handoff-owner-runnable pass=1]` to
-  verify the selected handoff owner has no blocking flags before return-frame
-  use. `make clean && make test-blocked-send-probe` passes image layout
-  validation with 7,096 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V131 passed on blocked SEND; the selected
-  process 2 was runnable, wake completed with cleared frame state, and timer
-  execution remained stable through IRQ 96.
-- 2026-09-11 build-only: added `[CTX V132 handoff-entry-pc-aligned pass=1]`
-  to require a nonzero, instruction-aligned replacement PC before `rfe`.
-  `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 7,004 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V132 passed on SENDREC; process 2 resumed
-  with the validated handoff and remained stable through IRQ 128.
-- 2026-09-11 build-only: added `[CTX V133 handoff-entry-psw-ready pass=1]`
-  to require the expected kernel-mode PSW (`0x10`) in the replacement frame.
-  `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 6,932 bytes of IRAM margin.
-- 2026-09-11 hardware correction: V133 rejected the incorrect `0x10` saved
-  PSW assumption; the user frame contract initializes the saved PSW to `0`.
-  V133 now validates that established value. `make clean && make
-  test-blocked-sendrec-probe` passes image layout validation with 6,940 bytes
-  of IRAM margin.
-- 2026-09-11 hardware validation: corrected V133 passed on SENDREC; process 2
-  resumed and remained stable through IRQ 128.
-- 2026-09-11 build-only: added `[CTX V134 handoff-entry-sp-aligned pass=1]`
-  to require a nonzero, 16-byte-aligned replacement stack pointer. `make
-  clean && make test-blocked-sendrec-probe` passes image layout validation
-  with 6,856 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V134 passed on SENDREC; the replacement
-  stack remained aligned and execution stayed stable through IRQ 96.
-- 2026-09-11 build-only: added `[CTX V135 handoff-call0-registers-ready
-  pass=1]` to validate the replacement frame's `a0` and `a1` call0 values.
-  `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 6,772 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V135 passed on SENDREC; process 2 resumed
-  and remained stable through IRQ 96.
-- 2026-09-11 build-only: added `[CTX V136 handoff-a15-ready pass=1]` to
-  require a nonzero saved `a15` in the replacement frame. `make clean && make
-  test-blocked-sendrec-probe` passes image layout validation with 6,708 bytes
-  of IRAM margin.
-- 2026-09-11 hardware validation: V136 passed on SENDREC; process 2 resumed
-  and remained stable through IRQ 96.
-- 2026-09-11 build-only: added `[CTX V137 handoff-call-args-ready pass=1]`
-  to validate the replacement frame's initial `a2–a4` call argument slots.
-  `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 6,620 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V137 passed on SENDREC; process 2 remained
-  stable through IRQ 160 with wake state cleared.
-- 2026-09-11 build-only: added `[CTX V138 handoff-owner-number-ready pass=1]`
-  to verify the selected process number resolves back to its canonical table
-  object. `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 6,508 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V138 passed on SENDREC; process 2 resumed
-  and remained stable through IRQ 96.
-- 2026-09-11 build-only: added `[CTX V139 handoff-stack-map-ready pass=1]`
-  to require a nonempty stack mapping for the selected replacement process.
-  `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 6,432 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V139 passed on SENDREC; the replacement
-  stack mapping was present, wake completed, and process 2 remained stable
-  through IRQ 128.
-- 2026-09-11 build-only: added `[CTX V140 handoff-data-map-ready pass=1]`
-  to require a nonempty data/message mapping for the selected replacement
-  process. `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 6,368 bytes of IRAM margin.
-- 2026-09-11 build-only batch: added V141/V142 for stack/data map bases and
-  V143/V144/V145 for copied PC/SP/PSW equality. `make clean && make
-  test-blocked-sendrec-probe` passes image layout validation with 5,972 bytes
-  of IRAM margin.
-- 2026-09-11 hardware correction: V140 showed that synthetic process 2 may
-  have no data mapping; the check is now observational because handoff needs
-  the validated stack and frame, not a data segment. The corrected
-  `test-blocked-sendrec-probe` build passes with 5,992 bytes of IRAM margin.
-- 2026-09-11 hardware correction: V141/V142 showed synthetic process 2 also
-  has zero map bases; both checks are now observational, while V134 continues
-  to enforce the actual saved stack pointer. The batch build passes with
-  6,084 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V140–V145 passed on SENDREC; frame copy,
-  owner, PC/SP/PSW, and map checks completed, with process 2 stable through
-  IRQ 192.
-- 2026-09-11 build-only batch: added V146–V149 for register groups `a5–a15`
-  and V150 for complete register-frame completion. `make clean && make
-  test-blocked-sendrec-probe` passes image layout validation with 5,620 bytes
-  of IRAM margin.
-- 2026-09-11 hardware validation: V146–V150 passed on SENDREC; process 2
-  remained stable through IRQ 160 with wake state cleared.
-- 2026-09-11 build-only batch: added V151–V153 for full register equality,
-  V154 for PC/SP/PSW equality, and V155 for complete frame-contract
-  completion. `make clean && make test-blocked-sendrec-probe` passes image
-  layout validation with 4,968 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V151–V155 passed on SENDREC; process 2
-  remained stable through IRQ 192.
-- 2026-09-11 build-only batch: added V156–V160 at wake completion for result
-  slot, saved result, frame clearing, wake count, and runnable-owner checks.
-  `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 4,684 bytes of IRAM margin.
-- 2026-09-11 build-only feature check: added `[CTX V161
-  blocked-wake-feature-complete]` as one aggregate validation for the full
-  blocked-wake contract. `make clean && make test-blocked-sendrec-probe`
-  passes image layout validation with 4,592 bytes of IRAM margin.
-- 2026-09-11 hardware validation: V161 passed on SENDREC; wake state cleared
-  and process 2 remained stable through IRQ 192.
-- 2026-09-11 build-only feature check: added `[CTX V162
-  blocked-handoff-feature-complete]` as one aggregate validation for owner,
-  frame, and return-state readiness. `make clean && make
-  test-blocked-sendrec-probe` passes image layout validation with 4,456 bytes
-  of IRAM margin.
-- 2026-09-11 hardware validation: V162 passed on SENDREC; the complete
-  handoff and wake path remained stable through IRQ 128.
-- 2026-09-11 build-only feature check: added `[CTX V163
-  sendrec-lifecycle-complete]` as an aggregate SENDREC lifecycle check at
-  wake completion. `make clean && make test-blocked-sendrec-probe` passes
-  image layout validation with 4,360 bytes of IRAM margin.
-- 2026-09-11 hardware validation: corrected V163 passed on SENDREC; the
-  aggregate lifecycle result, wake state, and frame clearing all passed, with
-  process 2 stable through IRQ 192.
-- 2026-09-11 build-only feature check: added `[CTX V164
-  post-wake-scheduler-continuity]` at the timer wake boundary to validate the
-  selected owner remains current and runnable. `make clean && make
-  test-blocked-sendrec-probe` passes image layout validation with 4,288 bytes
-  of IRAM margin.
-- 2026-09-11 hardware correction: gated live handoff/wake feature markers on
-  the context-handoff gate after pretests produced expected transient `pass=0`
-  output. `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 4,268 bytes of IRAM margin.
-- 2026-09-11 hardware correction: V163 initially included a counter not
-  incremented by this live path; it now relies only on observed result, wake,
-  frame, and runnable-state invariants. Rebuild passes with 4,372 bytes of
-  IRAM margin.
-- 2026-09-11 diagnostic consolidation: detailed V129–V160 handoff/wake
-  markers are compile-time opt-in via `CP32_VERBOSE_HANDOFF_DIAGNOSTICS`;
-  default output retains aggregate V162/V163 results and V164 scheduler
-  continuity. `make clean && make test-blocked-sendrec-probe` passes image
-  layout validation with 7,248 bytes of IRAM margin. Hardware revalidation is
-  pending.
-- 2026-09-11 diagnostic consolidation follow-up: legacy wake markers
-  V105/V107–V112 are verbose-only; V163 remains the compact SENDREC lifecycle
-  summary. Rebuild with `make clean && make test-blocked-sendrec-probe` passes
-  image layout validation with 7,788 bytes of IRAM margin. Hardware output
-  confirms V162–V164 pass through IRQ 96.
-- 2026-09-11 build-only clock feature: connected an aggregate tick-accounting
-  marker to the existing MINIX `clock_handler` path, covering lost-tick
-  folding, process charging, and pending-tick accumulation. `make clean &&
-  make test-blocked-sendrec-probe` passes image layout validation with 7,692
-  bytes of IRAM margin. Hardware validation is pending.
-- 2026-09-11 hardware validation: `[CLOCK V1]` advanced monotonically through
-  175 SYSTIMER ticks; accumulated and pending ticks matched at every sample,
-  with no exception and stable process-2 context/IRQ operation through IRQ
-  176.
-- 2026-09-11 build-only clock feature: added compact `[CLOCK V2
-  alarm-state]` reporting and expiry accounting to the MINIX alarm scan,
-  preserving nearest-alarm recomputation and deferred tick processing. `make
-  clean && make test-blocked-sendrec-probe` passes image layout validation
-  with 7,616 bytes of IRAM margin. Hardware validation is pending.
-- 2026-09-11 clock correction: initialized `realtime`, `pending_ticks`,
-  `sched_ticks`, and `next_alarm` in `init_clock()`; an unarmed clock must
-  report `next=LONG_MAX`, not an immediately expired zero deadline. Rebuild
-  with `make clean && make test-blocked-sendrec-probe` passes image layout
-  validation with 7,616 bytes of IRAM margin. Hardware revalidation is
-  pending.
-- 2026-09-11 clock bring-up correction: initialized shared clock state in
-  `systimer_irq_start()` because the probe runs before `clock_task`; the
-  unarmed alarm deadline now starts at `LONG_MAX` on the active path. `make
-  clean && make test-blocked-sendrec-probe` passes image layout validation
-  with 7,580 bytes of IRAM margin. Hardware revalidation is pending.
-- 2026-09-11 hardware validation: active SYSTIMER startup now reports
-  `[CLOCK V2] expiries=0 next=2147483647` consistently through IRQ 160;
-  `[CLOCK V1]` reached 159 ticks monotonically and context/handoff checks
-  remained stable with no exception.
+Next: run SYS_TASK after IPC handoff, implement user address-space lifecycle,
+then validate signals and reset policy.
+
+### 8. TTY and console — Partially implemented
+
+Reference: `minix-2.0.0/src/kernel/tty.c`, `console.c`, `keyboard.c`,
+`rs232.c`, `pty.c`, `keymaps/`.
+CP32: `src/kernel/tty.c`, `tty.h`, `serial.c`, `serial.h`.
+
+Present: line discipline, termios/ioctl structures, queues, and USB
+Serial/JTAG diagnostics. Missing: active `tty_task()`, Cardputer keyboard/
+display driver, UART/RS232 device implementation, TTY IRQs, ptys, and user
+read/write syscalls. USB Serial/JTAG and Cardputer peripherals replace VGA,
+PC keyboard, UART, and BIOS services.
+
+Next: 
+1. Add code to access M5Stack Cardputer Adv display and keyboard.
+2. connect one console device, start TTY as a task, and validate canonical
+and raw I/O.
+3. TTY and console is fully usable via M5StackCardputer hardware.
+
+### 9. Storage, RAM disk, and filesystem — Missing
+
+Reference: `minix-2.0.0/src/fs/` plus kernel `driver.c`, `memory.c`, and disk
+drivers. CP32 has no `fs/` tree, block driver, RAM disk, VFS, or disk-image
+loader.
+
+Missing: FS server, inode/cache/path/file-descriptor operations, block I/O,
+root filesystem, and boot-time filesystem population. Add `src/fs/` and a
+documented CP32 storage-driver layer. Filesystem logic is portable; flash
+partitioning, cache, and wear policy are hardware-specific.
+
+### 10. MM server and user process environment — Missing
+
+Reference: `minix-2.0.0/src/mm/`; CP32 has only kernel-side `mm.c`.
+Missing: fork/exec/wait/exit, brk/sbrk, server-level signals, permissions,
+and boot-time service initialization. Start after scheduling, IPC, maps, and
+an executable format work.
+
+### 11. Networking and optional device drivers — Not applicable to first milestone
+
+Reference: `minix-2.0.0/src/inet/` and network/audio/printer/CD/disk drivers.
+CP32 configuration disables these PC-oriented services. Add only after the
+Cardputer peripheral target and user ABI are defined.
+
+### 12. C library, shell, commands, and applications — Missing
+
+Reference: `minix-2.0.0/src/lib/`, `commands/`, `test/`, and `boot/`.
+CP32 has only `printk.c`, `klib.c`, and compatibility headers. Missing:
+syscall stubs, libc, runtime/start files, shell, commands, tests, and image
+integration. Define the user ABI after one user process can run.
+
+## Explicitly incomplete code
+
+- `src/kernel/irq.S`: dispatch TODO and bring-up handler stubs.
+- `src/kernel/proc.c` and `port.c`: diagnostics and blocked flags exist, but
+  no production suspension/resume boundary.
+- `src/kernel/mm.c`: `mm_task()` is an initialization message plus idle loop.
+- `src/kernel/tty.c`: ESP32-S3 device stubs are disconnected.
+- `src/kernel/system.c`: `system_reset()` is a placeholder.
+- `src/kernel/main.c`: `panic()` spins without required panic diagnostics.
+- The existing libgcc `call0` ABI warning remains unresolved.
+
+## Priority order
+
+- [x] 1. Complete IRQ dispatch and one real context-switch/handoff path.
+- [ ] 2. Make IPC suspension/resumption task-owned; validate queues, billing, and quantum.
+  Basic CLOCK receive blocking is running; blocked SEND/RECEIVE resume coverage is still pending.
+- [x] 3. Start CLOCK, SYS, and TTY through production descriptors.
+  MM descriptor startup is also enabled; the MM message protocol remains incomplete.
+- [x] 4a. Define the CP32 physical-click memory model and allocator ownership
+  boundary; the MM server protocol remains in progress.
+4. Define the CP32 memory model and implement the MM server.
+5. Implement Cardputer console I/O.
+- [x] 5a. Connect the Cardputer TCA8418 keyboard to the TTY input queue and
+  decode matrix events into console characters.
+- [x] 5b. Add a bounded user-read handoff probe and boot-time FS descriptor
+  validation for the TTY read path.
+- [x] 5c. Add scheduler selection tracing for the first runnable FS/user-read
+  frame to isolate the remaining restore boundary.
+- [x] 5d. Normalize the initial Xtensa saved PSW used by descriptor-based
+  task/server returns.
+- [x] 5e. Trace the selected process frame immediately before the Xtensa
+  exception-return boundary.
+- [x] 5f. Trace both scheduler owner pointers at the IRQ return boundary.
+- [x] 5g. Keep scheduler selection and active return ownership synchronized.
+- [x] 5h. Perform a final non-nested scheduler selection before IRQ return.
+- [x] 5i. Preserve a runnable FS selection across the legacy clock/unhold path.
+- [x] 5j. Publish and consume one final IRQ return-frame pointer across C and
+  Xtensa assembly restoration.
+- [x] 5k. Trace final return-pointer publication before assembly restoration.
+- [x] 5l. Publish the IRQ return frame at process selection and preserve it
+  through the timer wrapper.
+- [x] 5m. Correlate scheduler selection and IRQ return with a shared sequence.
+- [x] 5n. Report and consume the dedicated published return pointer rather
+  than the later idle fallback pointer.
+- [x] 5o. Trace return-pointer replacement and the FS state causing it.
+- [x] 5p. Correlate FS selection with interrupt nesting to separate scheduler
+  passes.
+- [x] 5q. Gate return-frame publication on explicit IRQ-dispatch ownership.
+- [x] 5r. Reconcile the final runnable selection inside the IRQ dispatch pass.
+- [ ] 5s. Rotate scheduler queue priority to prevent task starvation (blocked
+  by task-frame initialization fault).
+- [x] 5t. Harden `numap()` against invalid or inconsistent process descriptors.
+- [x] 5u. Isolate IPC blocked-frame capture for suspension/resumption.
+- [x] 5v. Rate-limit repetitive CLOCK task execution diagnostics.
+- [x] 5w. Initialize explicit flat task descriptor mappings for MM/IPC buffers.
+- [x] 5x. Isolate MM IPC request validation before allocator/release handling.
+- [x] 5y. Add an automatic MM allocator allocate/release smoke path.
+- [x] 5z. Verify allocator ownership enforcement during automatic boot smoke.
+- [x] 5aa. Validate allocator zero-size and oversized request rejection.
+- [x] 5ab. Validate adjacent allocator blocks and reverse-order coalescing.
+- [x] 5ac. Validate allocator ownership while allocated and after release.
+- [x] 5ad. Add frame-safe MM requester validation at the receive boundary.
+- [x] 5ae. Centralize MM allocation/release request handling for IPC replies.
+- [ ] 5af. Connect the scheduled FS client to the MM allocation/release IPC path (deferred: the first activation caused an image-integrity regression; requires an isolated frame-safe client path).
+- [x] 5ah. Make blocked IPC completion task-owned: wake result, blocked flags,
+  stale return-owner cleanup, and ready-queue insertion now share one resume
+  boundary for SEND and RECEIVE wakeups.
+- [x] 5ai. Guard ready-queue insertion against duplicate runnable links during
+  repeated IPC wakeups and interrupt replay using the existing queue scan.
+- [ ] 5aj. Bound IPC caller-queue append and receive traversal (deferred after
+  image-integrity regression; requires an assembly/layout-safe implementation).
+- [x] 5ak. Reject duplicate SEND attempts from an already blocked sender so
+  each suspended process retains one owned caller-queue link and wakeup frame.
+- [ ] 5al. Reject duplicate RECEIVE attempts from an already blocked receiver
+  (deferred after early image-integrity regression; requires an
+  assembly/layout-safe implementation).
+- [x] 5am. Confirm marker 89 hardware checkpoint: valid `.data`/`.bss`, stable
+  IRQ handoff, CLOCK task execution, and continued RFE returns.
+- [x] 5an. Confirm marker 90 hardware checkpoint: stable IRQ dispatch and
+  repeated task handoffs after IPC queue hardening rollbacks.
+- [x] 5ao. Confirm marker 91 hardware checkpoint: clean image sentinel and
+  stable repeated RFE/IPC/CLOCK handoffs with marker-only rebuild.
+- [x] 5ap. Add a host-side blocked-RECEIVE ownership contract test while the
+  hardware frame-boundary implementation remains deferred.
+- [x] 5aq. Extend the host-side IPC ownership contract coverage to blocked
+  SEND completion and mixed SEND/RECEIVE flag cleanup.
+- [x] 5ar. Add host-side bounded caller-queue traversal coverage for valid
+  chains and cycle/limit rejection.
+- [x] 5as. Add host-side IPC endpoint validation coverage for accepted and
+  rejected source/destination ranges.
+- [x] 6a. Add a link-isolated CP32 RAM-disk sector core with bounds-checked
+  read/write/reset operations and host-side tests.
+- [x] 6b. Confirm marker 97 hardware checkpoint: RAM-disk code addition leaves
+  the boot sentinel, IRQ dispatch, IPC, CLOCK, and RFE handoffs stable.
+- [x] 6c. Reserve RAM-disk storage inside DRAM before the heap, expose linker
+  bounds, start allocation after it, and activate reset without an ELF data
+  segment or static C storage.
+- [ ] 6e. Expand the contiguous RAM-disk reservation to the full 128 KiB
+  reserved DRAM window (deferred: expanded layout corrupts `.data`).
+- [x] 6g. Implement the RAM-disk as a permanent ordinary kernel `.bss` array
+  in the proven SRAM1 model, accessed through sector interfaces and reset once
+  at boot.
+- [x] 6f. Remove the accidental remaining RAM-disk boot write and restore a
+  marker-only baseline after marker 110 still corrupted `.data`.
+- [ ] 5ag. Rotate ready-queue selection across task, server, and user classes
+  (reverted after the FS handoff fault; requires a frame-safe scheduler
+  handoff redesign).
+- [x] 5ah. Synchronize the kernel IPC wrapper owner from `current_proc` before
+  user/task `_send`, `_receive`, and `_sendrec` calls.
+6. Add storage/RAM disk, FS, executable loading, libc, shell, and commands.
+7. Add optional networking and peripherals only when in scope.
+
+## Validation policy
+
+For each feature, compare MINIX behavior, document the ESP32-S3 substitution
+and CP32 invariant, add a focused `tests/` test when feasible, run
+`make clean && make` from `src/`, inspect ELF sections/segments for low-level
+changes, and record hardware results in `issues.md`. Build success alone never
+marks hardware behavior complete.
+- [x] 6h. Reduce the active RAM-disk probe to one 10-byte sector and use a
+  byte-wise reset to isolate storage-size and alignment effects.
+- [x] 6i. Disable boot-time RAM-disk activation after the 10-byte probe still
+  corrupted the `.data` sentinel; retain the isolated interface for later use.
+- [x] 6j. Expand the dormant ordinary-memory RAM-disk probe to 1 KiB while
+  keeping boot-time activation disabled, isolating static-size image effects.
+- [x] 6k. Expand the dormant ordinary-memory RAM-disk probe to 64 KiB while
+  keeping boot-time activation disabled, isolating the larger `.bss` footprint.
+- [x] 6l. Add non-mutating RAM-disk geometry accessors for sector size and
+  sector count, with host-side contract coverage.
+- [x] 6m. Add a non-mutating total-capacity accessor to complete the minimal
+  RAM-disk block-device geometry contract.
+- [x] 6n. Add bounded byte-range RAM-disk access for filesystem metadata and
+  records, with zero-length and out-of-range contract tests.
+- [x] 6o. Add deterministic bounded RAM-disk checksums for metadata integrity
+  checks, with host-side validation.
+- [x] 6p. Add an explicit RAM-disk format signature and validation operation,
+  leaving formatting dormant during boot for filesystem integration.
+- [x] 6q. Add version and checksum validation to the dormant RAM-disk format
+  header, preventing stale or partially corrupted metadata from being used.
+- [x] 8a. Change the CP32 TTY bring-up client to request bounded canonical
+  lines and report completed line data, preserving the existing TTY task path.
+- [x] 8b. Revert the line-buffered TTY bring-up client after it changed the
+  boot image sentinel; restore the proven one-byte diagnostic read path.
+- [x] 8c. Add phased startup diagnostics for `.data`/`.bss` bounds and the
+  data sentinel to localize loader versus startup corruption.
+- [x] 8d. Revert phased startup diagnostics after they changed the image
+  layout and reproduced sentinel corruption; restore the compact startup path.
+- [x] 8e. Add one retained main-stage data-layout diagnostic reporting the
+  sentinel and linker section bounds before marker 131.
+- [x] 8f. Remove the oversized diagnostic and enforce the discovered 32 KiB
+  CP32 loader IRAM window with a link-time assertion before marker 132.
+- [x] 8g. Add a minimal post-entry stability trace after the kernel reaches
+  `kernel_idle_loop()`, preserving the enforced 32 KiB image limit.
+- [x] 8h. Encode the stability trace in the existing idle-entry status line
+  after the additional print exceeded the hard 32 KiB loader window.
+- [x] 8i. Split IRAM into a 32 KiB bootstrap window and a second contiguous
+  internal-IRAM window so kernel text can grow beyond the loader bootstrap limit.
+- [x] 8j. Keep the complete pre-boot C dependency set in the bootstrap IRAM
+  segment while placing the remaining kernel text in extended IRAM.
+- [x] 8k. Revert the multi-segment IRAM experiment after it produced no USB
+  output; restore the validated single-segment 32 KiB loader model.
+- [x] 8l. Compile out repetitive IRQ, RFE, CLOCK, and keyboard polling traces
+  by default, preserving functional input and the compact validated image.
+- [x] 8m. Add an ESP-IDF-style D/IRAM linker window with its DRAM alias
+  reservation, and place the isolated RAM-disk code in the extended window.
+- [x] 8n. Move the D/IRAM DRAM-alias reservation before `.data` placement so
+  initialized data cannot overlap extended executable SRAM.
+- [x] 8o. Execute the RAM-disk capacity accessor from extended D/IRAM during
+  boot, providing a minimal hardware validation of the new code window.
+- [x] 8p. Re-enable the retained verbose diagnostics after confirming that
+  extended D/IRAM code executes correctly on hardware.
+- [x] 8q. Relocate timer IRQ dispatch and its diagnostic helper into D/IRAM
+  after verbose diagnostics exceeded the bootstrap window by 44 bytes.
+- [x] 8r. Relocate the runtime `clock_task()` implementation into D/IRAM,
+  keeping reset and startup dependencies in the bootstrap IRAM window.
+- [x] 8s. Relocate the runtime `tty_task()` implementation into D/IRAM,
+  preserving the keyboard and TTY execution path while reducing low-IRAM use.
+- [x] 8t. Relocate the runtime `sys_task()` implementation into D/IRAM,
+  preserving the assembly interrupt entry and reset path in low IRAM.
+- [x] 8u. Relocate the runtime `mm_task()` memory server into D/IRAM while
+  keeping reset/startup and interrupt-entry code in low IRAM.
+- [x] 8v. Relocate runtime keyboard event translation into D/IRAM while
+  retaining boot-time keyboard probing, initialization, and I²C access below.
+- [x] 8w. Relocate runtime keyboard event reads and interrupt-state checks
+  into D/IRAM while retaining boot-time probe/configuration code in low IRAM.
+- [x] 8x. Relocate non-boot keyboard status/configuration and diagnostic
+  accessors into D/IRAM, retaining the boot probe/init path in low IRAM.
+- [x] 8y. Relocate the post-start `kernel_idle_loop()` into D/IRAM while
+  retaining all reset and boot diagnostics in low IRAM.
+- [x] 8z. Relocate the runtime TTY client loop into D/IRAM while preserving
+  the boot-time process setup and diagnostic path.
+- [x] 8aa. Relocate the runtime scheduler implementation into D/IRAM while
+  preserving low-IRAM reset, startup, and interrupt-entry dependencies.
+- [x] 8ab. Relocate runtime `lock_sched()` into D/IRAM while preserving the
+  low-IRAM reset and startup path.
+- [x] 8ac. Relocate the runtime millisecond delay helper into D/IRAM while
+  retaining low-level timer interrupt and startup setup in low IRAM.
+- [x] 8ad. Relocate the runtime `get_uptime()` helper into D/IRAM while
+  retaining timer initialization and interrupt entry in low IRAM.
+- [x] 8ae. Relocate runtime clock time/uptime service handlers into D/IRAM
+  while retaining timer initialization and interrupt entry in low IRAM.
+- [x] 8af. Relocate runtime alarm service handlers into D/IRAM while retaining
+  timer initialization and interrupt entry in low IRAM.
+- [x] 8ag. Relocate clock-task dispatch, tick, synchronous-alarm, and alarm
+  delivery helpers into D/IRAM while retaining the timer ISR path in low IRAM.
+- [x] 8ah. Relocate runtime clock timing helpers into D/IRAM while retaining
+  timer initialization and interrupt entry in low IRAM.
+- [x] 8ai. Relocate the C-side IRQ registration and dispatch layer into
+  D/IRAM while retaining assembly interrupt entry in low IRAM.
+- [x] 8aj. Relocate the runtime TTY ioctl handler into D/IRAM while retaining
+  boot-time keyboard and TTY initialization in low IRAM.
+- [x] 8ak. Relocate the compatibility TTY ioctl handler into D/IRAM while
+  retaining boot-time keyboard and TTY initialization in low IRAM.
+- [x] 8al. Relocate runtime process unready helpers into D/IRAM while
+  retaining reset and startup process-table initialization in low IRAM.
+- [x] 8am. Relocate ready-queue validation and insertion helpers into D/IRAM
+  while retaining the public lock wrapper and scheduler entry contracts.
+- [x] 8an. Relocate the runtime `switch_to()` process handoff helper into
+  D/IRAM while retaining scheduler and startup handoff behavior.
+- [x] 8ao. Relocate the locked ready-queue wrapper into D/IRAM while
+  preserving its interrupt-lock protocol.
+- [x] 8ap. Relocate the locked process-selection wrapper into D/IRAM while
+  preserving its interrupt-lock protocol.
+- [x] 8aq. Relocate held-interrupt replay (`unhold`) into D/IRAM while
+  preserving lock ordering and interrupt delivery semantics.
+- [x] 8ar. Relocate the locked mini-send wrapper into D/IRAM while preserving
+  its lock-save/send/restore sequence.
+- [x] 8as. Relocate blocked-frame snapshot capture into D/IRAM while
+  preserving the process-frame validity contract.
+- [x] 8at. Relocate IPC message-copy and blocked-message delivery helpers into
+  D/IRAM while preserving sender validation and wakeup ordering.
+- [x] 8au. Relocate the IRQ message-buffer copy helper into D/IRAM while
+  retaining the interrupt entry and notification state machine in place.
+- [x] 8av. Relocate the optional IPC trace helper into D/IRAM without
+  changing IPC state transitions.
+- [x] 8aw. Relocate blocked-frame completion and wake/resume bookkeeping into
+  D/IRAM while preserving result publication and ready-queue insertion.
+- [x] 8ax. Relocate the C-level hardware notification handler into D/IRAM
+  while retaining assembly IRQ entry and frame handling in low IRAM.
+- [x] 8ay. Relocate the runtime mini-receive IPC implementation into D/IRAM
+  while preserving receive matching and blocked-wakeup semantics.
+- [x] 8az. Relocate the runtime mini-send IPC implementation into D/IRAM
+  while preserving destination validation and blocked-sender semantics.
+- [x] 8ba. Relocate the C-level `sys_call()` dispatcher into D/IRAM while
+  retaining the assembly trap entry and IPC contracts.
+- [x] 8bb. Relocate the user blocked-handoff dispatcher into D/IRAM while
+  retaining exception-vector entry and saved-frame validation.
+- [x] 8bc. Relocate five RAM-disk sector/byte I/O and checksum functions into
+  D/IRAM as one runtime storage-helper group.
+- [x] 8bd. Relocate five runtime TTY input/output, event, reply, and signal
+  helpers into D/IRAM while retaining boot-time TTY initialization in IRAM.
+- [x] 8be. Relocate five runtime TTY read/write/open/close/cancel handlers into
+  D/IRAM while retaining boot-time TTY initialization in IRAM.
+- [x] 8bf. Relocate five runtime TTY transfer/ioctl/attribute/cancel/wakeup
+  helpers into D/IRAM while retaining boot-time TTY initialization in IRAM.
+- [x] 8bg. Relocate five runtime TTY editing/output/no-op helpers into D/IRAM
+  while retaining boot-time TTY initialization in IRAM.
+- [x] 8bh. Relocate five runtime TTY timer, compatibility, and trace helpers
+  into D/IRAM while retaining serial/console initialization in IRAM.
+- [x] 8bi. Relocate five runtime keyboard/TTY compatibility helpers into
+  D/IRAM while retaining serial and console initialization in IRAM.
+- [x] 8bj. Relocate ten system-task runtime handlers into D/IRAM while
+  retaining system-task entry and startup plumbing in low IRAM.
+- [x] 8bk. Relocate the remaining ten system-task signal, memory, boot, and
+  tracing handlers into D/IRAM while retaining system-task entry in IRAM.
+- [x] 8bl. Relocate ten runtime memory-management allocator, mapping, copy,
+  ownership, and validation functions into D/IRAM.
+- [x] 8bm. Relocate ten Cardputer I2C GPIO and transaction helpers into D/IRAM
+  as one hardware-access group.
+- [x] 8bn. Relocate ten remaining TTY/Cardputer/clock/memory runtime and
+  setup helpers into D/IRAM while retaining vector and assembly entry points.
+- [x] 8bo. Relocate ten remaining runtime system, library, and memory helpers
+  into D/IRAM while retaining loader and vector-critical code in IRAM.
+- [x] 8bp. Relocate five remaining diagnostic/environment/serial-output helpers
+  into D/IRAM while retaining panic and vector/timer-critical entry routines.
+- [x] 8bq. Reject duplicate RECEIVE requests from an already-blocked receiver
+  without overwriting its saved source selector or message buffer.
+- [ ] 5aj. Validate frame-gated ready-queue rotation for the FS/TTY user task
+  (experimental; hardware validation pending).
+- [x] 5ak. Remove duplicate timer-IRQ scheduling so an FS/TTY selection is
+  preserved for the single frame publication and return path.
+- [x] 5al. Publish the preserved runnable FS selection through the IRQ return
+  owner before `rfe`, preventing the legacy idle frame from overwriting it.
+- [ ] 5am. Diagnose post-publication FS return-owner invalidation with a
+  one-shot flags/PC/SP trace before changing the handoff contract.
+- [ ] 5an. Publish FS directly from `pick_proc()` when IRQ dispatch ownership
+  is active, then validate user entry and TTY character completion.
+- [ ] 5ao. Arm IRQ dispatch ownership before the timer's first scheduler pass
+  so the selected FS frame can become the IRQ return frame.
+- [ ] 5ap. Capture the direct `sched()` result as the IRQ return owner before
+  later clock bookkeeping can overwrite the selected FS frame.
+- [ ] 5aq. Publish runnable FS selection before IRQ dispatch activation so the
+  assembly return path can use the clock-task selection.
+- [ ] 5ar. Trace IRQ return-owner, selected process, and preserved FS state at
+  dispatch finalization to identify the remaining owner overwrite.
+- [ ] 5as. Publish FS as the IRQ return owner when TTY wakeup requeues it from
+  task context, before the next gated interrupt return.
+- [ ] 5at. Enter the saved FS call0 frame from the idle loop when the clock
+  task selects FS outside IRQ context.
+- [ ] 5au. Trigger the idle-loop FS handoff from the preserved scheduler
+  selection rather than the transient live process pointer.
+- [ ] 5av. Transfer directly from `switch_to()` while the non-IRQ FS frame is
+  still runnable, before the clock task blocks it again.
+- [ ] 5aw. Map the FS SRAM stack window as flat D memory so TTY read buffers
+  pass `numap()` validation.
+- [ ] 5ax. Rate-limit repeated TTY user-read error diagnostics to once per
+  1000 failed attempts.
+- [ ] 5ay. Rebind FS ownership before user-client IPC so requests are not
+  emitted with the interrupted IDLE process as their source.
+- [ ] 5az. Fix TTY input transfer to translate absolute flat SRAM addresses
+  once instead of adding the FS segment base a second time.
+- [ ] 5ba. Remove the artificial successful-BOTH blocked probe and restore FS
+  ownership on successful user syscall return.
+- [ ] 5bb. Permit repeated FS saved-frame entry after syscall return so the
+  TTY client can issue one read request per keyboard character.
+- [ ] 5bc. Restore the IDLE return frame to `kernel_idle_loop()` so C-level
+  FS wakeup handoff remains reachable after user syscalls.
+- [ ] 5bd. Publish FS on every successful user syscall before transient BOTH
+  receive flags are normalized by the IPC path.
+- [ ] 5be. Allow successful user syscalls to bypass transient receive flags
+  and return directly to the FS client frame.
+- [ ] 5bf. Restore the updated FS process frame in the user exception assembly
+  path instead of the stale pre-syscall trap frame.
+- [ ] 5bg. Use nonblocking TTY reads in the bring-up user client to avoid the
+  incomplete blocked-receive return handoff while validating keyboard input.
+- [ ] 5bh. Make successful user exception returns consume the explicit
+  `cp32_irq_return_proc` publication instead of mutable `proc_ptr`.
+- [ ] 5bi. Use the actual TTY `O_NONBLOCK` flag for the user read client;
+  `NO_BLOCK` is unrelated and evaluates to zero.
+- [ ] 5bj. Validate TTY reply status and clear the user byte before printing,
+  preventing stale stack data from appearing as a typed character.
+- [ ] 5bk. Write CP32 flat-SRAM TTY input bytes directly to the validated user
+  destination, bypassing the legacy segmented copy path.
+- [ ] 5bl. Report the first user TTY IPC return code and reply status to
+  distinguish empty input from a malformed `BOTH` transaction.
+- [ ] 5bm. Move the diagnostic TTY byte buffer from the transient FS stack to
+  persistent kernel SRAM to isolate user-stack return corruption.
+- [ ] 5bn. Trace the first TTY transfer destination and input character at
+  `in_transfer()` to locate loss between keyboard queue and user buffer.
+- [ ] 5bo. Remove the ineffective CHIP preprocessor guard so CP32 flat-SRAM
+  TTY transfer code is included in the actual build.
+- [x] 5bp. Allow the CP32 one-byte FS TTY client to receive canonical input
+  immediately, without waiting for an EOL; preserve canonical gating for other
+  terminal consumers.
+- [x] 5bq. Guard TTY transfer against draining an empty input queue, which was
+  producing false zero-valued user characters.
+- [x] 5br. Make the CP32 TTY client report the byte read back from the exact
+  transfer destination, eliminating a misleading stale-buffer diagnostic.
+- [x] 5bs. Suppress zero-byte TTY replies in the bring-up client so stale or
+  empty replies cannot be reported as keyboard input.
+- [x] 5bt. Preserve the TTY destination pointer across `_sendrec()`; reply
+  messages may overwrite the request's `ADDRESS` field.
+- [x] 5bu. Keep the diagnostic TTY destination in persistent kernel SRAM so
+  reconnect/context-switch paths cannot invalidate a stack-local pointer.
+- [x] 5bv. Remove unsafe post-IPC user-pointer readback; publish the delivered
+  byte from the kernel TTY transfer into persistent diagnostic SRAM.
+- [x] 5bw. Pin synthetic TTY `_sendrec()` calls to the FS process descriptor so
+  scheduler publication cannot replace the IPC caller between SEND and RECEIVE.
+- [x] 5bx. Poll/service the TTY input queue before synthetic user IPC, avoiding
+  the unsafe empty-read blocking return path.
+- [x] 5by. Stop invoking the kernel `handle_events()` directly from user
+  context; let the TTY task own queue servicing and prevent a null `tty_t`
+  handoff argument.
+- [x] 5bz. Drain the controller FIFO during keyboard initialization and tag
+  keyboard events with the firmware session marker to prevent stale replay
+  after USB-UART reconnects.
+- [x] 5ca. Add a cooperative empty-queue keyboard poll for the synthetic FS
+  client so its wait loop cannot starve the normal TTY polling task.
+- [x] 5cb. Prevent synthetic TTY retries while FS is already blocked, avoiding
+  repeated `SENDING|RECEIVING` state overwrites and lost user reads.
+- [x] 5cc. Add a direct atomic CP32 TTY queue read for the bring-up client,
+  bypassing the unstable synthetic blocked-IPC path while preserving normal
+  TTY IPC for later user processes.
+- [x] 5cd. Add a bounded diagnostic line buffer with backspace and Enter
+  submission handling on top of the stable per-character TTY path.
+- [x] 5ce. Add minimal RAM-disk shell dispatch for `ls` and `ramdisk`, plus a
+  bounded unknown-command diagnostic.
+- [x] 5cf. Diagnose individual keyboard initialization register failures and
+  correct duplicate `0x` formatting in TTY non-printable character logs.
+- [x] 5cg. Reduce periodic scheduler/IPC diagnostics and add compact keyboard
+  interrupt, controller-status, and FIFO-depth boot diagnostics.
+
+## Core-kernel phase after console bring-up
+
+- [x] 5ch. Bound IPC caller-queue append and receive traversal, reject cyclic
+  or malformed sender links, and preserve the existing blocked-message wakeup
+  contract.
+- [x] 8cl. Complete the stable Cardputer TTY milestone: immediate per-character
+  delivery and bounded `ls`/`ramdisk` dispatch are validated on hardware.
+- [ ] 8cm. Keep `cat` and additional shell commands deferred until the kernel
+  phase has a production filesystem/message path.
+- [ ] 8cn. Implement the next core-kernel feature with host coverage before
+  expanding the command surface.
+- [x] 8co. Guard bit-banged keyboard I²C transactions against concurrent
+  scheduler/IRQ poll re-entry; marker 2 boots and reaches the stable FS/TTY
+  loop without the prior exception.
+- [x] 8cp. Bound ready-queue integrity scans and stale-entry removal so a
+  cyclic or malformed ready link cannot hang scheduler maintenance; marker 3.
+- [x] 8cq. Fail closed when keyboard register initialization is incomplete;
+  runtime I²C polling is disabled until the controller is fully ready; marker 4.
+- [x] 8cr. Reconcile stale ready-queue tails before runnable insertion and fail
+  closed on a cyclic queue; marker 5.
+- [x] 8cs. Make the TTY task the sole runtime keyboard-I²C poll owner; remove
+  competing FS-client hardware polling and advance the core marker to 6.
+
+## TTY/user handoff diagnostic tree — marker 219
+
+- [x] Boot image remains structurally valid: `.data` and `.bss` sentinels pass,
+  vectors are present, and the 64 KiB SRAM RAM disk initializes.
+- [x] Keyboard hardware path works: `[KBD probe=1]`, `[KBD init=1]`, keyboard
+  events, and kernel-side `[TTY char=...]` output are observed.
+- [x] Scheduler reaches the FS client: `[SCHED fs-selected ... nest=0]` and
+  `[TTY user-entry]` appear.
+- [x] The first user TTY transaction completes and copies data correctly:
+  `[TTY user-char=k]` confirms the earlier double-address translation bug is
+  fixed.
+- [ ] User client resumes for subsequent reads. After the first character the
+  return path reports `RFE target=0 current=0` and resumes at an internal idle
+  address (`0x40372C0B`), so the FS client loop is not re-entered.
+- [ ] Next investigation: trace `irq_user` labels 2/3/4 and the exact value of
+  `cp32_user_dispatch_blocked`, `proc_ptr`, and `cp32_irq_return_proc` after
+  `cp32_user_trap_dispatch()` returns successfully.
+- [ ] Verify whether `cp32_enter_initial_user()` must establish a dedicated
+  user-return context rather than relying on the generic `rfe` path.
+- [ ] Keep the current nonblocking `NO_BLOCK` experiment isolated until the
+  user-return ownership problem is resolved; do not expand diagnostics before
+  capturing the first post-syscall assembly state.
+
+## Core-kernel phase after console bring-up
+
+- [x] 8cu. Reject FS-side keyboard I²C polling while `k_reenter` is nonzero,
+  preventing transactions from starting at interrupt level; marker 8.

@@ -21,50 +21,35 @@
 #include "proc.h"
 #include "irq_frame.h"
 
-/* Keep the normal probe transcript compact.  Define this to 1 when the
- * individual handoff fields are needed while debugging a new frame ABI. */
-#ifndef CP32_VERBOSE_HANDOFF_DIAGNOSTICS
+/* TODO(clean-production): these three guarded print blocks still share the
+ * blocked-frame path. Remove the blocks first, then delete this compatibility
+ * constant without changing scheduler or IPC state transitions. */
 #define CP32_VERBOSE_HANDOFF_DIAGNOSTICS 0
-#endif
 
-extern reg_t cp32_context_probe_pc(struct proc *next);
-extern reg_t cp32_context_probe_sp(struct proc *next);
-extern reg_t cp32_context_probe_ps(struct proc *next);
 extern volatile int cp32_context_restore_gate;
+extern void cp32_enter_initial_user(struct proc *rp);
 extern volatile int cp32_context_handoff_gate;
-extern volatile uint32_t cp32_task1_ticks;
-extern volatile uint32_t cp32_task2_ticks;
 extern struct proc *current_proc;
-extern message cp32_probe_message;
-extern message cp32_probe_sender_message;
-PRIVATE int copy_message(struct proc *sender, message *src,
+CP32_IRAM_EXT PRIVATE int copy_message(struct proc *sender, message *src,
                          struct proc *receiver, message *dst);
-PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
+CP32_IRAM_EXT PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
                                     struct proc *receiver, message *dst);
+
+CP32_IRAM_EXT PRIVATE void cp32_save_blocked_frame(struct proc *rp)
+{
+  if (rp == NIL_PROC) return;
+  rp->p_blocked_frame_valid = TRUE;
+  rp->p_blocked_frame_result = 0;
+  rp->p_blocked_frame_pc = rp->p_reg.pc;
+  rp->p_blocked_frame_psw = rp->p_reg.psw;
+  rp->p_blocked_frame_sp = rp->p_reg.sp;
+}
 
 void sched(void);
 PRIVATE void ready(struct proc *rp);
 PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result);
 PRIVATE int proc_is_ready_queued(struct proc *target);
 PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr);
-
-#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
-PUBLIC void cp32_probe_ready_reply(void)
-{
-  struct proc *reply = proc_addr(3);
-  struct proc *caller = proc_addr(2);
-  int q;
-  /* Stress setup may have left a stale process-table object with the same
-   * synthetic number in a ready queue.  The reply probe must start with one
-   * canonical receiver, otherwise sched() can select the stale object. */
-  for (q = 0; q < NQ; q++) {
-    rdy_head[q] = NIL_PROC;
-    rdy_tail[q] = NIL_PROC;
-  }
-  if (caller->p_flags == 0) ready(caller);
-  if (reply->p_flags == 0) ready(reply);
-}
-#endif
 
 PRIVATE unsigned char cp32_wake_probe_reported;
 PRIVATE unsigned char cp32_wake_owner_release_reported;
@@ -85,6 +70,10 @@ void schedule(void)
 
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 PRIVATE unsigned handoff_diag_count;
+volatile struct proc *cp32_last_selected_fs;
+volatile struct proc *cp32_irq_return_proc;
+volatile uint32_t cp32_sched_sequence;
+volatile int cp32_irq_dispatch_active;
 volatile uint32_t cp32_blocked_syscall_count;
 volatile uint32_t cp32_sched_handoff_count;
 volatile uint32_t cp32_blocked_handoff_count;
@@ -106,6 +95,7 @@ volatile uint32_t cp32_user_handoff_reject_count;
 volatile uint32_t cp32_user_trap_probe_count;
 volatile uint32_t cp32_user_cause_reject_count;
 volatile uint32_t cp32_blocked_pc_validation_count;
+volatile uint32_t cp32_ipc_trace_calls;
 /* Aggregate interrupt-notification contract.  These counters are deliberately
  * independent of the verbose handoff diagnostics: an IRQ can be held while
  * a critical section is active, coalesced, and replayed later. */
@@ -119,125 +109,8 @@ volatile uint32_t cp32_user_rfe_sp;
 volatile uint32_t cp32_user_rfe_count;
 volatile int cp32_probe_wake_once;
 
-PUBLIC void cp32_probe_wake_receiver(void)
-{
-#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
-  struct proc *receiver = proc_addr(2);
-  struct proc *sender = proc_addr(1);
-  if (receiver->p_flags == 0) receiver->p_flags = RECEIVING;
-#else
-  struct proc *receiver = proc_addr(1);
-  struct proc *sender = proc_addr(2);
-#endif
-  if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-      !cp32_wake_probe_reported) {
-    cp32_wake_probe_reported = 1;
-    usbj_print("[CTX V105 wake-hook flags=");
-    usbj_print_u32((uint32_t)receiver->p_flags);
-    usbj_print(" armed=");
-    usbj_print_u32((uint32_t)cp32_probe_wake_once);
-    usbj_print("]\r\n");
-  }
-  if (!cp32_probe_wake_once || !(receiver->p_flags & RECEIVING)) return;
-  cp32_probe_wake_once = 0;
-  /* Preserve the receiver buffer validated at RECEIVE time. */
-  receiver->p_messbuf = &cp32_probe_message;
-  sender->p_map[D].mem_vir =
-      (vir_bytes)(uintptr_t)&cp32_probe_sender_message & ~(CLICK_SIZE - 1);
-  sender->p_map[D].mem_phys =
-      ((phys_bytes)(uintptr_t)&cp32_probe_sender_message) >> CLICK_SHIFT;
-  sender->p_map[D].mem_len =
-      (((vir_bytes)(uintptr_t)&cp32_probe_sender_message & (CLICK_SIZE - 1)) +
-       sizeof(cp32_probe_sender_message) + CLICK_SIZE - 1) >> CLICK_SHIFT;
-#ifndef CP32_ENABLE_BLOCKED_SEND_PROBE
-  sender->p_flags = 0;
-#endif
-  /* proc_addr() is keyed by p_nr; keep the synthetic sender's canonical
-   * lookup slot aligned with the object used by the probe. */
-  proc_addr(sender->p_nr)->p_map[D] = sender->p_map[D];
-  proc_addr(sender->p_nr)->p_flags = 0;
-  {
-    /* The probe objects carry synthetic p_nr values that do not round-trip
-     * through proc_addr().  Use the resolved objects directly, while keeping
-     * the normal copy, blocked-frame completion, and ready transition. */
-    int wake_result;
-#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
-    wake_result = mini_rec(receiver, sender->p_nr, receiver->p_messbuf);
-    if (wake_result == OK && sender->p_flags == 0 &&
-        sender->p_blocked_frame_valid)
-      cp32_complete_blocked_frame(sender, OK);
-    if (wake_result == OK && sender->p_flags == 0)
-      sender->p_blocked_frame_valid = FALSE;
-#else
-    wake_result = deliver_blocked_message(sender, &cp32_probe_sender_message,
-                                          receiver, receiver->p_messbuf);
-#endif
-    if (wake_result == EFAULT && (receiver->p_flags & RECEIVING)) {
-      /* The synthetic probe has no separate user address space. Its buffer
-       * was validated at trap entry, so complete this controlled wake using
-       * that slot while retaining the normal frame/queue transitions. */
-      cp32_probe_message.m_source = sender->p_nr;
-      receiver->p_flags &= ~RECEIVING;
-      cp32_complete_blocked_frame(receiver, OK);
-      if (receiver->p_flags == 0) ready(receiver);
-      wake_result = OK;
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK &&
-        receiver->p_flags == 0 && !receiver->p_blocked_frame_valid &&
-        cp32_blocked_return_proc != receiver &&
-        !cp32_wake_owner_release_reported) {
-      cp32_wake_owner_release_reported = 1;
-      usbj_print("[CTX V107 wake-owner-released pass=1]\r\n");
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK &&
-        cp32_probe_message.m_source == sender->p_nr &&
-        !cp32_wake_message_reported) {
-      cp32_wake_message_reported = 1;
-      usbj_print("[CTX V108 wake-message-source-validated pass=1]\r\n");
-    }
-#ifdef CP32_ENABLE_BLOCKED_SEND_PROBE
-    if (wake_result == OK && proc_addr(1)->p_flags == 0)
-      proc_addr(1)->p_blocked_frame_valid = FALSE;
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
-      usbj_print("[CTX V110 send-wake-state flags=");
-      usbj_print_u32((uint32_t)sender->p_flags);
-      usbj_print(" frame=");
-      usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
-      usbj_print(" result=");
-      usbj_print_u32((uint32_t)sender->p_blocked_frame_result);
-      usbj_print("]\r\n");
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK && sender->p_flags == 0 &&
-        !sender->p_blocked_frame_valid && !cp32_send_wake_reported) {
-      cp32_send_wake_reported = 1;
-      usbj_print("[CTX V109 send-wake-owner-complete pass=1]\r\n");
-    }
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS &&
-        wake_result == OK) {
-      usbj_print("[CTX V112 send-wake-final frame=");
-      usbj_print_u32((uint32_t)sender->p_blocked_frame_valid);
-      usbj_print(" flags=");
-      usbj_print_u32((uint32_t)sender->p_flags);
-      usbj_print("]\r\n");
-    }
-#endif
-    if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
-      usbj_print("[CTX V106 wake-complete result=");
-      usbj_print_u32((uint32_t)wake_result);
-      usbj_print(" flags=");
-      usbj_print_u32((uint32_t)receiver->p_flags);
-      usbj_print(" count=");
-      usbj_print_u32(cp32_blocked_frame_wake_count);
-      usbj_print("]\r\n");
-    }
-  }
-}
 volatile int cp32_user_trap_gate;
 PRIVATE unsigned char cp32_blocked_handoff_reported;
-PRIVATE unsigned char cp32_blocked_probe_active;
 PRIVATE unsigned char cp32_user_frame_marker_reported;
 PRIVATE unsigned char cp32_user_cause_marker_reported;
 PRIVATE unsigned char cp32_user_owner_marker_reported;
@@ -391,16 +264,22 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   }
   result = sys_call(function, src_dest, m_ptr);
   cp32_user_dispatch_blocked = 0;
-  if (cp32_user_probe_mode && function == BOTH && result == OK)
-    cp32_user_dispatch_blocked = 1;
   frame->a[2] = (uint32_t)result;
   owner->p_reg.a[2] = (reg_t)result;
   if (cp32_user_probe_mode && !cp32_user_result_marker_reported) {
     cp32_user_result_marker_reported = 1;
     usbj_print("[CTX V93 syscall-result-recorded]\r\n");
   }
-  if ((owner->p_flags & (SENDING | RECEIVING)) ||
-      cp32_blocked_return_proc == owner) {
+  if (result == OK) {
+    /* BOTH completes through a transient receive state.  The user exception
+     * return must be aimed at FS before that state is normalized, otherwise
+     * irq.S reloads the IDLE frame and the client never resumes its loop. */
+    proc_ptr = owner;
+    current_proc = owner;
+    cp32_irq_return_proc = owner;
+  }
+  if (result != OK && ((owner->p_flags & (SENDING | RECEIVING)) ||
+      cp32_blocked_return_proc == owner)) {
     cp32_user_dispatch_blocked = 1;
     /* A user exception cannot rfe until a scheduler handoff has selected a
      * different runnable frame. Keep this path fail-closed for now. */
@@ -414,7 +293,7 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
  * blocked owner to be returned through its stale exception frame.  The
  * assembly entry calls this only after dispatch has recorded the blocked
  * frame; the gate stays disabled until hardware proves the selected frame. */
-PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
+CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
                                      cp32_user_frame_t *frame)
 {
   struct proc *next;
@@ -644,54 +523,7 @@ PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   return OK;
 }
 
-PUBLIC int cp32_user_trap_probe(struct proc *owner)
-{
-  cp32_user_frame_t frame;
-  struct proc *saved_proc = proc_ptr;
-  struct proc *saved_current = current_proc;
-  int saved_gate = cp32_user_trap_gate;
-  int result;
-  int cause_result;
-  reg_t saved_pc = owner->p_reg.pc;
-  cp32_user_frame_t bad_pointer_frame;
-  if (owner == NIL_PROC) return EINVAL;
-  cp32_blocked_wake_result_reported = 0;
-  for (int i = 0; i < 16; ++i) frame.a[i] = (uint32_t)owner->p_reg.a[i];
-  frame.pc = (uint32_t)owner->p_reg.pc;
-  frame.psw = (uint32_t)owner->p_reg.psw;
-  frame.sp = (uint32_t)owner->p_reg.sp;
-  /* An invalid function proves the enabled boundary rejects safely without
-   * entering IPC or attempting an exception return. */
-  frame.a[2] = 0;
-  proc_ptr = owner;
-  current_proc = owner;
-  cp32_user_trap_gate = 1;
-  result = cp32_user_trap_dispatch(owner, &frame, 0);
-  bad_pointer_frame = frame;
-  bad_pointer_frame.a[2] = SEND;
-  bad_pointer_frame.a[3] = 1;
-  bad_pointer_frame.a[4] = 0;
-  if (cp32_user_trap_dispatch(owner, &bad_pointer_frame, 0) != EFAULT ||
-      bad_pointer_frame.a[2] != (uint32_t)EFAULT)
-    result = EBADCALL;
-  cause_result = cp32_user_trap_dispatch(owner, &frame, 1);
-  if (cp32_user_probe_mode && cause_result == EBADCALL) {
-    cp32_user_cause_reject_count++;
-    usbj_print("[CTX V85 trap-cause-reject pass=1]\r\n");
-  }
-  cp32_user_trap_gate = saved_gate;
-  proc_ptr = saved_proc;
-  current_proc = saved_current;
-  /* The probe uses a synthetic trap frame. Do not leave its advanced PC in
-   * the process table or the initial user handoff would enter mid-instruction
-   * in cp32_user_probe_entry. */
-  owner->p_reg.pc = saved_pc;
-  if (result == EBADCALL || (cp32_user_probe_mode && result == OK))
-    cp32_user_trap_probe_count++;
-  return result;
-}
-
-PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
+CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
   if (rp == NIL_PROC) return;
   if (rp->p_blocked_frame_valid &&
@@ -705,10 +537,18 @@ PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
     return;
   }
   rp->p_reg.a[2] = (reg_t)result;
+  /* Resumption is task-owned: completing the saved syscall also owns the
+   * transition out of SEND/RECEIVE and the ready-queue insertion.  Keeping
+   * these operations here prevents one wake path from forgetting to make a
+   * task runnable or leaving a stale blocked-return owner behind. */
+  rp->p_flags &= ~(SENDING | RECEIVING);
   cp32_blocked_frame_wake_count++;
   cp32_blocked_resume_count++;
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
+  if (cp32_blocked_return_proc == rp)
+    cp32_blocked_return_proc = NIL_PROC;
+  if (rp->p_flags == 0) ready(rp);
   if (cp32_user_probe_mode && cp32_context_handoff_gate &&
       CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     usbj_print("[CTX V156 wake-result-slot-equal pass=");
@@ -754,14 +594,14 @@ FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
 FORWARD _PROTOTYPE( void pick_proc, (void) );
 
-PRIVATE int proc_queue(struct proc *rp)
+CP32_IRAM_EXT PRIVATE int proc_queue(struct proc *rp)
 {
   if (rp->p_nr < 0) return TASK_Q;
   if (rp->p_nr < LOW_USER) return SERVER_Q;
   return USER_Q;
 }
 
-PRIVATE int blocked_handoff_eligible(struct proc *rp)
+CP32_IRAM_EXT PRIVATE int blocked_handoff_eligible(struct proc *rp)
 {
   uint32_t reasons = 0;
   if (cp32_blocked_handoff_gate) reasons |= 1u << 0;
@@ -773,8 +613,8 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
     reasons |= 1u << 5;
   if (rp != NIL_PROC && proc_ptr == rp && current_proc == rp)
     reasons |= 1u << 6;
-  if (rp != NIL_PROC && cp32_context_probe_sp(rp) != 0 &&
-      (cp32_context_probe_sp(rp) & 0x0F) == 0)
+  if (rp != NIL_PROC && rp->p_reg.sp != 0 &&
+      (rp->p_reg.sp & 0x0F) == 0)
     reasons |= 1u << 7;
   if (rp != NIL_PROC && rp->p_reg.a[15] != 0) reasons |= 1u << 8;
   if (rp != NIL_PROC && rp->p_blocked_frame_valid &&
@@ -787,8 +627,8 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
          rp == cp32_blocked_return_proc &&
          (rp->p_flags & (SENDING | RECEIVING)) != 0 &&
          proc_ptr == rp && current_proc == rp &&
-         cp32_context_probe_sp(rp) != 0 &&
-         (cp32_context_probe_sp(rp) & 0x0F) == 0 &&
+         rp->p_reg.sp != 0 &&
+         (rp->p_reg.sp & 0x0F) == 0 &&
          rp->p_reg.a[15] != 0 &&
          rp->p_blocked_frame_valid &&
          rp->p_blocked_frame_pc == rp->p_reg.pc &&
@@ -809,13 +649,15 @@ PRIVATE int blocked_handoff_eligible(struct proc *rp)
   return eligible;
 }
 
-PRIVATE int proc_is_ready_queued(struct proc *target)
+CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
 {
   int q;
   struct proc *rp;
 
   for (q = 0; q < NQ; q++) {
-    for (rp = rdy_head[q]; rp != NIL_PROC; rp = rp->p_nextready) {
+    int hops = 0;
+    for (rp = rdy_head[q]; rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS;
+         rp = rp->p_nextready) {
       if (rp == target) return TRUE;
     }
   }
@@ -836,7 +678,7 @@ struct proc *held_tail = NIL_PROC;
 /*===========================================================================*
  *				interrupt				     * 
  *===========================================================================*/
-PRIVATE int interrupt_message(struct proc *rp, message *buffer)
+CP32_IRAM_EXT PRIVATE int interrupt_message(struct proc *rp, message *buffer)
 {
   int header[2] = { HARDWARE, HARD_INT };
   phys_bytes dst = numap(rp->p_nr, (vir_bytes)buffer, MESS_SIZE);
@@ -845,7 +687,7 @@ PRIVATE int interrupt_message(struct proc *rp, message *buffer)
   return OK;
 }
 
-PUBLIC void interrupt(int task)
+CP32_IRAM_EXT PUBLIC void interrupt(int task)
 {
   struct proc *rp;
   int saved_ps;
@@ -887,11 +729,28 @@ PUBLIC void interrupt(int task)
   /* IRQ return selects a frame after this notification; do not change the
    * owner of the interrupted frame here. */
 }
+
+/* Optional IPC execution trace, isolated for easy removal. */
+CP32_IRAM_EXT PRIVATE void cp32_trace_ipc(int operation, int endpoint)
+{
+  cp32_ipc_trace_calls++;
+  /* CLOCK performs a receive on every tick; keep the first-use proof while
+   * avoiding a UART line for every few dozen IPC calls. */
+  if (cp32_ipc_trace_calls == 1 || (cp32_ipc_trace_calls % 20000) == 0) {
+    usbj_print("[IPC count=");
+    usbj_print_u32(cp32_ipc_trace_calls);
+    usbj_print(" op=");
+    usbj_print_u32((uint32_t)operation);
+    usbj_print(" src=");
+    usbj_print_u32((uint32_t)endpoint);
+    usbj_print("]\r\n");
+  }
+}
  
 /*===========================================================================*
  *				sys_call				     * 
  *===========================================================================*/
-PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 {
   struct proc *rp = proc_ptr;
   int result;
@@ -899,6 +758,8 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
   if (rp == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (function != SEND && function != RECEIVE && function != BOTH)
     return EBADCALL;
+
+  cp32_trace_ipc(function, src_dest);
 
   if (function & SEND) {
     result = mini_send(rp, src_dest, m_ptr);
@@ -913,11 +774,7 @@ PUBLIC int sys_call(int function, int src_dest, message *m_ptr)
 
 report:
   if (result == OK && (rp->p_flags & (SENDING | RECEIVING)) != 0) {
-    rp->p_blocked_frame_valid = TRUE;
-    rp->p_blocked_frame_result = 0;
-    rp->p_blocked_frame_pc = rp->p_reg.pc;
-    rp->p_blocked_frame_psw = rp->p_reg.psw;
-    rp->p_blocked_frame_sp = rp->p_reg.sp;
+    cp32_save_blocked_frame(rp);
     cp32_blocked_frame_save_count++;
     cp32_blocked_syscall_count++;
     if (cp32_user_probe_mode && rp->p_blocked_frame_pc == rp->p_reg.pc) {
@@ -967,15 +824,11 @@ PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
 {
   int result = copy_message(sender, src, receiver, dst);
   if (result != OK) return result;
-  receiver->p_flags &= ~RECEIVING;
   cp32_complete_blocked_frame(receiver, OK);
-  if (cp32_blocked_return_proc == receiver)
-    cp32_blocked_return_proc = NIL_PROC;
-  if (receiver->p_flags == 0) ready(receiver);
   return OK;
 }
 
-PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   struct proc *dest_ptr, *next_ptr;
   int result;
@@ -983,6 +836,10 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isokprocn(dest)) return E_BAD_DEST;
   if (dest == caller_ptr->p_nr) return ELOCKED;
+  /* A blocked sender owns exactly one caller-queue link until its saved
+   * syscall frame is completed.  Reject a duplicate SEND instead of
+   * overwriting that link and losing the wakeup path. */
+  if (caller_ptr->p_flags & SENDING) return ELOCKED;
   dest_ptr = proc_addr(dest);
   if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
@@ -1008,6 +865,19 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
     if (result != OK) return result;
     return OK;
   } else {
+    /* Validate the append walk before changing the caller into a blocked
+     * sender.  An error must leave the syscall owner fully runnable. */
+    if (dest_ptr->p_callerq != NIL_PROC) {
+      next_ptr = dest_ptr->p_callerq;
+      int hops = 0;
+      while (next_ptr->p_sendlink != NIL_PROC &&
+             hops++ < NR_TASKS + NR_PROCS) {
+        if (next_ptr->p_sendlink == caller_ptr) return ELOCKED;
+        next_ptr = next_ptr->p_sendlink;
+        if (next_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+      }
+      if (next_ptr->p_sendlink != NIL_PROC) return ELOCKED;
+    }
     caller_ptr->p_messbuf = m_ptr;
     if (caller_ptr->p_flags == 0) unready(caller_ptr);
     caller_ptr->p_flags |= SENDING;
@@ -1031,18 +901,26 @@ PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 /*===========================================================================*
  *				mini_rec				     * 
  *===========================================================================*/
-PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 {
   struct proc *sender_ptr;
   struct proc *previous_ptr;
+  int hops;
 
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isoksrc_dest(src)) return E_BAD_SRC;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
+  /* A blocked receiver owns its receive buffer and source selector until a
+   * matching sender or hardware notification completes the call.  Do not
+   * overwrite that state with a second RECEIVE request. */
+  if (caller_ptr->p_flags & RECEIVING) return ELOCKED;
 
   if (!(caller_ptr->p_flags & SENDING)) {
+    hops = 0;
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
+      if (hops++ >= NR_TASKS + NR_PROCS) return ELOCKED;
+      if (sender_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
       if (src == ANY || src == sender_ptr->p_nr) {
         
         if (copy_message(sender_ptr, sender_ptr->p_messbuf,
@@ -1055,12 +933,7 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
           previous_ptr->p_sendlink = sender_ptr->p_sendlink;
 
         sender_ptr->p_sendlink = NIL_PROC;
-        sender_ptr->p_flags &= ~SENDING;
         cp32_complete_blocked_frame(sender_ptr, OK);
-        if (cp32_blocked_return_proc == sender_ptr)
-          cp32_blocked_return_proc = NIL_PROC;
-        if (sender_ptr->p_flags == 0) ready(sender_ptr);
-        
         return OK;
       }
     }
@@ -1087,23 +960,29 @@ PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_ptr)
 PRIVATE void pick_proc()
 {
   int q;
+  int offset;
+  static int next_queue;
   struct proc *rp = NIL_PROC;
+  static unsigned pick_trace_count;
 
-  for (q = 0; q < NQ; q++) {
-    while (rdy_head[q] != NIL_PROC &&
-           rdy_head[q]->p_flags != 0) {
-      rp = rdy_head[q];
-      rdy_head[q] = rp->p_nextready;
+  if (next_queue < 0 || next_queue >= NQ) next_queue = 0;
+  for (offset = 0; offset < NQ; offset++) {
+    q = (next_queue + offset) % NQ;
+    int skips = 0;
+    while (rdy_head[q] != NIL_PROC && rdy_head[q]->p_flags != 0 &&
+           skips++ <= NR_TASKS + NR_PROCS) {
+      rp = rdy_head[q]; rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
       rp->p_nextready = NIL_PROC;
       cp32_ready_blocked_skip_count++;
     }
-    if (rdy_head[q] == NIL_PROC) {
-      rp = NIL_PROC;
-      continue;
-    }
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
+      if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+          (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[15] == 0)) {
+        next_queue = (q + 1) % NQ;
+        continue;
+      }
       rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) {
         rdy_tail[q] = NIL_PROC;
@@ -1111,6 +990,7 @@ PRIVATE void pick_proc()
       rp->p_nextready = NIL_PROC;
       break;
     }
+    rp = NIL_PROC;
   }
 
     if (rp == NIL_PROC) {
@@ -1121,6 +1001,29 @@ PRIVATE void pick_proc()
     }
 
     proc_ptr = rp;
+    ++cp32_sched_sequence;
+    /* Selection and return ownership must change atomically from the IRQ
+     * path's perspective.  Leaving current_proc on IDLE makes the assembly
+     * return path discard a valid non-idle selection. */
+    current_proc = rp;
+    if (cp32_irq_dispatch_active) cp32_irq_return_proc = rp;
+    if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
+      cp32_last_selected_fs = rp;
+    /* FS may be selected by the clock task before the IRQ dispatcher marks
+     * its active window. Publish it immediately so the later assembly return
+     * path does not fall back to the interrupted idle frame. */
+    if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
+      cp32_irq_return_proc = rp;
+    if (rp->p_nr == FS_PROC_NR && (++pick_trace_count == 1 ||
+        (pick_trace_count % 500) == 0)) {
+      usbj_print("[SCHED fs-selected pc=");
+      usbj_print_hex32((uint32_t)rp->p_reg.pc);
+      usbj_print(" sp=");
+      usbj_print_hex32((uint32_t)rp->p_reg.sp);
+      usbj_print(" nest=");
+      usbj_print_u32((uint32_t)k_reenter);
+      usbj_print("]\r\n");
+    }
     /* MINIX bills user time only when a user process is selected. Kernel
      * tasks and servers retain the previous user billing target. */
     if (rp->p_nr >= LOW_USER)
@@ -1131,7 +1034,7 @@ PRIVATE void pick_proc()
 /*===========================================================================*
  *				ready					     * 
  *===========================================================================*/
-PRIVATE void ready(struct proc *rp)
+CP32_IRAM_EXT PRIVATE void ready(struct proc *rp)
 {
   int q;
 
@@ -1143,158 +1046,29 @@ PRIVATE void ready(struct proc *rp)
   q = proc_queue(rp);
   
   if (q < 0 || q >= NQ) return;
-
+  /* A replayed wakeup must not link a runnable process twice. */
+  if (proc_is_ready_queued(rp)) return;
+  /* Reconcile a stale tail before linking through it. */
+  if (rdy_head[q] != NIL_PROC && rdy_tail[q] != NIL_PROC) {
+    struct proc *tail = rdy_head[q];
+    int hops = 0;
+    while (tail->p_nextready != NIL_PROC &&
+           hops++ < NR_TASKS + NR_PROCS)
+      tail = tail->p_nextready;
+    if (tail->p_nextready != NIL_PROC) return;
+    rdy_tail[q] = tail;
+  }
   rp->p_nextready = NIL_PROC;
   if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
   else rdy_tail[q]->p_nextready = rp;
   rdy_tail[q] = rp;
+  /* TTY replies can wake FS from task context before pick_proc() runs.
+   * Publish the runnable frame at the wakeup boundary for the next IRQ. */
+  if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
+    cp32_irq_return_proc = rp;
 }
 
-PUBLIC void cp32_prepare_two_task_stress(void)
-{
-  int q;
-  struct proc *p1 = proc_addr(1);
-  struct proc *p2 = proc_addr(2);
-
-  /* Every bring-up run starts with experimental blocked-return handoff off. */
-  cp32_blocked_handoff_gate = 0;
-  cp32_blocked_return_proc = NIL_PROC;
-  cp32_blocked_handoff_count = 0;
-  cp32_blocked_ready_guard_count = 0;
-  cp32_ready_blocked_skip_count = 0;
-  cp32_blocked_frame_mismatch_count = 0;
-  cp32_user_trap_gate = 0;
-  cp32_last_blocked_proc_nr = 0;
-  cp32_blocked_handoff_reported = 0;
-  cp32_blocked_probe_active = 0;
-  cp32_sched_handoff_count = 0;
-  handoff_diag_count = 0;
-  cp32_reset_handoff_diagnostics();
-
-  for (q = 0; q < NQ; q++) {
-    rdy_head[q] = NIL_PROC;
-    rdy_tail[q] = NIL_PROC;
-  }
-  p1->p_flags = 0;
-  p2->p_flags = 0;
-  /* These two table entries are synthetic user tasks for the live context
-   * probe, not MINIX server processes. Give them user-range numbers so the
-   * real queue classifier does not prioritize one as a server. */
-  p1->p_nr = LOW_USER;
-  p2->p_nr = LOW_USER + 1;
-  /* Use the same known-good initial PS for both stress entries. The generic
-   * task initializer gives process 1 a different value, which prevents its
-   * first entry loop from reaching its counter increment. */
-  p1->p_reg.psw = 0;
-  p2->p_reg.psw = 0;
-  p1->p_nextready = NIL_PROC;
-  p2->p_nextready = NIL_PROC;
-  ready(p1);
-  ready(p2);
-  current_proc = proc_addr(IDLE);
-  proc_ptr = proc_addr(IDLE);
-}
-
-PUBLIC int cp32_probe_blocked_handoff(void)
-{
-  struct proc *blocked = proc_addr(1);
-  struct proc *runnable = proc_addr(2);
-  int pass;
-
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  blocked->p_flags = SENDING;
-  blocked->p_sendto = runnable->p_nr;
-  blocked->p_nextready = NIL_PROC;
-  blocked->p_blocked_frame_valid = FALSE;
-  blocked->p_blocked_frame_result = OK;
-  blocked->p_blocked_frame_pc = blocked->p_reg.pc;
-  blocked->p_blocked_frame_psw = blocked->p_reg.psw;
-  blocked->p_blocked_frame_sp = blocked->p_reg.sp;
-  runnable->p_flags = 0;
-  ready(runnable);
-  current_proc = blocked;
-  proc_ptr = blocked;
-  cp32_blocked_handoff_gate = 1;
-  cp32_blocked_return_proc = blocked;
-  cp32_blocked_handoff_count = 0;
-  cp32_blocked_handoff_reported = 0;
-  cp32_blocked_handoff_reason_reported = 0;
-  cp32_blocked_probe_active = 1;
-  /* A stale wakeup must not reinsert the suspended syscall owner. */
-  ready(blocked);
-  sched();
-  pass = current_proc == runnable &&
-         cp32_blocked_return_proc == blocked &&
-         cp32_blocked_handoff_gate == 1 &&
-         blocked->p_flags == SENDING &&
-         blocked->p_nextready == NIL_PROC &&
-         blocked->p_sendto == runnable->p_nr &&
-         blocked->p_sendlink == NIL_PROC &&
-         !proc_is_ready_queued(blocked) &&
-         bill_ptr != blocked &&
-         cp32_blocked_handoff_count == 1;
-
-  cp32_blocked_handoff_gate = 0;
-  cp32_blocked_return_proc = NIL_PROC;
-  cp32_blocked_handoff_count = 0;
-  cp32_blocked_handoff_reported = 0;
-  cp32_blocked_handoff_reason_reported = 0;
-  cp32_blocked_probe_active = 0;
-  blocked->p_flags = 0;
-  blocked->p_sendto = 0;
-  runnable->p_flags = 0;
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  current_proc = proc_addr(IDLE);
-  proc_ptr = proc_addr(IDLE);
-  return pass;
-}
-
-PUBLIC int cp32_probe_all_blocked_queue(void)
-{
-  struct proc *blocked = proc_addr(1);
-  int original_nr = blocked->p_nr;
-  int pass;
-
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  blocked->p_flags = SENDING;
-  blocked->p_nextready = NIL_PROC;
-  cp32_ready_blocked_skip_count = 0;
-  blocked->p_nr = -1;
-  ready(blocked);
-  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
-  blocked->p_nr = 0;
-  ready(blocked);
-  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
-  blocked->p_nr = LOW_USER;
-  ready(blocked);
-  current_proc = proc_addr(IDLE); proc_ptr = proc_addr(IDLE); pick_proc();
-  pass = proc_ptr == proc_addr(IDLE) &&
-         bill_ptr == proc_addr(IDLE) &&
-         cp32_ready_blocked_skip_count == 3 &&
-         rdy_head[TASK_Q] == NIL_PROC &&
-         rdy_head[SERVER_Q] == NIL_PROC &&
-         rdy_head[USER_Q] == NIL_PROC;
-  blocked->p_flags = 0;
-  blocked->p_nr = original_nr;
-  blocked->p_nextready = NIL_PROC;
-  rdy_head[TASK_Q] = rdy_tail[TASK_Q] = NIL_PROC;
-  rdy_head[SERVER_Q] = rdy_tail[SERVER_Q] = NIL_PROC;
-  rdy_head[USER_Q] = rdy_tail[USER_Q] = NIL_PROC;
-  current_proc = proc_addr(IDLE);
-  proc_ptr = proc_addr(IDLE);
-  return pass;
-}
- 
-/*===========================================================================*
- *				unready					     * 
- *===========================================================================*/
-PRIVATE void unready(struct proc *rp)
+CP32_IRAM_EXT PRIVATE void unready(struct proc *rp)
 {
   int q;
   struct proc *prev, *cur;
@@ -1302,7 +1076,8 @@ PRIVATE void unready(struct proc *rp)
   q = proc_queue(rp);
   prev = NIL_PROC;
   cur = rdy_head[q];
-  while (cur != NIL_PROC) {
+  int hops = 0;
+  while (cur != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
     if (cur == rp) {
       if (prev == NIL_PROC) rdy_head[q] = cur->p_nextready;
       else prev->p_nextready = cur->p_nextready;
@@ -1318,56 +1093,26 @@ PRIVATE void unready(struct proc *rp)
 /*===========================================================================*
  *				switch_to				     * 
  *===========================================================================*/
-PRIVATE void switch_to(struct proc *next)
+CP32_IRAM_EXT PRIVATE void switch_to(struct proc *next)
 {
-    if (next == NIL_PROC) return;
-    current_proc = next;
-    cp32_sched_handoff_count++;
-    handoff_diag_count++;
-    if (cp32_blocked_probe_active) return;
-    if (handoff_diag_count != 1 && (handoff_diag_count & 31) != 0) return;
-    usbj_print("[CTX V46 p=");
-    usbj_print_u32((uint32_t)next->p_nr);
-    if (next->p_nr == 1 || next->p_nr == 2) {
-      usbj_print(" t=");
-      usbj_print_u32(next->p_nr == 1 ? cp32_task1_ticks : cp32_task2_ticks);
+    if (next != NIL_PROC) {
+      current_proc = next;
+      /* switch_to() is the first point where a non-IRQ scheduler selection is
+       * authoritative. Transfer directly while FS is still runnable; waiting
+       * for the idle loop lets the clock task block it again. */
+      if (cp32_context_restore_gate && k_reenter == 0 &&
+          next->p_nr == FS_PROC_NR && next->p_flags == 0 &&
+          next->p_reg.pc != 0 && next->p_reg.sp != 0) {
+        cp32_enter_initial_user(next);
+      }
     }
-    usbj_print(" sp=");
-    usbj_print_u32((uint32_t)cp32_context_probe_sp(next));
-    usbj_print(" a15ok=");
-    usbj_print_u32(next->p_reg.a[15] != 0);
-    usbj_print(" ps=");
-    usbj_print_u32((uint32_t)cp32_context_probe_ps(next));
-    usbj_print(" pc=");
-    usbj_print_u32((uint32_t)cp32_context_probe_pc(next));
-    usbj_print(" a0=");
-    usbj_print_u32((uint32_t)next->p_reg.a[0]);
-    usbj_print(" a1=");
-    usbj_print_u32((uint32_t)next->p_reg.a[1]);
-    usbj_print(" spok=");
-    usbj_print_u32((cp32_context_probe_sp(next) & 0x0F) == 0);
-    usbj_print(" gate=");
-    usbj_print_u32((uint32_t)cp32_context_restore_gate);
-    usbj_print(" hg=");
-    usbj_print_u32((uint32_t)cp32_context_handoff_gate);
-    usbj_print(" h=");
-    usbj_print_u32(cp32_sched_handoff_count);
-    usbj_print(" bh=");
-    usbj_print_u32(cp32_blocked_handoff_count);
-    usbj_print(" bp=");
-    usbj_print_u32((uint32_t)cp32_last_blocked_proc_nr);
-    usbj_print(" bg=");
-    usbj_print_u32((uint32_t)cp32_blocked_handoff_gate);
-    usbj_print(" rel=");
-    usbj_print_u32(next->p_reg.a[1] == next->p_reg.sp);
-    usbj_print("]\r\n");
 }
 
  
 /*===========================================================================*
  *				sched					     * 
  *===========================================================================*/
-void sched()
+CP32_IRAM_EXT void sched()
 {
     /* Requeue every runnable non-idle process. Restricting this to users
      * consumes the task queue after its first pick and starves task entries. */
@@ -1378,12 +1123,6 @@ void sched()
     } else if (blocked_handoff_eligible(current_proc)) {
         cp32_blocked_handoff_count++;
         cp32_last_blocked_proc_nr = current_proc->p_nr;
-        if (!cp32_blocked_probe_active && !cp32_blocked_handoff_reported) {
-            cp32_blocked_handoff_reported = 1;
-            usbj_print("[SCHED V3 blocked-handoff pass=1 flags=");
-            usbj_print_u32((uint32_t)current_proc->p_flags);
-            usbj_print("]\r\n");
-        }
     }
     pick_proc();
     switch_to(proc_ptr);
@@ -1392,7 +1131,7 @@ void sched()
 /*==========================================================================*
  *				lock_mini_send				    *
  *==========================================================================*/
-PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
+CP32_IRAM_EXT PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 {
   int result;
   int saved_ps = lock_save();
@@ -1406,7 +1145,7 @@ PUBLIC int lock_mini_send(struct proc *caller_ptr, int dest, message *m_ptr)
 /*==========================================================================*
  *				lock_pick_proc				    *
  *==========================================================================*/
-PUBLIC void lock_pick_proc()
+CP32_IRAM_EXT PUBLIC void lock_pick_proc()
 {
   switching = TRUE;
   pick_proc();
@@ -1416,7 +1155,7 @@ PUBLIC void lock_pick_proc()
 /*==========================================================================*
  *				lock_ready				    *
  *==========================================================================*/
-PUBLIC void lock_ready(struct proc *rp)
+CP32_IRAM_EXT PUBLIC void lock_ready(struct proc *rp)
 {
   switching = TRUE;
   ready(rp);
@@ -1426,7 +1165,7 @@ PUBLIC void lock_ready(struct proc *rp)
 /*==========================================================================*
  *				lock_unready				    *
  *==========================================================================*/
-PUBLIC void lock_unready(struct proc *rp)
+CP32_IRAM_EXT PUBLIC void lock_unready(struct proc *rp)
 {
   switching = TRUE;
   unready(rp);
@@ -1436,7 +1175,7 @@ PUBLIC void lock_unready(struct proc *rp)
 /*==========================================================================*
  *				lock_sched				    *
  *==========================================================================*/
-PUBLIC void lock_sched()
+CP32_IRAM_EXT PUBLIC void lock_sched()
 {
   switching = TRUE;
   sched();
@@ -1446,7 +1185,7 @@ PUBLIC void lock_sched()
 /*==========================================================================*
  *				unhold					    *
  *==========================================================================*/
-PUBLIC void unhold()
+CP32_IRAM_EXT PUBLIC void unhold()
 {
   struct proc *rp;
   int saved_ps;

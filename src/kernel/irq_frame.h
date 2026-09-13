@@ -70,6 +70,17 @@ typedef char cp32_user_frame_pc_offset_must_be_64[
 typedef char cp32_user_frame_sp_offset_must_be_72[
     __builtin_offsetof(cp32_user_frame_t, sp) == 72 ? 1 : -1];
 
+/* A handoff is safe only after a real dispatch selected a runnable target. */
+static inline int cp32_irq_handoff_allowed(int bridge_enabled, int nested,
+                                            int owner_valid,
+                                            int selected_valid,
+                                            int selected_runnable,
+                                            int work_pending)
+{
+  return bridge_enabled && !nested && owner_valid && selected_valid &&
+         selected_runnable && work_pending;
+}
+
 static inline int cp32_user_frame_contract_valid(const cp32_user_frame_t *frame)
 {
   return frame != (const cp32_user_frame_t *)0 && frame->pc != 0 &&

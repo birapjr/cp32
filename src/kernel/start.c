@@ -19,17 +19,11 @@ unsigned int processor;
 volatile uint32_t cp32_data_sentinel = 0xC032DA7Au;
 volatile uint32_t cp32_bss_sentinel;
 
-/* Set to 1 only for a hardware exception-handler test. */
-#ifndef CP32_TEST_EXCEPTION
-#define CP32_TEST_EXCEPTION 0
-#endif
-
 extern char _vectors_start[];
 extern char _vectors_end[];
 extern char _stack_bottom[];
 extern char _stack_top[];
 extern char _heap_start[];
-
 void start() {
       /* Step 1 — strobe the Super WDT before anything else. */
     wdt_feed_super_wdt();
@@ -47,7 +41,7 @@ void start() {
     print_diagnostics();
     status_line("\r\n => CP32 OS kernel booting", 2);
 
-
+    status_line("\r\nstart()", 2);
     status_line("checking initialized memory", 0);
     usbj_print(".data sentinel: ");
     usbj_print_hex32(cp32_data_sentinel);
@@ -93,11 +87,6 @@ void start() {
         for (;;) { }
     }
 
-#if CP32_TEST_EXCEPTION
-    status_line("triggering test exception", 0);
-    *(volatile uint32_t *)0 = 0xC032FA17u;
-#endif
-
     /* Step 5 — one more disable pass right before the main loop so any
      * ROM activity that happened during the diagnostic prints is cleared */
     wdt_disable_all();
@@ -127,7 +116,7 @@ void start() {
 /*==========================================================================*
  *				k_atoi					    *
  *==========================================================================*/
-PRIVATE int k_atoi(s)
+CP32_IRAM_EXT PRIVATE int k_atoi(s)
 register char *s;
 {
 /* Convert string to integer. */
@@ -139,7 +128,7 @@ register char *s;
 /*==========================================================================*
  *				k_getenv				    *
  *==========================================================================*/
-PUBLIC char *k_getenv(name)
+CP32_IRAM_EXT PUBLIC char *k_getenv(name)
 char *name;
 {
 /* Get environment value - kernel version of getenv to avoid setting up the

@@ -1,6 +1,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#if defined(__XTENSA__)
+#define CP32_IRAM_EXT __attribute__((section(".iram_ext.text")))
+#else
+#define CP32_IRAM_EXT
+#endif
+
 void *memcpy(void *dst, const void *src, unsigned int n)
 {
  	unsigned char *d = (unsigned char *) dst;
@@ -40,12 +46,12 @@ int strcmp(const char *s1, const char *s2)
 	return (unsigned char)*s1 - (unsigned char)*s2;
 }
 
-static int isspace_local(int c)
+CP32_IRAM_EXT static int isspace_local(int c)
 {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
 }
 
-static int digit_value(int c)
+CP32_IRAM_EXT static int digit_value(int c)
 {
 	if (c >= '0' && c <= '9') return c - '0';
 	if (c >= 'a' && c <= 'z') return c - 'a' + 10;

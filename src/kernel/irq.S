@@ -8,8 +8,8 @@
  *   4. Never use call0/call4 — the ABI stack frame is not set up on entry.
  *   5. Double exception handler must never rfi — it is a terminal state.
  *
- * Bring-up stubs: all handlers currently spin or return immediately.
- * Replace them one at a time as real functionality is needed.
+ * Level-1 is the production dispatch path on ESP32-S3: mapped peripheral
+ * IRQs arrive as EXCCAUSE_LEVEL1_INTERRUPT and use the full frame path below.
  *
  * Register ownership on interrupt entry (Xtensa LX7):
  *   a0..a15  — caller's registers, NOT saved by hardware
@@ -89,7 +89,7 @@ irq_level2:
 .type   irq_level3, @function
 irq_level3:
     HANDLER_ENTRY 3
-    /* TODO: dispatch */
+    /* No level-3 source is routed by CP32; preserve context and return. */
     HANDLER_EXIT  3
 .size irq_level3, .-irq_level3
 
@@ -275,7 +275,10 @@ irq_level1:
     mov     a2, a1
     /* Use current stack pointer as a base for a15 to avoid NULL dereference in printk */
     mov     a15, a1
-    call0   cp32_timer_irq_dispatch
+    /* Classify the pending CPU interrupt bitmap in C.  The dispatcher owns
+     * device routing; the timer is only one registered source. */
+    rsr     a3, interrupt
+    call0   cp32_irq_dispatch
     
 1:
     movi    a2, k_reenter
@@ -288,7 +291,8 @@ irq_level1:
     movi    a3, cp32_context_handoff_gate
     l32i    a3, a3, 0
     beqz    a3, 1f
-    movi    a15, proc_ptr
+    /* C publishes the final selected frame after all clock/unhold work. */
+    movi    a15, cp32_irq_return_proc
     j       2f
 1:
     movi    a15, cp32_irq_saved_owner
@@ -326,7 +330,7 @@ irq_level1:
     
     /* Restore a0 from p_reg using a temporary register to avoid destroying a15 if needed, 
      * but since we already restored a15, we must reload proc_ptr. */
-    movi    a14, proc_ptr
+    movi    a14, cp32_irq_return_proc
     l32i    a14, a14, 0
     l32i    a0, a14, 0
     
@@ -437,7 +441,11 @@ irq_user:
     j       4f
 
 2:
-    mov     a15, a1
+    /* Restore the authoritative process frame.  The C syscall dispatcher
+     * advances FS->p_reg.pc and records the syscall result there; restoring
+     * the stale trap frame loses that progress after the first read. */
+    movi    a15, cp32_irq_return_proc
+    l32i    a15, a15, 0
     l32i    a0, a15, 0
     l32i    a1, a15, 72
     l32i    a2, a15, 8
@@ -483,63 +491,6 @@ irq_user:
     addi    a1, a1, -16
     call0   exception_dump
 .size irq_user, .-irq_user
-
-/* Controlled user-mode trap probe. The process table does not select this
- * entry yet; it is enabled only by a targeted hardware experiment. */
-.align 4
-.global cp32_user_probe_entry
-.type   cp32_user_probe_entry, @function
-cp32_user_probe_entry:
-#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
-    movi    a2, 3                 /* BOTH / SENDREC */
-    movi    a3, 3                 /* reply process */
-    movi    a4, cp32_probe_sender_message
-#elif defined(CP32_ENABLE_BOTH_PROBE)
-    movi    a2, 3                 /* BOTH / SENDREC */
-    movi    a3, 999               /* invalid destination: safe rejection */
-    movi    a4, cp32_probe_message
-#elif defined(CP32_ENABLE_BLOCKED_PROBE)
-    movi    a2, 2                 /* RECEIVE */
-    movi    a3, -1                /* ANY */
-    movi    a4, cp32_probe_message
-#elif defined(CP32_ENABLE_BLOCKED_SENDREC_PROBE)
-    movi    a2, 3                 /* SENDREC / BOTH */
-    movi    a3, 2                 /* receiver process */
-    movi    a4, cp32_probe_message
-#elif defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-    movi    a2, 1                 /* SEND */
-    movi    a3, 2                 /* receiver process */
-    movi    a4, cp32_probe_message
-#else
-    movi    a2, 1                 /* SEND */
-    movi    a3, 999               /* invalid destination: immediate EINVAL */
-    movi    a4, cp32_probe_message
-#endif
-    ill                         /* ESP32-S3 lacks a user syscall opcode;
-                                 * this is the controlled exception probe. */
-    j       cp32_user_probe_done
-.global cp32_user_probe_done
-cp32_user_probe_done:
-    j       cp32_user_probe_done
-.size cp32_user_probe_entry, .-cp32_user_probe_entry
-
-#ifdef CP32_ENABLE_BOTH_REPLY_PROBE
-.align 4
-.global cp32_user_reply_entry
-.type   cp32_user_reply_entry, @function
-cp32_user_reply_entry:
-    movi    a2, 2                 /* RECEIVE */
-    movi    a3, 2                 /* caller runtime p_nr */
-    movi    a4, cp32_probe_message
-    ill
-    movi    a2, 1                 /* SEND */
-    movi    a3, 2                 /* caller process */
-    movi    a4, cp32_probe_message
-    ill
-cp32_user_reply_done:
-    j       cp32_user_reply_done
-.size cp32_user_reply_entry, .-cp32_user_reply_entry
-#endif
 
 .align 4
 .global cp32_enter_initial_user
