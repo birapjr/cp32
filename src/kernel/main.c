@@ -272,7 +272,34 @@ void main(void)
   lock();
   systimer_irq_start();
     usbj_print("[TEST CARDPUTER-KBD 245]\r\n");
-    usbj_print("[TEST CARDPUTER-CORE 8]\r\n");
+    usbj_print("[TEST CARDPUTER-CORE 19]\r\n");
+    usbj_print("[CORE readyq=");
+    usbj_print_u32((uint32_t)cp32_ready_queue_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE maps=");
+    usbj_print_u32((uint32_t)cp32_map_state_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE flags=");
+    usbj_print_u32((uint32_t)cp32_process_flags_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE contexts=");
+    usbj_print_u32((uint32_t)cp32_saved_context_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE owners=");
+    usbj_print_u32((uint32_t)cp32_scheduler_owner_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE ipcstate=");
+    usbj_print_u32((uint32_t)cp32_ipc_state_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE ipcqueue=");
+    usbj_print_u32((uint32_t)cp32_ipc_queue_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE ipclinks=");
+    usbj_print_u32((uint32_t)cp32_ipc_link_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE proctab=");
+    usbj_print_u32((uint32_t)cp32_process_table_check());
+    usbj_print("]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();

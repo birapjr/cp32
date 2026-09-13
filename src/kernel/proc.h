@@ -136,5 +136,14 @@ EXTERN struct proc *pproc_addr[NR_TASKS + NR_PROCS];
 EXTERN struct proc *bill_ptr;	/* ptr to process to bill for clock ticks */
 EXTERN struct proc *rdy_head[NQ];	/* pointers to ready list headers */
 EXTERN struct proc *rdy_tail[NQ];	/* pointers to ready list tails */
+EXTERN int cp32_ready_queue_check(void);
+EXTERN int cp32_process_table_check(void);
+EXTERN int cp32_ipc_link_check(void);
+EXTERN int cp32_ipc_queue_check(void);
+EXTERN int cp32_ipc_state_check(void);
+EXTERN int cp32_scheduler_owner_check(void);
+EXTERN int cp32_saved_context_check(void);
+EXTERN int cp32_process_flags_check(void);
+EXTERN int cp32_map_state_check(void);
 
 #endif /* PROC_H */

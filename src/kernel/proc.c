@@ -664,6 +664,132 @@ CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
   return FALSE;
 }
 
+CP32_IRAM_EXT PUBLIC int cp32_ready_queue_check(void)
+{
+  int q;
+  for (q = 0; q < NQ; q++) {
+    struct proc *rp = rdy_head[q], *last = NIL_PROC;
+    int hops = 0;
+    while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+      last = rp;
+      rp = rp->p_nextready;
+    }
+    if (rp != NIL_PROC || last != rdy_tail[q]) return FALSE;
+    if (rdy_head[q] == NIL_PROC && rdy_tail[q] != NIL_PROC) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_process_table_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    if (pproc_addr[i] == NIL_PROC || pproc_addr[i]->p_nr != i - NR_TASKS)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_ipc_link_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    struct proc *links[2];
+    int j;
+    links[0] = rp->p_callerq;
+    links[1] = rp->p_sendlink;
+    for (j = 0; j < 2; j++) {
+      if (links[j] != NIL_PROC &&
+          (links[j] < BEG_PROC_ADDR || links[j] >= END_PROC_ADDR))
+        return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_ipc_queue_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *owner = pproc_addr[i];
+    struct proc *rp = owner->p_callerq;
+    int hops = 0;
+    while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+      rp = rp->p_sendlink;
+    }
+    if (rp != NIL_PROC) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_ipc_state_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if ((rp->p_flags & SENDING) && !isokprocn(rp->p_sendto)) return FALSE;
+    if (!(rp->p_flags & SENDING) && rp->p_sendlink != NIL_PROC) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_scheduler_owner_check(void)
+{
+  struct proc *owners[3];
+  int i;
+  owners[0] = proc_ptr;
+  owners[1] = current_proc;
+  owners[2] = bill_ptr;
+  for (i = 0; i < 3; i++) {
+    if (owners[i] == NIL_PROC || owners[i] < BEG_PROC_ADDR ||
+        owners[i] >= END_PROC_ADDR)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_saved_context_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (rp->p_flags != P_SLOT_FREE &&
+        (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+         (rp->p_reg.sp & 0x0F) != 0)) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_process_flags_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    if ((pproc_addr[i]->p_flags & ~0177) != 0) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_map_state_check(void)
+{
+  int i, s;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (rp->p_flags == P_SLOT_FREE) continue;
+    for (s = T; s <= S; s++) {
+      /* Idle and the diagnostic user descriptor intentionally have no text
+       * map; all active descriptors must still have a valid stack map. */
+      if (s == T && rp->p_nr != FS_PROC_NR && rp->p_nr >= 0) continue;
+      if (s == T && rp->p_nr == FS_PROC_NR) continue;
+      if (s == D && rp->p_nr >= 0 && rp->p_nr != FS_PROC_NR) continue;
+      if (rp->p_map[s].mem_len == 0 ||
+          (rp->p_map[s].mem_vir & (CLICK_SIZE - 1)) != 0)
+        return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 /* Process table storage for the CP32 port. */
 struct proc proc[NR_TASKS + NR_PROCS];
 struct proc *pproc_addr[NR_TASKS + NR_PROCS];
