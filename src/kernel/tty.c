@@ -130,6 +130,8 @@ CP32_IRAM_EXT PUBLIC void cp32_tty_poll_keyboard(void)
 	char input;
 	/* Bit-banged I2C must never begin while servicing an interrupt. */
 	if (k_reenter != 0) return;
+	/* KEY_EVENT_A is valid only while the controller asserts active-low INT. */
+	if (!cardputer_keyboard_interrupt_asserted()) return;
 	if (cp32_read_keyboard_event(&event) <= 0) return;
 	if (cp32_cardputer_key(event, &input)) {
 		lock();

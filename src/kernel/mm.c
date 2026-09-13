@@ -30,7 +30,8 @@ CP32_IRAM_EXT static void cp32_mem_allocator_init(void)
 CP32_IRAM_EXT PUBLIC phys_clicks cp32_mem_alloc(phys_clicks clicks, int owner)
 {
     int i, j;
-    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS) return 0;
+    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS ||
+        (uint64_t)clicks > 0x100000ULL) return 0;
     if (!cp32_mem_allocator_ready) cp32_mem_allocator_init();
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
         if (cp32_mem_blocks[i].used || cp32_mem_blocks[i].size < clicks) continue;
@@ -52,6 +53,7 @@ CP32_IRAM_EXT PUBLIC int cp32_mem_free(phys_clicks base, int owner)
 {
     int i, j;
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
+        if (base == 0) return EINVAL;
         if (cp32_mem_blocks[i].used && cp32_mem_blocks[i].base == base) {
             if (cp32_mem_blocks[i].owner != owner) return EACCES;
             cp32_mem_blocks[i].used = FALSE;
@@ -89,11 +91,12 @@ CP32_IRAM_EXT PUBLIC int cp32_mem_free(phys_clicks base, int owner)
 CP32_IRAM_EXT PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
 {
     int i;
-    if (clicks == 0) return FALSE;
+    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS) return FALSE;
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
         if (cp32_mem_blocks[i].used && cp32_mem_blocks[i].owner == owner &&
             base >= cp32_mem_blocks[i].base &&
             clicks <= cp32_mem_blocks[i].size &&
+            (uint64_t)base + clicks <= 0x100000000ULL &&
             base - cp32_mem_blocks[i].base <=
                 cp32_mem_blocks[i].size - clicks)
             return TRUE;

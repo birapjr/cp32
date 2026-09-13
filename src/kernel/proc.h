@@ -145,5 +145,8 @@ EXTERN int cp32_scheduler_owner_check(void);
 EXTERN int cp32_saved_context_check(void);
 EXTERN int cp32_process_flags_check(void);
 EXTERN int cp32_map_state_check(void);
+EXTERN int cp32_runtime_owner_check(void);
+EXTERN int cp32_blocked_frame_check(void);
+EXTERN int cp32_blocked_owner_check(void);
 
 #endif /* PROC_H */

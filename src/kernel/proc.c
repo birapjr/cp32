@@ -716,6 +716,8 @@ CP32_IRAM_EXT PUBLIC int cp32_ipc_queue_check(void)
     struct proc *rp = owner->p_callerq;
     int hops = 0;
     while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+      if (!(rp->p_flags & SENDING) || rp->p_sendto != owner->p_nr ||
+          rp->p_messbuf == (message *)0) return FALSE;
       rp = rp->p_sendlink;
     }
     if (rp != NIL_PROC) return FALSE;
@@ -728,7 +730,29 @@ CP32_IRAM_EXT PUBLIC int cp32_ipc_state_check(void)
   int i;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
     struct proc *rp = pproc_addr[i];
+    if (rp->p_flags & P_SLOT_FREE) {
+      if (rp->p_callerq != NIL_PROC || rp->p_sendlink != NIL_PROC)
+        return FALSE;
+      if (rp->p_messbuf != (message *)0) return FALSE;
+      if (rp->p_getfrom != 0 || rp->p_sendto != 0) return FALSE;
+      continue;
+    }
+    if (rp->p_callerq == rp || rp->p_sendlink == rp) return FALSE;
     if ((rp->p_flags & SENDING) && !isokprocn(rp->p_sendto)) return FALSE;
+    if ((rp->p_flags & (SENDING | RECEIVING)) &&
+        rp->p_messbuf == (message *)0) return FALSE;
+    if ((rp->p_flags & (SENDING | RECEIVING)) == (SENDING | RECEIVING) &&
+        rp->p_sendto == rp->p_nr) return FALSE;
+    if ((rp->p_flags & RECEIVING) && !isoksrc_dest(rp->p_getfrom))
+      return FALSE;
+    if ((rp->p_flags & SENDING) && rp->p_sendlink == rp) return FALSE;
+    if ((rp->p_flags & RECEIVING) && rp->p_callerq == rp) return FALSE;
+    if (rp->p_blocked_frame_valid &&
+        (rp->p_blocked_frame_pc == 0 || rp->p_blocked_frame_sp == 0))
+      return FALSE;
+    if (!rp->p_blocked_frame_valid &&
+        (rp->p_blocked_frame_pc != 0 || rp->p_blocked_frame_sp != 0))
+      return FALSE;
     if (!(rp->p_flags & SENDING) && rp->p_sendlink != NIL_PROC) return FALSE;
   }
   return TRUE;
@@ -756,7 +780,16 @@ CP32_IRAM_EXT PUBLIC int cp32_saved_context_check(void)
     struct proc *rp = pproc_addr[i];
     if (rp->p_flags != P_SLOT_FREE &&
         (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
-         (rp->p_reg.sp & 0x0F) != 0)) return FALSE;
+         (rp->p_reg.pc & 0x03) != 0 || (rp->p_reg.sp & 0x0F) != 0 ||
+         rp->p_reg.a[1] != rp->p_reg.sp || rp->p_reg.a[15] == 0 ||
+         rp->p_reg.psw == 0 || rp->p_nr != i - NR_TASKS ||
+         pproc_addr[rp->p_nr + NR_TASKS] != rp ||
+         (rp->p_blocked_frame_valid &&
+          (rp->p_blocked_frame_pc != rp->p_reg.pc ||
+           rp->p_blocked_frame_sp != rp->p_reg.sp)))) return FALSE;
+    if (rp->p_flags == P_SLOT_FREE &&
+        (rp->p_reg.pc != 0 || rp->p_reg.sp != 0 || rp->p_blocked_frame_valid))
+      return FALSE;
   }
   return TRUE;
 }
@@ -783,10 +816,54 @@ CP32_IRAM_EXT PUBLIC int cp32_map_state_check(void)
       if (s == T && rp->p_nr == FS_PROC_NR) continue;
       if (s == D && rp->p_nr >= 0 && rp->p_nr != FS_PROC_NR) continue;
       if (rp->p_map[s].mem_len == 0 ||
+          rp->p_map[s].mem_len > 0x1000 ||
           (rp->p_map[s].mem_vir & (CLICK_SIZE - 1)) != 0)
         return FALSE;
     }
   }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_runtime_owner_check(void)
+{
+  struct proc *owners[3] = { proc_ptr, current_proc, bill_ptr };
+  int i;
+  for (i = 0; i < 3; i++) {
+    struct proc *rp = owners[i];
+    if (rp == NIL_PROC || rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+        rp->p_nr < -NR_TASKS || rp->p_nr >= NR_PROCS ||
+        pproc_addr[rp->p_nr + NR_TASKS] != rp ||
+        (rp->p_flags & P_SLOT_FREE) != 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_blocked_frame_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (!rp->p_blocked_frame_valid) continue;
+    if (!(rp->p_flags & (SENDING | RECEIVING)) ||
+        rp->p_blocked_frame_pc != rp->p_reg.pc ||
+        rp->p_blocked_frame_psw != rp->p_reg.psw ||
+        rp->p_blocked_frame_sp != rp->p_reg.sp ||
+        rp->p_blocked_frame_pc == 0 || rp->p_blocked_frame_sp == 0 ||
+        (rp->p_blocked_frame_sp & 0x0F) != 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_blocked_owner_check(void)
+{
+  struct proc *rp = (struct proc *)cp32_blocked_return_proc;
+  if (rp == NIL_PROC) return TRUE;
+  if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+      (rp->p_flags & (SENDING | RECEIVING)) == 0 ||
+      !rp->p_blocked_frame_valid)
+    return FALSE;
   return TRUE;
 }
 
@@ -999,9 +1076,14 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
       while (next_ptr->p_sendlink != NIL_PROC &&
              hops++ < NR_TASKS + NR_PROCS) {
         if (next_ptr->p_sendlink == caller_ptr) return ELOCKED;
+        if (!(next_ptr->p_flags & SENDING) ||
+            next_ptr->p_sendto != dest ||
+            next_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
         next_ptr = next_ptr->p_sendlink;
         if (next_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
       }
+      if (!(next_ptr->p_flags & SENDING) || next_ptr->p_sendto != dest ||
+          next_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
       if (next_ptr->p_sendlink != NIL_PROC) return ELOCKED;
     }
     caller_ptr->p_messbuf = m_ptr;
@@ -1039,7 +1121,12 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
   /* A blocked receiver owns its receive buffer and source selector until a
    * matching sender or hardware notification completes the call.  Do not
    * overwrite that state with a second RECEIVE request. */
-  if (caller_ptr->p_flags & RECEIVING) return ELOCKED;
+  if (caller_ptr->p_flags & RECEIVING) {
+    /* A blocked receiver owns this state until completion; reject retries and
+     * refuse to preserve a corrupted null receive buffer. */
+    if (caller_ptr->p_messbuf == (message *)0) return EFAULT;
+    return ELOCKED;
+  }
 
   if (!(caller_ptr->p_flags & SENDING)) {
     hops = 0;
@@ -1047,6 +1134,9 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
       if (hops++ >= NR_TASKS + NR_PROCS) return ELOCKED;
       if (sender_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+      if (!(sender_ptr->p_flags & SENDING) ||
+          sender_ptr->p_sendto != caller_ptr->p_nr ||
+          sender_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
       if (src == ANY || src == sender_ptr->p_nr) {
         
         if (copy_message(sender_ptr, sender_ptr->p_messbuf,

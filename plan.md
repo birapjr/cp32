@@ -592,5 +592,13 @@ marks hardware behavior complete.
 
 ## Core-kernel phase after console bring-up
 
+- [x] 8cv. Batch hardening checkpoint (marker 37): reject oversized or
+  invalid-owner allocator requests, reject zero-base frees, bound ownership
+  arithmetic, validate IPC caller queues and free-slot cleanup, validate saved
+  context register invariants, validate blocked-frame metadata, validate
+  runtime owner mappings, and reject impossible map lengths. Host build and
+  repository tests pass; hardware validation still requires flashing the new
+  image.
+
 - [x] 8cu. Reject FS-side keyboard I²C polling while `k_reenter` is nonzero,
   preventing transactions from starting at interrupt level; marker 8.
