@@ -27,6 +27,7 @@
 #define CP32_VERBOSE_HANDOFF_DIAGNOSTICS 0
 
 extern volatile int cp32_context_restore_gate;
+extern void cp32_enter_initial_user(struct proc *rp);
 extern volatile int cp32_context_handoff_gate;
 extern struct proc *current_proc;
 CP32_IRAM_EXT PRIVATE int copy_message(struct proc *sender, message *src,
@@ -263,16 +264,22 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   }
   result = sys_call(function, src_dest, m_ptr);
   cp32_user_dispatch_blocked = 0;
-  if (cp32_user_probe_mode && function == BOTH && result == OK)
-    cp32_user_dispatch_blocked = 1;
   frame->a[2] = (uint32_t)result;
   owner->p_reg.a[2] = (reg_t)result;
   if (cp32_user_probe_mode && !cp32_user_result_marker_reported) {
     cp32_user_result_marker_reported = 1;
     usbj_print("[CTX V93 syscall-result-recorded]\r\n");
   }
-  if ((owner->p_flags & (SENDING | RECEIVING)) ||
-      cp32_blocked_return_proc == owner) {
+  if (result == OK) {
+    /* BOTH completes through a transient receive state.  The user exception
+     * return must be aimed at FS before that state is normalized, otherwise
+     * irq.S reloads the IDLE frame and the client never resumes its loop. */
+    proc_ptr = owner;
+    current_proc = owner;
+    cp32_irq_return_proc = owner;
+  }
+  if (result != OK && ((owner->p_flags & (SENDING | RECEIVING)) ||
+      cp32_blocked_return_proc == owner)) {
     cp32_user_dispatch_blocked = 1;
     /* A user exception cannot rfe until a scheduler handoff has selected a
      * different runnable frame. Keep this path fail-closed for now. */
@@ -645,13 +652,9 @@ CP32_IRAM_EXT PRIVATE int blocked_handoff_eligible(struct proc *rp)
 CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
 {
   int q;
-  int offset;
-  static int next_queue;
   struct proc *rp;
 
-  if (next_queue < 0 || next_queue >= NQ) next_queue = 0;
-  for (offset = 0; offset < NQ; offset++) {
-    q = (next_queue + offset) % NQ;
+  for (q = 0; q < NQ; q++) {
     for (rp = rdy_head[q]; rp != NIL_PROC; rp = rp->p_nextready) {
       if (rp == target) return TRUE;
     }
@@ -954,12 +957,16 @@ PRIVATE void pick_proc()
     }
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
+      if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+          (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[15] == 0)) {
+        next_queue = (q + 1) % NQ;
+        continue;
+      }
       rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) {
         rdy_tail[q] = NIL_PROC;
       }
       rp->p_nextready = NIL_PROC;
-      next_queue = (q + 1) % NQ;
       break;
     }
     rp = NIL_PROC;
@@ -981,6 +988,11 @@ PRIVATE void pick_proc()
     if (cp32_irq_dispatch_active) cp32_irq_return_proc = rp;
     if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
       cp32_last_selected_fs = rp;
+    /* FS may be selected by the clock task before the IRQ dispatcher marks
+     * its active window. Publish it immediately so the later assembly return
+     * path does not fall back to the interrupted idle frame. */
+    if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
+      cp32_irq_return_proc = rp;
     if (rp->p_nr == FS_PROC_NR && (++pick_trace_count == 1 ||
         (pick_trace_count % 50) == 0)) {
       usbj_print("[SCHED fs-selected pc=");
@@ -1019,6 +1031,10 @@ CP32_IRAM_EXT PRIVATE void ready(struct proc *rp)
   if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
   else rdy_tail[q]->p_nextready = rp;
   rdy_tail[q] = rp;
+  /* TTY replies can wake FS from task context before pick_proc() runs.
+   * Publish the runnable frame at the wakeup boundary for the next IRQ. */
+  if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
+    cp32_irq_return_proc = rp;
 }
 
 CP32_IRAM_EXT PRIVATE void unready(struct proc *rp)
@@ -1047,7 +1063,17 @@ CP32_IRAM_EXT PRIVATE void unready(struct proc *rp)
  *===========================================================================*/
 CP32_IRAM_EXT PRIVATE void switch_to(struct proc *next)
 {
-    if (next != NIL_PROC) current_proc = next;
+    if (next != NIL_PROC) {
+      current_proc = next;
+      /* switch_to() is the first point where a non-IRQ scheduler selection is
+       * authoritative. Transfer directly while FS is still runnable; waiting
+       * for the idle loop lets the clock task block it again. */
+      if (cp32_context_restore_gate && k_reenter == 0 &&
+          next->p_nr == FS_PROC_NR && next->p_flags == 0 &&
+          next->p_reg.pc != 0 && next->p_reg.sp != 0) {
+        cp32_enter_initial_user(next);
+      }
+    }
 }
 
  

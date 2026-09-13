@@ -441,7 +441,11 @@ irq_user:
     j       4f
 
 2:
-    mov     a15, a1
+    /* Restore the authoritative process frame.  The C syscall dispatcher
+     * advances FS->p_reg.pc and records the syscall result there; restoring
+     * the stale trap frame loses that progress after the first read. */
+    movi    a15, cp32_irq_return_proc
+    l32i    a15, a15, 0
     l32i    a0, a15, 0
     l32i    a1, a15, 72
     l32i    a2, a15, 8

@@ -266,9 +266,11 @@ integration. Define the user ABI after one user process can run.
   at boot.
 - [x] 6f. Remove the accidental remaining RAM-disk boot write and restore a
   marker-only baseline after marker 110 still corrupted `.data`.
-- [x] 5ag. Rotate ready-queue selection across task, server, and user classes
-  using a bounded queue cursor while preserving the existing frame-safe
-  scheduler handoff design.
+- [ ] 5ag. Rotate ready-queue selection across task, server, and user classes
+  (reverted after the FS handoff fault; requires a frame-safe scheduler
+  handoff redesign).
+- [x] 5ah. Synchronize the kernel IPC wrapper owner from `current_proc` before
+  user/task `_send`, `_receive`, and `_sendrec` calls.
 6. Add storage/RAM disk, FS, executable loading, libc, shell, and commands.
 7. Add optional networking and peripherals only when in scope.
 
@@ -437,3 +439,76 @@ marks hardware behavior complete.
   into D/IRAM while retaining panic and vector/timer-critical entry routines.
 - [x] 8bq. Reject duplicate RECEIVE requests from an already-blocked receiver
   without overwriting its saved source selector or message buffer.
+- [ ] 5aj. Validate frame-gated ready-queue rotation for the FS/TTY user task
+  (experimental; hardware validation pending).
+- [x] 5ak. Remove duplicate timer-IRQ scheduling so an FS/TTY selection is
+  preserved for the single frame publication and return path.
+- [x] 5al. Publish the preserved runnable FS selection through the IRQ return
+  owner before `rfe`, preventing the legacy idle frame from overwriting it.
+- [ ] 5am. Diagnose post-publication FS return-owner invalidation with a
+  one-shot flags/PC/SP trace before changing the handoff contract.
+- [ ] 5an. Publish FS directly from `pick_proc()` when IRQ dispatch ownership
+  is active, then validate user entry and TTY character completion.
+- [ ] 5ao. Arm IRQ dispatch ownership before the timer's first scheduler pass
+  so the selected FS frame can become the IRQ return frame.
+- [ ] 5ap. Capture the direct `sched()` result as the IRQ return owner before
+  later clock bookkeeping can overwrite the selected FS frame.
+- [ ] 5aq. Publish runnable FS selection before IRQ dispatch activation so the
+  assembly return path can use the clock-task selection.
+- [ ] 5ar. Trace IRQ return-owner, selected process, and preserved FS state at
+  dispatch finalization to identify the remaining owner overwrite.
+- [ ] 5as. Publish FS as the IRQ return owner when TTY wakeup requeues it from
+  task context, before the next gated interrupt return.
+- [ ] 5at. Enter the saved FS call0 frame from the idle loop when the clock
+  task selects FS outside IRQ context.
+- [ ] 5au. Trigger the idle-loop FS handoff from the preserved scheduler
+  selection rather than the transient live process pointer.
+- [ ] 5av. Transfer directly from `switch_to()` while the non-IRQ FS frame is
+  still runnable, before the clock task blocks it again.
+- [ ] 5aw. Map the FS SRAM stack window as flat D memory so TTY read buffers
+  pass `numap()` validation.
+- [ ] 5ax. Rate-limit repeated TTY user-read error diagnostics to once per
+  1000 failed attempts.
+- [ ] 5ay. Rebind FS ownership before user-client IPC so requests are not
+  emitted with the interrupted IDLE process as their source.
+- [ ] 5az. Fix TTY input transfer to translate absolute flat SRAM addresses
+  once instead of adding the FS segment base a second time.
+- [ ] 5ba. Remove the artificial successful-BOTH blocked probe and restore FS
+  ownership on successful user syscall return.
+- [ ] 5bb. Permit repeated FS saved-frame entry after syscall return so the
+  TTY client can issue one read request per keyboard character.
+- [ ] 5bc. Restore the IDLE return frame to `kernel_idle_loop()` so C-level
+  FS wakeup handoff remains reachable after user syscalls.
+- [ ] 5bd. Publish FS on every successful user syscall before transient BOTH
+  receive flags are normalized by the IPC path.
+- [ ] 5be. Allow successful user syscalls to bypass transient receive flags
+  and return directly to the FS client frame.
+- [ ] 5bf. Restore the updated FS process frame in the user exception assembly
+  path instead of the stale pre-syscall trap frame.
+- [ ] 5bg. Use nonblocking TTY reads in the bring-up user client to avoid the
+  incomplete blocked-receive return handoff while validating keyboard input.
+- [ ] 5bh. Make successful user exception returns consume the explicit
+  `cp32_irq_return_proc` publication instead of mutable `proc_ptr`.
+
+## TTY/user handoff diagnostic tree — marker 219
+
+- [x] Boot image remains structurally valid: `.data` and `.bss` sentinels pass,
+  vectors are present, and the 64 KiB SRAM RAM disk initializes.
+- [x] Keyboard hardware path works: `[KBD probe=1]`, `[KBD init=1]`, keyboard
+  events, and kernel-side `[TTY char=...]` output are observed.
+- [x] Scheduler reaches the FS client: `[SCHED fs-selected ... nest=0]` and
+  `[TTY user-entry]` appear.
+- [x] The first user TTY transaction completes and copies data correctly:
+  `[TTY user-char=k]` confirms the earlier double-address translation bug is
+  fixed.
+- [ ] User client resumes for subsequent reads. After the first character the
+  return path reports `RFE target=0 current=0` and resumes at an internal idle
+  address (`0x40372C0B`), so the FS client loop is not re-entered.
+- [ ] Next investigation: trace `irq_user` labels 2/3/4 and the exact value of
+  `cp32_user_dispatch_blocked`, `proc_ptr`, and `cp32_irq_return_proc` after
+  `cp32_user_trap_dispatch()` returns successfully.
+- [ ] Verify whether `cp32_enter_initial_user()` must establish a dedicated
+  user-return context rather than relying on the generic `rfe` path.
+- [ ] Keep the current nonblocking `NO_BLOCK` experiment isolated until the
+  user-return ownership problem is resolved; do not expand diagnostics before
+  capturing the first post-syscall assembly state.

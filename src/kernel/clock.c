@@ -59,7 +59,10 @@
 
 extern struct proc *current_proc;
 extern volatile struct proc *cp32_irq_saved_owner;
+extern volatile struct proc *cp32_irq_return_proc;
 extern volatile int cp32_context_handoff_gate;
+extern volatile int cp32_irq_dispatch_active;
+extern void kernel_idle_loop(void);
 
 extern void sched(void);
 #include "esp32s3/systimer.h"
@@ -551,7 +554,16 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   if (cp32_context_handoff_gate && k_reenter <= 1 &&
       (rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
        rdy_head[USER_Q] != NIL_PROC)) {
+    cp32_irq_dispatch_active = 1;
     sched();
+    /* sched()/pick_proc() has now produced the authoritative selection.
+     * Capture it immediately; later clock bookkeeping may change the global
+     * selection pointer before the assembly return contract is finalized. */
+    if (proc_ptr != NIL_PROC && proc_ptr->p_nr == FS_PROC_NR &&
+        proc_ptr->p_flags == 0) {
+      cp32_irq_return_proc = proc_ptr;
+      current_proc = proc_ptr;
+    }
   }
 
   /* The process handoff is deliberately a second gate.  This keeps the
@@ -559,10 +571,9 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   extern volatile int cp32_context_handoff_gate;
   extern struct proc *current_proc;
   extern volatile struct proc *cp32_last_selected_fs;
-  extern volatile struct proc *cp32_irq_return_proc;
   extern volatile uint32_t cp32_sched_sequence;
-  extern volatile int cp32_irq_dispatch_active;
-  cp32_irq_dispatch_active = 1;
+  static unsigned fs_publish_reported;
+  static unsigned return_owner_reported;
   /* During the CP32 handoff probe, any runnable queue is eligible. The
    * previous TASK_Q-only gate starved synthetic user-range stress entries
    * after scheduler queue classification was corrected. */
@@ -574,12 +585,9 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       proc_ptr != NIL_PROC && current_proc == proc_ptr &&
       proc_ptr->p_flags != 0)
     cp32_handoff_blocked_target_count++;
-  if (cp32_context_handoff_gate && k_reenter <= 1 &&
-      current_proc != NIL_PROC && proc_ptr != NIL_PROC &&
-      current_proc == proc_ptr && proc_ptr->p_flags == 0 &&
-      (rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
-       rdy_head[USER_Q] != NIL_PROC))
-    sched();
+  /* The queue-selection pass above already performed the scheduling step.
+   * Do not schedule a second time here: that would consume a newly selected
+   * FS/user frame before the IRQ return path can publish it. */
 
   /* Preserve a runnable FS selection across the legacy clock/unhold path.
    * This is the bridge until the full assembly context switch replaces the
@@ -588,8 +596,45 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
       cp32_last_selected_fs->p_flags == 0) {
     proc_ptr = (struct proc *)cp32_last_selected_fs;
     current_proc = (struct proc *)cp32_last_selected_fs;
+    cp32_irq_return_proc = cp32_last_selected_fs;
+    if (!fs_publish_reported) {
+      fs_publish_reported = 1;
+      usbj_print("[SCHED fs-publish flags=");
+      usbj_print_u32((uint32_t)cp32_last_selected_fs->p_flags);
+      usbj_print(" pc=");
+      usbj_print_hex32((uint32_t)cp32_last_selected_fs->p_reg.pc);
+      usbj_print(" sp=");
+      usbj_print_hex32((uint32_t)cp32_last_selected_fs->p_reg.sp);
+      usbj_print(" owner=");
+      usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
+      usbj_print("]\r\n");
+    }
+  }
+  if (!return_owner_reported) {
+    return_owner_reported = 1;
+    usbj_print("[SCHED return-state owner=");
+    usbj_print_u32(cp32_irq_return_proc == NIL_PROC ? 0xFFFFFFFFu :
+                   (uint32_t)cp32_irq_return_proc->p_nr);
+    usbj_print(" flags=");
+    usbj_print_u32(cp32_irq_return_proc == NIL_PROC ? 0xFFFFFFFFu :
+                   (uint32_t)cp32_irq_return_proc->p_flags);
+    usbj_print(" selected=");
+    usbj_print_u32(proc_ptr == NIL_PROC ? 0xFFFFFFFFu :
+                   (uint32_t)proc_ptr->p_nr);
+    usbj_print(" fs=");
+    usbj_print_u32(cp32_last_selected_fs == NIL_PROC ? 0xFFFFFFFFu :
+                   (uint32_t)cp32_last_selected_fs->p_nr);
+    usbj_print("]\r\n");
   }
   cp32_irq_dispatch_active = 0;
+  /* The low-level IRQ return address for IDLE is an internal assembly loop.
+   * Returning there bypasses kernel_idle_loop(), so future FS wakeups can
+   * never be observed. Restore the C idle entry whenever IDLE is returned. */
+  if (cp32_irq_return_proc != NIL_PROC &&
+      cp32_irq_return_proc->p_nr == IDLE) {
+    cp32_irq_return_proc->p_reg.pc = (reg_t)kernel_idle_loop;
+    cp32_irq_return_proc->p_reg.psw = 0x100;
+  }
   if (cp32_irq_return_proc == NIL_PROC ||
       cp32_irq_return_proc->p_flags != 0) {
     #if CP32_VERBOSE_DIAGNOSTICS

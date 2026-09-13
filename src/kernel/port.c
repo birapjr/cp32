@@ -15,6 +15,7 @@ volatile int cp32_context_restore_gate;
 /* Separate gate for the first live scheduler handoff experiment. */
 volatile int cp32_context_handoff_gate;
 struct proc *proc_ptr;
+extern struct proc *current_proc;
 unsigned lost_ticks;
 clock_t tty_timeout;
 tty_t tty_table[NR_CONS + NR_RS_LINES + NR_PTYS];
@@ -24,16 +25,19 @@ tty_t *tty_timelist;
  * these symbols, so call the primitive IPC functions directly; calling the
  * macro names here would recurse back into this file. */
 int _send(int dest, message *m) {
+    if (current_proc != NIL_PROC) proc_ptr = current_proc;
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
     return sys_call(SEND, dest, m);
 }
 
 int _receive(int src, message *m) {
+    if (current_proc != NIL_PROC) proc_ptr = current_proc;
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
     return sys_call(RECEIVE, src, m);
 }
 
 int _sendrec(int dest, message *m) {
+    if (current_proc != NIL_PROC) proc_ptr = current_proc;
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
     return sys_call(BOTH, dest, m);
 }

@@ -776,7 +776,10 @@ register tty_t *tp;		/* pointer to terminal to read from */
   if (tp->tty_inleft == 0 || tp->tty_eotct < tp->tty_min) return;
 
   buf_phys = vir2phys(buf);
-  user_base = proc_vir2phys(proc_addr(tp->tty_inproc), 0);
+  /* CP32 uses flat SRAM addresses for the bring-up FS client.  tty_in_vir is
+   * already an absolute virtual address; adding it to the segment base would
+   * translate it twice and corrupt the user buffer. */
+  user_base = 0;
   bp = buf;
   while (tp->tty_inleft > 0 && tp->tty_eotct > 0) {
 	ch = *tp->tty_intail;
@@ -787,8 +790,9 @@ register tty_t *tp;		/* pointer to terminal to read from */
 		tp->tty_inleft--;
 		if (++bp == bufend(buf)) {
 			/* Temp buffer full, copy to user space. */
-			phys_copy(buf_phys, user_base + tp->tty_in_vir,
-						(phys_bytes) buflen(buf));
+					phys_copy(buf_phys, numap(tp->tty_inproc,
+												 tp->tty_in_vir, buflen(buf)),
+										(phys_bytes) buflen(buf));
 			tp->tty_in_vir += buflen(buf);
 			tp->tty_incum += buflen(buf);
 			bp = buf;
@@ -809,7 +813,8 @@ register tty_t *tp;		/* pointer to terminal to read from */
   if (bp > buf) {
 	/* Leftover characters in the buffer. */
 	count = bp - buf;
-	phys_copy(buf_phys, user_base + tp->tty_in_vir, (phys_bytes) count);
+	phys_copy(buf_phys, numap(tp->tty_inproc, tp->tty_in_vir,
+										 (vir_bytes) count), (phys_bytes) count);
 	tp->tty_in_vir += count;
 	tp->tty_incum += count;
   }

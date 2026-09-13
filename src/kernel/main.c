@@ -13,9 +13,11 @@ extern void sys_task(void);
 extern void tty_task(void);
 extern void mm_task(void);
 extern struct proc *current_proc;
+extern struct proc *proc_ptr;
 
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int cp32_context_restore_gate;
+extern void cp32_enter_initial_user(struct proc *rp);
 extern volatile int cp32_context_handoff_gate;
 extern volatile int cp32_blocked_handoff_gate;
 extern volatile int cp32_user_handoff_gate;
@@ -29,15 +31,21 @@ CP32_IRAM_EXT static void cp32_tty_read_client(void)
   unsigned attempts = 0;
   usbj_print("[TTY user-entry]\r\n");
   for (;;) {
+    /* The user-frame entry restores registers, not the kernel bookkeeping
+     * globals used by these bring-up IPC wrappers. Rebind the client owner
+     * before each request so the message source is FS, never IDLE. */
+    proc_ptr = proc_addr(FS_PROC_NR);
+    current_proc = proc_ptr;
     memset(&m, 0, sizeof(m));
     m.m_type = DEV_READ;
     m.TTY_LINE = 0;
     m.PROC_NR = FS_PROC_NR;
     m.COUNT = 1;
+    m.TTY_FLAGS = NO_BLOCK;
     m.ADDRESS = &byte;
     if (++attempts == 1) usbj_print("[TTY user-read-start]\r\n");
     if (_sendrec(TTY, &m) != OK) {
-      if ((attempts % 50) == 0) usbj_print("[TTY user-read-error]\r\n");
+      if ((attempts % 1000) == 0) usbj_print("[TTY user-read-error]\r\n");
       continue;
     }
     usbj_print("[TTY user-char=");
@@ -55,6 +63,7 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
   static uint32_t heartbeat;
   static uint32_t executions;
   static int announced;
+  extern volatile struct proc *cp32_last_selected_fs;
 
   /* main() enters here with the boot lock held so its test marker cannot be
    * interrupted; open the CPU gate at the first instruction of the loop. */
@@ -67,6 +76,15 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
   for (;;) {
     wdt_feed_all();
     delay(100000);
+    /* The clock task can select FS outside an IRQ (nest=0). Enter its saved
+     * call0 frame directly because no rfe path exists in that case. */
+    if (cp32_last_selected_fs != NIL_PROC &&
+        cp32_last_selected_fs->p_nr == FS_PROC_NR &&
+        cp32_last_selected_fs->p_flags == 0 &&
+        cp32_last_selected_fs->p_reg.pc != 0 &&
+        cp32_last_selected_fs->p_reg.sp != 0) {
+      cp32_enter_initial_user((struct proc *)cp32_last_selected_fs);
+    }
     /* Keep a low-rate boot heartbeat while the scheduler is restored. */
     if (++executions % 20 == 0) {
       usbj_print("[CTX kernel-running ticks=");
@@ -141,9 +159,12 @@ void main(void)
       rp->p_map[D].mem_len = 0x100;
     }
     if (t == FS_PROC_NR) {
+      /* The bring-up FS client uses a kernel SRAM stack as its user buffer.
+       * Map the complete reserved stack window as flat D memory so TTY's
+       * numap() accepts read/write buffers without a synthetic segment fault. */
       rp->p_map[D].mem_vir = 0x3FC00000;
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
-      rp->p_map[D].mem_len = 0x100;
+      rp->p_map[D].mem_len = 0x1000;
     }
     rp->p_map[S].mem_phys = rp->p_reg.sp >> CLICK_SHIFT;
     rp->p_map[S].mem_len = 4;
@@ -218,7 +239,7 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-    usbj_print("[TEST CARDPUTER-KBD 193]\r\n");
+    usbj_print("[TEST CARDPUTER-KBD 220]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();
