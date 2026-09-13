@@ -117,7 +117,7 @@ CP32_IRAM_EXT static void cp32_queue_console_key(char ch)
 		shown[0] = ch; shown[1] = '\0';
 		usbj_print(shown);
 	} else {
-		usbj_print("0x"); usbj_print_hex32((uint32_t)(unsigned char)ch);
+		usbj_print_hex32((uint32_t)(unsigned char)ch);
 	}
 	usbj_print("]\r\n");
 }
@@ -195,7 +195,7 @@ FORWARD _PROTOTYPE( int in_process, (tty_t *tp, char *buf, int count)	);
 CP32_IRAM_EXT static void cp32_trace_tty_read(unsigned count)
 {
 	if (++cp32_tty_read_reports == 1 ||
-	    (cp32_tty_read_reports % 50) == 0) {
+	    (cp32_tty_read_reports % 500) == 0) {
 		usbj_print("[TTY read count="); usbj_print_u32(count);
 		usbj_print(" replies="); usbj_print_u32(cp32_tty_read_reports);
 		usbj_print("]\r\n");
@@ -279,7 +279,7 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 		}
 	}
 	#if CP32_VERBOSE_DIAGNOSTICS
-	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 1000) == 0) {
+	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 10000) == 0) {
 		usbj_print("[KBD poll="); usbj_print_u32(cp32_kbd_poll_reports);
 		usbj_print("]\r\n");
 	}

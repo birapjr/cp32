@@ -3,6 +3,9 @@
 unsigned cardputer_keyboard_stale_events;
 #include <stdint.h>
 
+extern void usbj_print(const char *s);
+extern void usbj_print_hex32(uint32_t v);
+
 #define GPIO_BASE 0x60004000UL
 #define GPIO_OUT_W1TS (GPIO_BASE + 0x08)
 #define GPIO_OUT_W1TC (GPIO_BASE + 0x0C)
@@ -18,6 +21,8 @@ unsigned cardputer_keyboard_stale_events;
 #define KBD_INT 11u
 #define KBD_ADDR 0x34u
 static volatile unsigned kbd_trace_stage;
+static volatile unsigned kbd_transaction_busy;
+static volatile unsigned kbd_ready;
 
 CP32_IRAM_EXT static void wait_i2c(void) { volatile unsigned n = 80; while (n--) ; }
 CP32_IRAM_EXT static void release(unsigned pin) { *(volatile uint32_t *)GPIO_ENABLE_W1TC = 1u << pin; }
@@ -76,6 +81,19 @@ CP32_IRAM_EXT static int write_register(uint8_t reg, uint8_t value)
   return ack;
 }
 
+CP32_IRAM_EXT static int init_write(uint8_t reg, uint8_t value)
+{
+  int result = write_register(reg, value);
+  if (!result) {
+    usbj_print("[KBD init-fail reg=");
+    usbj_print_hex32((uint32_t)reg);
+    usbj_print(" val=");
+    usbj_print_hex32((uint32_t)value);
+    usbj_print("]\r\n");
+  }
+  return result;
+}
+
 CP32_IRAM_EXT static int read_register(uint8_t reg, unsigned char *value)
 {
   int ack;
@@ -120,6 +138,10 @@ CP32_IRAM_EXT int cardputer_keyboard_read_event(unsigned char *event)
 {
   int ack;
   if (event == (unsigned char *)0) return -1;
+  if (!kbd_ready) return 0;
+  /* Do not interleave bit-banged I2C transactions from competing poll paths. */
+  if (kbd_transaction_busy) return 0;
+  kbd_transaction_busy = 1;
   /* TCA8418 KEY_EVENT_A (0x04); 0x03 is only the event counter. */
   start_i2c();
   ack = write_byte((uint8_t)(KBD_ADDR << 1));
@@ -133,6 +155,7 @@ CP32_IRAM_EXT int cardputer_keyboard_read_event(unsigned char *event)
     if (ack) *event = read_byte(0);
   }
   stop_i2c();
+  kbd_transaction_busy = 0;
   return ack ? (*event != 0) : -1;
 }
 
@@ -140,23 +163,17 @@ CP32_IRAM_EXT int cardputer_keyboard_init(void)
 {
   int ok = 1;
   unsigned char pending, stale;
+  kbd_ready = 0;
   /* Match M5Cardputer's TCA8418KeyboardReader: Cardputer Adv is a 7x8
    * matrix.  The remaining pins are GPIO inputs with falling-edge events. */
-  ok &= write_register(0x23, 0x00);
-  ok &= write_register(0x24, 0x00);
-  ok &= write_register(0x25, 0x00);
-  ok &= write_register(0x20, 0xFF);
-  ok &= write_register(0x21, 0xFF);
-  ok &= write_register(0x22, 0xFF);
-  ok &= write_register(0x26, 0x00);
-  ok &= write_register(0x27, 0x00);
-  ok &= write_register(0x28, 0x00);
-  ok &= write_register(0x1A, 0xFF);
-  ok &= write_register(0x1B, 0xFF);
-  ok &= write_register(0x1C, 0xFF);
-  ok &= write_register(0x1D, 0x7F);
-  ok &= write_register(0x1E, 0xFF);
-  ok &= write_register(0x1F, 0x00);
+  ok &= init_write(0x23, 0x00); ok &= init_write(0x24, 0x00);
+  ok &= init_write(0x25, 0x00); ok &= init_write(0x20, 0xFF);
+  ok &= init_write(0x21, 0xFF); ok &= init_write(0x22, 0xFF);
+  ok &= init_write(0x26, 0x00); ok &= init_write(0x27, 0x00);
+  ok &= init_write(0x28, 0x00); ok &= init_write(0x1A, 0xFF);
+  ok &= init_write(0x1B, 0xFF); ok &= init_write(0x1C, 0xFF);
+  ok &= init_write(0x1D, 0x7F); ok &= init_write(0x1E, 0xFF);
+  ok &= init_write(0x1F, 0x00);
   /* Discard events accumulated before this boot's TTY reader exists. */
   stale = 0;
   if (read_register(0x03, &pending)) {
@@ -169,8 +186,10 @@ CP32_IRAM_EXT int cardputer_keyboard_init(void)
   }
   cardputer_keyboard_stale_events = stale;
   /* Clear stale GPIO/key interrupt state, then enable both sources. */
-  ok &= write_register(0x02, 0x03);
-  ok &= write_register(0x01, 0x03);
+  ok &= init_write(0x02, 0x03);
+  ok &= init_write(0x01, 0x03);
+  if (!ok) return 0;
+  kbd_ready = 1;
   return ok;
 }
 

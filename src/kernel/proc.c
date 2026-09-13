@@ -655,7 +655,9 @@ CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
   struct proc *rp;
 
   for (q = 0; q < NQ; q++) {
-    for (rp = rdy_head[q]; rp != NIL_PROC; rp = rp->p_nextready) {
+    int hops = 0;
+    for (rp = rdy_head[q]; rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS;
+         rp = rp->p_nextready) {
       if (rp == target) return TRUE;
     }
   }
@@ -734,7 +736,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_ipc(int operation, int endpoint)
   cp32_ipc_trace_calls++;
   /* CLOCK performs a receive on every tick; keep the first-use proof while
    * avoiding a UART line for every few dozen IPC calls. */
-  if (cp32_ipc_trace_calls == 1 || (cp32_ipc_trace_calls % 5000) == 0) {
+  if (cp32_ipc_trace_calls == 1 || (cp32_ipc_trace_calls % 20000) == 0) {
     usbj_print("[IPC count=");
     usbj_print_u32(cp32_ipc_trace_calls);
     usbj_print(" op=");
@@ -863,6 +865,19 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
     if (result != OK) return result;
     return OK;
   } else {
+    /* Validate the append walk before changing the caller into a blocked
+     * sender.  An error must leave the syscall owner fully runnable. */
+    if (dest_ptr->p_callerq != NIL_PROC) {
+      next_ptr = dest_ptr->p_callerq;
+      int hops = 0;
+      while (next_ptr->p_sendlink != NIL_PROC &&
+             hops++ < NR_TASKS + NR_PROCS) {
+        if (next_ptr->p_sendlink == caller_ptr) return ELOCKED;
+        next_ptr = next_ptr->p_sendlink;
+        if (next_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+      }
+      if (next_ptr->p_sendlink != NIL_PROC) return ELOCKED;
+    }
     caller_ptr->p_messbuf = m_ptr;
     if (caller_ptr->p_flags == 0) unready(caller_ptr);
     caller_ptr->p_flags |= SENDING;
@@ -890,6 +905,7 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
 {
   struct proc *sender_ptr;
   struct proc *previous_ptr;
+  int hops;
 
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isoksrc_dest(src)) return E_BAD_SRC;
@@ -900,8 +916,11 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
   if (caller_ptr->p_flags & RECEIVING) return ELOCKED;
 
   if (!(caller_ptr->p_flags & SENDING)) {
+    hops = 0;
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
+      if (hops++ >= NR_TASKS + NR_PROCS) return ELOCKED;
+      if (sender_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
       if (src == ANY || src == sender_ptr->p_nr) {
         
         if (copy_message(sender_ptr, sender_ptr->p_messbuf,
@@ -949,7 +968,9 @@ PRIVATE void pick_proc()
   if (next_queue < 0 || next_queue >= NQ) next_queue = 0;
   for (offset = 0; offset < NQ; offset++) {
     q = (next_queue + offset) % NQ;
-    while (rdy_head[q] != NIL_PROC && rdy_head[q]->p_flags != 0) {
+    int skips = 0;
+    while (rdy_head[q] != NIL_PROC && rdy_head[q]->p_flags != 0 &&
+           skips++ <= NR_TASKS + NR_PROCS) {
       rp = rdy_head[q]; rdy_head[q] = rp->p_nextready;
       if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
       rp->p_nextready = NIL_PROC;
@@ -994,7 +1015,7 @@ PRIVATE void pick_proc()
     if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)
       cp32_irq_return_proc = rp;
     if (rp->p_nr == FS_PROC_NR && (++pick_trace_count == 1 ||
-        (pick_trace_count % 50) == 0)) {
+        (pick_trace_count % 500) == 0)) {
       usbj_print("[SCHED fs-selected pc=");
       usbj_print_hex32((uint32_t)rp->p_reg.pc);
       usbj_print(" sp=");
@@ -1045,7 +1066,8 @@ CP32_IRAM_EXT PRIVATE void unready(struct proc *rp)
   q = proc_queue(rp);
   prev = NIL_PROC;
   cur = rdy_head[q];
-  while (cur != NIL_PROC) {
+  int hops = 0;
+  while (cur != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
     if (cur == rp) {
       if (prev == NIL_PROC) rdy_head[q] = cur->p_nextready;
       else prev->p_nextready = cur->p_nextready;

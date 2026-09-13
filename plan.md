@@ -537,6 +537,31 @@ marks hardware behavior complete.
   TTY IPC for later user processes.
 - [x] 5cd. Add a bounded diagnostic line buffer with backspace and Enter
   submission handling on top of the stable per-character TTY path.
+- [x] 5ce. Add minimal RAM-disk shell dispatch for `ls` and `ramdisk`, plus a
+  bounded unknown-command diagnostic.
+- [x] 5cf. Diagnose individual keyboard initialization register failures and
+  correct duplicate `0x` formatting in TTY non-printable character logs.
+- [x] 5cg. Reduce periodic scheduler/IPC diagnostics and add compact keyboard
+  interrupt, controller-status, and FIFO-depth boot diagnostics.
+
+## Core-kernel phase after console bring-up
+
+- [x] 5ch. Bound IPC caller-queue append and receive traversal, reject cyclic
+  or malformed sender links, and preserve the existing blocked-message wakeup
+  contract.
+- [x] 8cl. Complete the stable Cardputer TTY milestone: immediate per-character
+  delivery and bounded `ls`/`ramdisk` dispatch are validated on hardware.
+- [ ] 8cm. Keep `cat` and additional shell commands deferred until the kernel
+  phase has a production filesystem/message path.
+- [ ] 8cn. Implement the next core-kernel feature with host coverage before
+  expanding the command surface.
+- [x] 8co. Guard bit-banged keyboard I²C transactions against concurrent
+  scheduler/IRQ poll re-entry; marker 2 boots and reaches the stable FS/TTY
+  loop without the prior exception.
+- [x] 8cp. Bound ready-queue integrity scans and stale-entry removal so a
+  cyclic or malformed ready link cannot hang scheduler maintenance; marker 3.
+- [x] 8cq. Fail closed when keyboard register initialization is incomplete;
+  runtime I²C polling is disabled until the controller is fully ready; marker 4.
 
 ## TTY/user handoff diagnostic tree — marker 219
 

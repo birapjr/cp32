@@ -34,6 +34,25 @@ volatile char cp32_tty_user_byte;
 static char cp32_tty_line[64];
 static unsigned cp32_tty_line_len;
 
+CP32_IRAM_EXT static void cp32_shell_command(const char *line)
+{
+  if (strcmp(line, "ls") == 0) {
+    usbj_print("[CMD ls ramdisk=");
+    usbj_print_u32(cp32_ramdisk_capacity());
+    usbj_print(" formatted=");
+    usbj_print_u32((uint32_t)cp32_ramdisk_is_formatted());
+    usbj_print("]\r\n");
+  } else if (strcmp(line, "ramdisk") == 0) {
+    usbj_print("[CMD ramdisk capacity=");
+    usbj_print_u32(cp32_ramdisk_capacity());
+    usbj_print("]\r\n");
+  } else if (line[0] != '\0') {
+    usbj_print("[CMD unknown=");
+    usbj_print(line);
+    usbj_print("]\r\n");
+  }
+}
+
 CP32_IRAM_EXT static void cp32_tty_read_client(void)
 {
   usbj_print("[TTY user-entry]\r\n");
@@ -50,6 +69,7 @@ CP32_IRAM_EXT static void cp32_tty_read_client(void)
         usbj_print("[TTY line=");
         usbj_print(cp32_tty_line);
         usbj_print("]\r\n");
+        cp32_shell_command(cp32_tty_line);
         cp32_tty_line_len = 0;
       } else if (cp32_tty_user_byte >= 0x20 &&
                  cp32_tty_user_byte <= 0x7E && cp32_tty_line_len < 63) {
@@ -99,6 +119,8 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
 
 void main(void)
 {
+  unsigned char kbd_status = 0, kbd_count = 0;
+  int kbd_init_result;
   status_line("\r\nmain() started", 2);
   struct proc *rp;
   int t;
@@ -222,10 +244,17 @@ void main(void)
     usbj_print_u32((uint32_t)released_not_owned);
     usbj_print("]\r\n");
   }
+  kbd_init_result = cardputer_keyboard_init();
   usbj_print("[KBD init=");
-  usbj_print_u32((uint32_t)cardputer_keyboard_init());
+  usbj_print_u32((uint32_t)kbd_init_result);
   usbj_print(" stale=");
   usbj_print_u32((uint32_t)cardputer_keyboard_stale_events);
+  usbj_print(" int=");
+  usbj_print_u32((uint32_t)(cardputer_keyboard_interrupt_asserted() != 0));
+  usbj_print(" status=");
+  usbj_print_u32((uint32_t)(cardputer_keyboard_read_status(&kbd_status, &kbd_count) == 0));
+  usbj_print(" fifo=");
+  usbj_print_u32((uint32_t)kbd_count);
   usbj_print("]\r\n");
   usbj_print("[RAMDISK capacity=");
   usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
@@ -242,7 +271,8 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-    usbj_print("[TEST CARDPUTER-KBD 242]\r\n");
+    usbj_print("[TEST CARDPUTER-KBD 245]\r\n");
+    usbj_print("[TEST CARDPUTER-CORE 4]\r\n");
   /* Image/test identity: this is the IRQ handler-registration dispatcher
    * build, immediately before control enters the diagnostic workload. */
   kernel_idle_loop();

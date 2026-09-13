@@ -662,7 +662,7 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   /* This is intentionally adjacent to the scheduler call: it records the
    * frame selected for the assembly rfi path, without tracing every IRQ. */
   if (cp32_irq_return_proc != NIL_PROC &&
-      (rfe_trace_count++ == 0 || (rfe_trace_count % 50) == 0)) {
+      (rfe_trace_count++ == 0 || (rfe_trace_count % 500) == 0)) {
     usbj_print("[RFE target=");
     usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
     usbj_print(" current=");
@@ -679,7 +679,7 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   #endif
 
   /* Stable bring-up status: first IRQ, then every 50 IRQs. */
-  if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 50) == 0)
+  if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 500) == 0)
     cp32_print_irq_status();
 }
 
