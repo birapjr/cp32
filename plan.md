@@ -348,6 +348,8 @@ marks hardware behavior complete.
 - [x] 8w. Relocate runtime keyboard event reads and interrupt-state checks
   into D/IRAM while retaining boot-time probe/configuration code in low IRAM.
 - [x] 8x. Relocate non-boot keyboard status/configuration and diagnostic
+  helpers into D/IRAM while retaining boot-time probe/configuration code in low IRAM.
+
   accessors into D/IRAM, retaining the boot probe/init path in low IRAM.
 - [x] 8y. Relocate the post-start `kernel_idle_loop()` into D/IRAM while
   retaining all reset and boot diagnostics in low IRAM.
@@ -359,6 +361,24 @@ marks hardware behavior complete.
   low-IRAM reset and startup path.
 - [x] 8ac. Relocate the runtime millisecond delay helper into D/IRAM while
   retaining low-level timer interrupt and startup setup in low IRAM.
+
+## Cardputer LCD bring-up status (2026-09-14)
+
+- [x] LCD-a. Add a direct ST7789 display driver and route TTY shell output to
+  both the Cardputer LCD and USB UART while keeping kernel diagnostics USB-only.
+  Build and image-layout validation pass.
+- [x] LCD-b. Add direct ESP32-S3 SPI3 MMIO transport, SPI3 clock/reset setup,
+  GPIO-matrix routing, ST7789 rotation/offset handling, and a transport fault
+  diagnostic. Hardware reports `[LCD spi-fault=0]`, but the LCD remains blank.
+- [ ] LCD-c. Complete hardware LCD validation and correct the remaining panel
+  initialization, GPIO-matrix, SPI transaction, or ST7789 address-window issue.
+  Current hardware status: USB UART and keyboard shell are stable; `ls`
+  produces the expected fake RAM-disk listing; no LCD pixels or backlight
+  output have been observed. Do not mark Cardputer console/display support
+  complete until a flashed image visibly renders the boot probe and shell.
+- [ ] LCD-d. After LCD hardware validation, remove the temporary `[LCD
+  spi-fault=...]` diagnostic and fixed `CP32` probe, then add focused host
+  contracts for display state/TTY output routing where practical.
 - [x] 8ad. Relocate the runtime `get_uptime()` helper into D/IRAM while
   retaining timer initialization and interrupt entry in low IRAM.
 - [x] 8ae. Relocate runtime clock time/uptime service handlers into D/IRAM
