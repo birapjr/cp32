@@ -91,11 +91,14 @@ CP32_IRAM_EXT static void cp32_tty_read_client(void)
         usbj_print("[TTY line=");
         usbj_print(cp32_tty_line);
         usbj_print("]\r\n");
+        cardputer_display_putc('\n');
         cp32_shell_command(cp32_tty_line);
+        cardputer_display_write("$ ");
         cp32_tty_line_len = 0;
       } else if (cp32_tty_user_byte >= 0x20 &&
                  cp32_tty_user_byte <= 0x7E && cp32_tty_line_len < 63) {
         cp32_tty_line[cp32_tty_line_len++] = cp32_tty_user_byte;
+        cardputer_display_putc((char)cp32_tty_user_byte);
       }
     }
   }
@@ -285,6 +288,7 @@ void main(void)
   usbj_print("]\r\n");
   cardputer_display_clear();
   usbj_print("[LCD clear-done]\r\n");
+  cardputer_display_write("CP32 OS\r\n$ ");
   usbj_print("[TTY user-ready nr=");
   usbj_print_u32((uint32_t)FS_PROC_NR);
   usbj_print(" pc=");
