@@ -143,9 +143,6 @@ void main(void)
 {
   cardputer_display_init();
   cardputer_display_write("CP32\r\n");
-  usbj_print("[LCD spi-fault=");
-  usbj_print_u32(cardputer_display_faulted());
-  usbj_print("]\r\n");
   unsigned char kbd_status = 0, kbd_count = 0;
   int kbd_init_result;
   status_line("\r\nmain() started", 2);
@@ -286,6 +283,8 @@ void main(void)
   usbj_print("[RAMDISK capacity=");
   usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
   usbj_print("]\r\n");
+  cardputer_display_clear();
+  usbj_print("[LCD clear-done]\r\n");
   usbj_print("[TTY user-ready nr=");
   usbj_print_u32((uint32_t)FS_PROC_NR);
   usbj_print(" pc=");

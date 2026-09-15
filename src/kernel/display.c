@@ -51,6 +51,8 @@
 #define CS 37u
 #define BIT(p) (1u << (p))
 static unsigned ready, x, y, spi_fault, spi_transactions, spi_timeouts;
+static char textbuf[12][16];
+static unsigned display_batch, display_redraw_pending;
 static void out(unsigned p,int v){
   if (p < 32u) *(volatile uint32_t *)(v?GPIO_OUT_W1TS:GPIO_OUT_W1TC)=BIT(p);
   else *(volatile uint32_t *)(v?GPIO_OUT1_W1TS:GPIO_OUT1_W1TC)=BIT(p-32u);
@@ -142,25 +144,70 @@ void cardputer_display_init(void){
   cmd(0x13);cmd(0x29);
   cmd(0x3A);dat(0x55);cmd(0x36);dat(0x60);cmd(0x21);
   x=y=0;ready=1;
+  { unsigned row,col; for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=' '; }
 }
-void cardputer_display_putc(char c){if(!ready||spi_fault)return;if(c=='\r')return;if(c=='\n'){x=0;y+=14;if(y>121)y=0;return;}if(c=='\b'){if(x>=12)x-=12;return;}glyph(c);}
+void cardputer_display_clear(void){
+  unsigned n,row,col;
+  if(!ready||spi_fault)return;
+  win(0,0,239,134);
+  out(DC,1); out(CS,0);
+  for(n=0;n<240u*135u;n++) px(0x0000);
+  out(CS,1);
+  x=y=0;
+  for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=' ';
+}
+static void glyph_scaled(char c);
+void cardputer_display_begin_batch(void){display_batch=1;display_redraw_pending=0;}
+void cardputer_display_end_batch(void){
+  unsigned row,col;
+  if(!display_redraw_pending){display_batch=0;return;}
+  display_batch=0; display_redraw_pending=0;
+  { unsigned n; win(0,0,239,134); out(DC,1); out(CS,0); for(n=0;n<240u*135u;n++) px(0x0000); out(CS,1); }
+  for(row=0;row<12;row++) for(col=0;col<16;col++) if(textbuf[row][col]!=' '){x=col*15;y=row*11;glyph_scaled(textbuf[row][col]);}
+  x=0; y=121;
+}
+static void glyph_scaled(char c){
+  static const uint8_t f[26][5]={{14,17,16,17,14},{30,17,30,17,30},{14,17,16,17,14},{30,17,17,17,30},{31,16,30,16,31},{31,16,30,16,16},{14,16,23,17,14},{17,17,31,17,17},{14,4,4,4,14},{7,2,2,18,12},{17,18,28,18,17},{16,16,16,16,31},{17,27,21,17,17},{17,25,21,19,17},{14,17,17,17,14},{30,17,30,16,16},{14,17,17,21,14},{30,17,30,18,17},{15,16,14,1,30},{31,4,4,1,30},{17,17,17,17,14},{17,17,17,10,4},{17,17,21,27,17},{17,10,4,10,17},{17,10,4,4,4},{31,2,4,8,31}};
+  static const uint8_t d[10][5]={{14,17,17,17,14},{4,12,4,4,14},{14,1,6,8,31},{30,1,14,1,30},{2,6,10,31,2},{31,16,30,1,30},{14,16,30,17,14},{31,1,2,4,4},{14,17,14,17,14},{14,17,15,1,14}};
+  static const uint8_t l[26][5]={{0,14,1,15,15},{16,16,30,17,30},{0,14,16,16,14},{1,1,15,17,15},{0,14,31,16,14},{6,9,28,8,8},{0,15,17,15,1},{16,16,30,17,17},{4,0,12,4,14},{2,0,6,2,18},{16,18,28,18,17},{12,4,4,4,14},{0,26,21,17,17},{0,30,17,17,17},{0,14,17,17,14},{0,30,17,30,16},{0,15,17,15,1},{0,22,25,16,16},{0,15,28,3,30},{8,8,28,8,7},{0,17,17,19,13},{0,17,17,10,4},{0,17,21,21,10},{0,17,10,4,10},{0,17,17,15,1},{0,31,2,4,31}};
+  uint8_t r[5]; unsigned i,row,col,sx,sy;
+  if(c>='a'&&c<='z') for(i=0;i<5;i++) r[i]=l[c-'a'][i];
+  else if(c>='A'&&c<='Z') for(i=0;i<5;i++) r[i]=f[c-'A'][i];
+  else if(c>='0'&&c<='9') for(i=0;i<5;i++) r[i]=d[c-'0'][i];
+  else if(c=='[') { r[0]=6; r[1]=4; r[2]=4; r[3]=4; r[4]=6; }
+  else if(c==']') { r[0]=12; r[1]=4; r[2]=4; r[3]=4; r[4]=12; }
+  else if(c=='=') { r[0]=0; r[1]=31; r[2]=0; r[3]=31; r[4]=0; }
+  else for(i=0;i<5;i++) r[i]=(c==' ')?0:(uint8_t)(0x11^(c*13u+i*7u));
+  win(x,y,x+14,y+9); out(DC,1); out(CS,0);
+  for(row=0;row<5;row++) for(sy=0;sy<2;sy++)
+    for(col=0;col<8;col++) for(sx=0;sx<(col<7 ? 2u : 1u);sx++)
+      px((col<7 && (r[row]&(1u<<(6-col)))) ? 0xFFFF : 0x0000);
+  out(CS,1); x+=15;
+  if(x>=240){x=0;y+=11;} if(y>123){y=121;}
+}
+void cardputer_display_putc(char c){
+  unsigned row,col,n;
+  if(!ready||spi_fault)return;
+  if(c=='\r')return;
+  if(c=='\n'){
+    x=0; y+=11;
+    if(y<=123)return;
+    for(row=0;row<11;row++) for(col=0;col<16;col++) textbuf[row][col]=textbuf[row+1][col];
+    for(col=0;col<16;col++) textbuf[11][col]=' ';
+    if(display_batch){x=0;y=121;return;}
+    win(0,0,239,134); out(DC,1); out(CS,0);
+    for(n=0;n<240u*135u;n++) px(0x0000);
+    out(CS,1);
+    for(row=0;row<11;row++) for(col=0;col<16;col++) if(textbuf[row][col]!=' '){x=col*15;y=row*11;glyph_scaled(textbuf[row][col]);}
+    x=0;y=121;
+    return;
+  }
+  if(c=='\b'){if(x>=15)x-=15;return;}
+  if(x>=240) cardputer_display_putc('\n');
+  row=y/11; col=x/15;
+  if(row<12 && col<16) textbuf[row][col]=c;
+  if(display_batch && display_redraw_pending)return;
+  glyph_scaled(c);
+}
 void cardputer_display_write(const char *s){while(*s)cardputer_display_putc(*s++);}
 unsigned cardputer_display_faulted(void){return spi_fault;}
-static void draw_test_text(void){
-  static const uint8_t f[4][5]={{14,17,16,17,14},{30,17,30,16,16},{30,1,14,1,30},{30,1,6,8,31}};
-  unsigned ch,row,col,sx,sy;
-  win(8,8,71,17);
-  out(DC,1); out(CS,0);
-  /* Pre-rotate each 5x7 glyph clockwise, then scale every pixel 2x2. */
-  for (row=0;row<5;row++) for (sy=0;sy<2;sy++)
-    for (ch=0;ch<4;ch++) for (col=0;col<8;col++) for (sx=0;sx<2;sx++)
-      px((col<7 && (f[ch][row]&(1u<<(6-col)))) ? 0xFFFF : 0x0000);
-  out(CS,1);
-}
-void cardputer_display_boot_test(void){
-  cardputer_display_init();
-  win(8,8,71,17);
-  { unsigned n; out(DC,1); out(CS,0); for(n=0;n<64u*10u;n++) px(0x0000); out(CS,1); }
-  draw_test_text();
-  for (;;) { }
-}
