@@ -109,7 +109,6 @@ void main(void)
      * call0-compatible baseline for task and server descriptors. */
     rp->p_reg.psw = 0x100;
     memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
-    rp->p_reg.a[15] = 0x3FC00000;
 
     if (t < 0) {
       rp->p_reg.sp = (kernel_stack + 4096) & ~0x0F;
@@ -119,6 +118,9 @@ void main(void)
                       (t * 4096) + 4096) & ~0x0F;
     }
     rp->p_reg.a[1] = rp->p_reg.sp;
+    /* call0 uses a15 as the frame pointer. Keep every fresh descriptor's
+     * frame in its own stack window; a shared fixed base faults on entry. */
+    rp->p_reg.a[15] = rp->p_reg.sp;
     rp->p_map[T].mem_phys = 0;
     rp->p_map[T].mem_len = 0;
     rp->p_map[T].mem_vir = 0x3FC00000;
@@ -227,8 +229,8 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-    usbj_print("[TEST CARDPUTER-KBD 245]\r\n");
-    usbj_print("[TEST CARDPUTER-CORE 49]\r\n");
+    usbj_print("[TEST SCHEDULER 2]\r\n");
+
     usbj_print("[CORE readyq=");
     usbj_print_u32((uint32_t)cp32_ready_queue_check());
     usbj_print("]\r\n");

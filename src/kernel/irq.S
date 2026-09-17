@@ -517,6 +517,9 @@ cp32_enter_initial_user:
     l32i    a1, a3, 72
     l32i    a15, a3, 60
     rsync
+    /* a2/a3 were metadata temporaries while constructing the jump target. */
+    l32i    a2, a3, 8
+    l32i    a3, a3, 12
     jx      a4
 .size cp32_enter_initial_user, .-cp32_enter_initial_user
 

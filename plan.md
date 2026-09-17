@@ -211,8 +211,10 @@ integration. Define the user ABI after one user process can run.
   passes.
 - [x] 5q. Gate return-frame publication on explicit IRQ-dispatch ownership.
 - [x] 5r. Reconcile the final runnable selection inside the IRQ dispatch pass.
-- [ ] 5s. Rotate scheduler queue priority to prevent task starvation (blocked
-  by task-frame initialization fault).
+- [x] 5s. Rotate scheduler queue priority to prevent task starvation and
+  initialize each descriptor's call0 frame pointer from its own stack.
+- [x] 5s-a. Restore saved a2/a3 when re-entering a task through the initial
+  context handoff, preserving resumed IPC state.
 - [x] 5t. Harden `numap()` against invalid or inconsistent process descriptors.
 - [x] 5u. Isolate IPC blocked-frame capture for suspension/resumption.
 - [x] 5v. Rate-limit repetitive CLOCK task execution diagnostics.
@@ -573,8 +575,10 @@ marks hardware behavior complete.
   delivery and bounded `ls`/`ramdisk` dispatch are validated on hardware.
 - [ ] 8cm. Keep `cat` and additional shell commands deferred until the kernel
   phase has a production filesystem/message path.
-- [ ] 8cn. Implement the next core-kernel feature with host coverage before
-  expanding the command surface.
+- [x] 8cn. Add host coverage for scheduler class rotation before expanding
+  the command surface. Hardware marker `[TEST SCHEDULER 2]` is validated:
+  repeated timer returns, FS resume, keyboard delivery, and `ls` execution
+  are stable on the Cardputer.
 - [x] 8co. Guard bit-banged keyboard I²C transactions against concurrent
   scheduler/IRQ poll re-entry; marker 2 boots and reaches the stable FS/TTY
   loop without the prior exception.
@@ -598,9 +602,8 @@ marks hardware behavior complete.
 - [x] The first user TTY transaction completes and copies data correctly:
   `[TTY user-char=k]` confirms the earlier double-address translation bug is
   fixed.
-- [ ] User client resumes for subsequent reads. After the first character the
-  return path reports `RFE target=0 current=0` and resumes at an internal idle
-  address (`0x40372C0B`), so the FS client loop is not re-entered.
+- [x] User client resumes for subsequent reads. Hardware now shows repeated
+  `RFE target=1 current=1` returns and successful `ls` input/dispatch.
 - [ ] Next investigation: trace `irq_user` labels 2/3/4 and the exact value of
   `cp32_user_dispatch_blocked`, `proc_ptr`, and `cp32_irq_return_proc` after
   `cp32_user_trap_dispatch()` returns successfully.

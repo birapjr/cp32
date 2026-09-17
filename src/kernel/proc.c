@@ -1272,6 +1272,9 @@ PRIVATE void pick_proc()
         rdy_tail[q] = NIL_PROC;
       }
       rp->p_nextready = NIL_PROC;
+      /* Advance the starting class so a busy task class cannot starve
+       * servers/users whose frames are now initialized and runnable. */
+      next_queue = (q + 1) % NQ;
       break;
     }
     rp = NIL_PROC;
