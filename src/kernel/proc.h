@@ -151,5 +151,6 @@ EXTERN int cp32_map_state_check(void);
 EXTERN int cp32_runtime_owner_check(void);
 EXTERN int cp32_blocked_frame_check(void);
 EXTERN int cp32_blocked_owner_check(void);
+EXTERN int cp32_irq_return_frame_check(void);
 
 #endif /* PROC_H */

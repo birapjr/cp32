@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include <minix/com.h>
+#include <minix/callnr.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include "tty.h"
@@ -37,6 +38,7 @@ int _receive(int src, message *m) {
 }
 
 int _sendrec(int dest, message *m) {
+    int result;
     /* The CP32 TTY client is a synthetic FS caller.  Keep both halves of
      * BOTH bound to the FS descriptor; an IRQ may publish IDLE or another
      * runnable process through current_proc between dispatch phases. */
@@ -47,5 +49,14 @@ int _sendrec(int dest, message *m) {
         proc_ptr = current_proc;
     }
     if (proc_ptr == NIL_PROC || m == (message *)0) return EINVAL;
-    return sys_call(BOTH, dest, m);
+    result = sys_call(BOTH, dest, m);
+    if (result != OK) return result;
+
+    /* A TTY exchange is complete only after the reply has come back from
+     * the device task.  Do not let an unrelated/empty message look like a
+     * successful read: that was the source of the zero-byte console reply
+     * seen during the first IPC integration attempt. */
+    if (dest == TTY && (m->m_type != TASK_REPLY || m->REP_STATUS < 0))
+        return EIO;
+    return OK;
 }

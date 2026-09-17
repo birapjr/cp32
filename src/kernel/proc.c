@@ -531,6 +531,7 @@ CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
 
 CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
+  static unsigned blocked_resume_reported;
   if (rp == NIL_PROC) return;
   if (rp->p_blocked_frame_valid &&
       (rp->p_blocked_frame_pc != rp->p_reg.pc ||
@@ -550,6 +551,14 @@ CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int resu
   rp->p_flags &= ~(SENDING | RECEIVING);
   cp32_blocked_frame_wake_count++;
   cp32_blocked_resume_count++;
+  if (!blocked_resume_reported) {
+    blocked_resume_reported = 1;
+    usbj_print("[IPC blocked-resume=1 owner=");
+    usbj_print_u32((uint32_t)rp->p_nr);
+    usbj_print(" result=");
+    usbj_print_u32((uint32_t)result);
+    usbj_print("]\r\n");
+  }
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
   if (cp32_blocked_return_proc == rp)
@@ -835,6 +844,24 @@ CP32_IRAM_EXT PUBLIC int cp32_scheduler_owner_check(void)
         owners[i] >= END_PROC_ADDR)
       return FALSE;
   }
+  return TRUE;
+}
+
+/* The assembly IRQ epilogue must restore the frame selected by C, not merely
+ * the frame that was interrupted.  Keep this check small enough for the
+ * timer path: ownership, runnable state, and the call0 frame invariants are
+ * the properties that make the handoff safe. */
+CP32_IRAM_EXT PUBLIC int cp32_irq_return_frame_check(void)
+{
+  struct proc *rp = (struct proc *)cp32_irq_return_proc;
+
+  if (rp == NIL_PROC || rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+      rp->p_flags != 0 || rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+      (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp ||
+      rp->p_reg.a[15] == 0)
+    return FALSE;
+  if (current_proc != rp || proc_ptr != rp)
+    return FALSE;
   return TRUE;
 }
 

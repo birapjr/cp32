@@ -638,8 +638,11 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   if (cp32_irq_return_proc == NIL_PROC ||
       cp32_irq_return_proc->p_flags != 0) {
     #if CP32_VERBOSE_DIAGNOSTICS
+    static unsigned rfe_overwrite_reports;
     if (cp32_irq_return_proc != NIL_PROC &&
-        cp32_irq_return_proc->p_nr == FS_PROC_NR) {
+        cp32_irq_return_proc->p_nr == FS_PROC_NR &&
+        (rfe_overwrite_reports++ == 0 ||
+         (rfe_overwrite_reports % 1000) == 0)) {
       usbj_print("[RFE overwrite fs-flags=");
       usbj_print_u32((uint32_t)cp32_irq_return_proc->p_flags);
       usbj_print(" new=");
@@ -648,6 +651,17 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     }
     #endif
     cp32_irq_return_proc = proc_ptr;
+  }
+  if (cp32_irq_return_proc != NIL_PROC &&
+      cp32_irq_return_proc->p_nr == FS_PROC_NR &&
+      cp32_irq_return_frame_check()) {
+    static unsigned frame_check_reported;
+    if (!frame_check_reported) {
+      frame_check_reported = 1;
+      usbj_print("[IRQ return-frame=1 owner=");
+      usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
+      usbj_print("]\r\n");
+    }
   }
   #if CP32_VERBOSE_DIAGNOSTICS
   if (rfe_trace_count == 0) {

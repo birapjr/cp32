@@ -30,6 +30,30 @@ extern volatile uint32_t cp32_timer_irq_ticks;
 extern int _sendrec(int dest, message *m);
 extern unsigned cardputer_keyboard_stale_events;
 extern tty_t tty_table[];
+
+/* Validate the first task-owned descriptor before the IRQ return path is
+ * enabled.  CLOCK is the first production task and its private stack window
+ * is the smallest useful proof that the saved call0 frame is self-owned. */
+static int cp32_boot_clock_descriptor_check(void)
+{
+  struct proc *rp = proc_addr(CLOCK);
+  reg_t stack_lo = (reg_t)_stack_bottom;
+  reg_t stack_hi = stack_lo + 0x10000;
+
+  if (rp == NIL_PROC || rp->p_flags == P_SLOT_FREE ||
+      rp->p_reg.pc != (reg_t)clock_task || rp->p_reg.sp == 0 ||
+      rp->p_reg.a[1] != rp->p_reg.sp || rp->p_reg.a[15] == 0 ||
+      rp->p_reg.psw == 0 || (rp->p_reg.sp & 0x0F) != 0)
+    return FALSE;
+
+  /* The task stack must be inside the reserved DRAM stack area and leave a
+   * complete 4 KiB window below its top for call0 frames. */
+  if (rp->p_reg.sp <= stack_lo || rp->p_reg.sp > stack_hi ||
+      rp->p_reg.sp - stack_lo < 4096)
+    return FALSE;
+  return TRUE;
+}
+
 CP32_IRAM_EXT void kernel_idle_loop(void)
 {
   static uint32_t heartbeat;
@@ -161,6 +185,9 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
+  usbj_print("[FEATURE TTY-IPC-PROBE 5]");
+  usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
+  usbj_print("\r\n");
 
   usbj_print("[KBD probe=");
   usbj_print_u32((uint32_t)cardputer_keyboard_probe());

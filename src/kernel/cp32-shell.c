@@ -5,9 +5,12 @@
 #include "ramdisk.h"
 #include "tty.h"
 #include <string.h>
-
+#include <minix/com.h>
+#include <minix/callnr.h>
+#include <errno.h>
 extern void cp32_tty_poll_keyboard(void);
 extern int cp32_tty_read_char(char *out);
+extern int _sendrec(int dest, message *m);
 volatile char cp32_tty_user_byte;
 static char cp32_tty_line[64];
 static unsigned cp32_tty_line_len;
@@ -28,7 +31,12 @@ CP32_IRAM_EXT static void cp32_shell_print_u32(uint32_t value)
 
 CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 {
-  if (strcmp(line, "ls") == 0) {
+  if (strcmp(line, "ipc") == 0) {
+    /* The synchronous probe can suspend the interactive FS owner while TTY
+     * is still waiting for its receive turn. Keep the command non-blocking
+     * until the asynchronous task-owned request path is wired. */
+    cp32_shell_print("[TTY IPC probe deferred]\r\n");
+  } else if (strcmp(line, "ls") == 0) {
     cp32_shell_print("ramdisk\r\n");
     cp32_shell_print("boot\r\n");
     cp32_shell_print("README\r\n");

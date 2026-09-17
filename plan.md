@@ -30,6 +30,25 @@ Xtensa vectors, direct registers, and SYSTIMER.
 Next: enable one descriptor task at a time and validate restored PC/SP/PS and
 stack ownership on hardware.
 
+Bring-up step: `[FEATURE TASK-DESC 1]` validates the CLOCK descriptor's
+entry point, aligned SP/a1, call0 frame pointer, PSW, and reserved stack
+window immediately before IRQ startup. Host tests and the Xtensa ELF/image
+build pass. Hardware validation passed: the marker reported `1`, CLOCK and
+FS frames were restored, `TTY user-entry` was reached, and IRQs continued
+through count 500 without an exception.
+
+Next bring-up image: `[FEATURE IRQ-HANDOFF 2]` adds a runtime check that the
+frame selected by the IRQ dispatcher is runnable, self-consistent, and owned
+by both scheduler pointers before assembly restoration. Host tests and the
+Xtensa ELF/image build pass. Hardware validation passed: the marker reported
+`1`, the selected FS frame reported `return-frame=1`, and execution reached
+`TTY user-entry`.
+
+Next bring-up image: `[FEATURE IPC-BLOCKED 3]` adds a one-time runtime report
+when a blocked SEND/RECEIVE frame is completed, its result is restored into
+`a2`, and the owner is made runnable again. Host tests and the ELF/image build
+pass; hardware validation is pending.
+
 ### 2. Interrupt and exception dispatch — Partially implemented
 
 Reference: `minix-2.0.0/src/kernel/mpx386.s`, `i8259.c`, `exception.c`,
@@ -69,6 +88,20 @@ blocked calls and concurrent task/server exchanges proven on hardware.
 
 Next: exercise both blocking directions, BOTH, deadlock, invalid endpoints,
 and deferred IRQ notification after handoff is live.
+
+Bring-up image `[FEATURE TTY-IPC 4]` adds reply validation to the TTY
+`_sendrec()` adapter: completed exchanges must return `TASK_REPLY` with a
+non-negative status, otherwise `EIO` is returned. Host tests and the
+Xtensa ELF/image build pass; hardware validation and a dedicated IPC probe
+remain pending. The direct interactive console path remains the production
+path until that probe succeeds.
+
+Image `[FEATURE TTY-IPC-PROBE 5]` currently exposes an `ipc` shell command
+that reports `probe deferred`; the earlier synchronous request was removed
+because it could suspend the interactive FS owner before TTY task handoff.
+Hardware output confirms the console remains stable through IRQ 1500 and
+`ls` continues to work. The asynchronous task-owned probe is still pending;
+the marker is not considered hardware validation of TTY IPC.
 
 ### 5. Clock, alarms, and time — Partially implemented
 
