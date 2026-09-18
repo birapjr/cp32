@@ -30,7 +30,6 @@ extern struct proc *held_tail;
 #define CP32_VERBOSE_HANDOFF_DIAGNOSTICS 0
 
 extern volatile int cp32_context_restore_gate;
-extern void cp32_enter_initial_user(struct proc *rp);
 extern volatile int cp32_context_handoff_gate;
 extern struct proc *current_proc;
 CP32_IRAM_EXT PRIVATE int copy_message(struct proc *sender, message *src,
@@ -1287,6 +1286,24 @@ PRIVATE void pick_proc()
       rp->p_nextready = NIL_PROC;
       cp32_ready_blocked_skip_count++;
     }
+    /* Bring-up task entries such as MM/SYS still use blocking receive()
+     * without a complete task-context return path. Prefer the cooperative
+     * TTY task while the live console probe is being exercised; otherwise a
+     * first quantum can enter MM and stop before the next IRQ. */
+    if (q == TASK_Q && rdy_head[q] != NIL_PROC) {
+      int rotations = 0;
+      while (rdy_head[q] != NIL_PROC &&
+             rdy_head[q]->p_nr != TTY_PROC_NR &&
+             rotations++ < NR_TASKS) {
+        struct proc *head = rdy_head[q];
+        rdy_head[q] = head->p_nextready;
+        if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
+        head->p_nextready = NIL_PROC;
+        if (rdy_tail[q] == NIL_PROC) rdy_head[q] = head;
+        else rdy_tail[q]->p_nextready = head;
+        rdy_tail[q] = head;
+      }
+    }
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
       if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
@@ -1411,14 +1428,9 @@ CP32_IRAM_EXT PRIVATE void switch_to(struct proc *next)
 {
     if (next != NIL_PROC) {
       current_proc = next;
-      /* switch_to() is the first point where a non-IRQ scheduler selection is
-       * authoritative. Transfer directly while FS is still runnable; waiting
-       * for the idle loop lets the clock task block it again. */
-      if (cp32_context_restore_gate && k_reenter == 0 &&
-          next->p_nr == FS_PROC_NR && next->p_flags == 0 &&
-          next->p_reg.pc != 0 && next->p_reg.sp != 0) {
-        cp32_enter_initial_user(next);
-      }
+      /* Publish selection only. An ordinary C call has not captured its
+       * outgoing context and cannot jump into a suspended FS call chain.
+       * The IRQ/syscall epilogue owns the actual register/stack restore. */
     }
 }
 

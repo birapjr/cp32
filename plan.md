@@ -54,11 +54,12 @@ pass; hardware validation is pending.
 Reference: `minix-2.0.0/src/kernel/mpx386.s`, `i8259.c`, `exception.c`,
 `proc.c:interrupt()`; CP32: `vectors.S`, `irq.S`, `irq_frame.h`, `proc.c`.
 
-Present: Xtensa vector/exception entry, 64-byte frame checks, SYSTIMER setup,
-pending/coalesced notification accounting, and source-level IRQ helpers.
-Missing: complete assembly dispatch and production selected-frame return;
-`irq.S` still contains `TODO: dispatch`. Nested IRQ and fatal exception
-behavior remain hardware evidence items.
+Present: Xtensa vector/exception entry, an 80-byte temporary IRQ frame,
+registered device dispatch, SYSTIMER setup, pending/coalesced notification
+accounting, and gated selected-frame return. Image 30 repairs level-1 PS/RFE
+and general-register preservation, with host register-flow tests.
+Missing: hardware proof for that repair, special-register context storage,
+and nested IRQ/fatal exception validation.
 
 Next: complete one IRQ-to-task return path, then test nested IRQs and panic.
 
@@ -102,6 +103,23 @@ because it could suspend the interactive FS owner before TTY task handoff.
 Hardware output confirms the console remains stable through IRQ 1500 and
 `ls` continues to work. The asynchronous task-owned probe is still pending;
 the marker is not considered hardware validation of TTY IPC.
+
+Next image `[FEATURE TTY-IPC-ASYNC 6]` adds a kernel-owned asynchronous
+probe slot: the shell queues `ipc`, `tty_task()` completes the task-owned
+request, and FS observes the result without blocking. Host tests and the
+ELF/image build pass; hardware validation is pending. This is the staging
+boundary for replacing the slot result with a real IPC reply message.
+
+Next image `[FEATURE TTY-IPC-ASYNC 10]` keeps the selected TTY task in a
+cooperative nonblocking loop during bring-up. This avoids entering the
+blocking `receive()` path before task-context suspension can return safely to
+the scheduler. Host tests and the ELF/image build pass; hardware validation
+is pending.
+
+Next image `[FEATURE TTY-IPC-ASYNC 7]` extends quantum-expiry scheduling to
+consider runnable task and server queues, not only users. This is required for
+TTY to receive CPU time and complete the queued probe. Host tests and the
+ELF/image build pass; hardware validation is pending.
 
 ### 5. Clock, alarms, and time — Partially implemented
 
@@ -191,7 +209,126 @@ real shell, commands, user tests, and image integration.
 
 ## Verification record
 
-`make -C src tests` passes all current host-side tests. No `issues.md` or
-hardware-validation result exists, so all hardware-dependent items remain
-unverified. Rerun the firmware build and inspect ELF placement when the
-Xtensa toolchain is available.
+Hardware evidence is recorded per image below; it does not validate later
+images. See `issues.md` for the current SYSTIMER investigation and the exact
+hardware acceptance criteria. Host tests and ELF layout checks are separate
+from that acceptance gate.
+
+## Historical handoff status — image 29, 2026-09-17
+
+Latest hardware image: `[FEATURE TTY-IPC-ASYNC 29]1`.
+
+Confirmed on hardware:
+
+- Boot, memory/vector checks, process-table checks, scheduler checks, and
+  initial FS handoff succeed.
+- Cardputer keyboard input and shell display output work; `ls` executes and
+  prints RAM-disk contents.
+- The asynchronous `ipc` command queues and reports
+  `[TTY IPC probe task-result=0]` without blocking the shell.
+- SYSTIMER startup reports `conf=0xC7000000`, TARGET0 `ena=0x00000001`, and
+  `raw=0x00000000` after setup.
+
+Known unresolved issue:
+
+- USB IRQ diagnostics stop after `[IRQ count=1 ...]`. The shell can continue
+  processing input, but subsequent timer IRQ heartbeats are not observed.
+- The real TTY task-owned IPC reply is not implemented yet; the probe result
+  is currently a scheduler/FS-side bring-up completion fallback.
+- MM, CLOCK, and TTY task entry loops remain cooperative bring-up paths and
+  do not yet use their final blocking `receive()`/resume contract.
+
+## Continue here
+
+Image 30 now has hardware evidence for two consecutive timer IRQs, but
+crashes after FS console entry. Image 31 removes unsafe direct FS handoffs
+and is built for the user to flash manually. Start with the image-31 section
+below: validate continued FS resumption and IRQ counts 500/1000 before
+enabling real TTY IPC or CLOCK/MM blocking receives.
+
+## SYSTIMER continuation — image 30, 2026-09-17
+
+Image identity: `[FEATURE SYSTIMER-IRQ 30]1` and, immediately before idle
+entry, `[TEST SYSTIMER-IRQ 30]`.
+
+Source investigation found three concrete defects before task activation:
+
+- Level-1 assembly acknowledged TARGET0 before reading the CPU pending
+  bitmap, so the level source could disappear before its rearm handler ran.
+  Device acknowledgement now belongs to the registered timer handler; its
+  counter counts actual timer dispatches.
+- Level-1 return wrote status to SR192 (DEPC) and used undefined `rfi 1`.
+  IRQ and syscall return now restore one selected frame through named PS
+  and `rfe`, keeping EXCM set until the final return. Entry/exit also preserve
+  the general registers previously overwritten during classification and
+  frame restoration.
+- UNIT0 snapshot polling could accept the preceding VALUE_VALID indication.
+  The counter helper clears that W1C bit with UPDATE and retries split reads
+  if another context relatches UNIT0. Boot, CLOCK init, and ISR rearm share
+  one disable/clear/fresh-counter/load/enable sequence.
+
+Diagnostics `[SYSTIMER V30 ...]` capture the UNIT0 counter and actual target,
+CONF, RAW/ST before and after rearm, then report the programmed deadline,
+peripheral enable, CPU INTENABLE/pending/PS and selected return PC/SP/PS.
+Samples are limited to the first two timer dispatches and every 500th.
+
+Ordered next steps:
+
+[x] 1. All 11 host test scripts pass, including the new SYSTIMER register
+   model and assembly register-flow tests. A clean ELF/image build and image
+   layout check pass. Inspected sections/segments: `_iram_end=0x40374264`,
+   `_iram_ext_end=0x4037FF14`, `_stack_top=0x3FCCCD50`, all within linker
+   limits. These checks cannot certify silicon interrupt delivery.
+
+2. Validate image 30 on hardware: observe timer counts 2, 500 and 1000,
+   compare before/after target and counter values, confirm enabled CPU line 2
+   and a return PS that permits level-1 interrupts, then exercise the shell.
+3. Only after step 2, complete the missing special-register context storage
+   needed for arbitrary instruction preemption, then replace all
+   shell/scheduler probe completion fallbacks with a real TTY-owned IPC
+   request/reply and verify blocked caller resume.
+4. Then activate CLOCK's HARD_INT receive/resume path and MM's blocking
+   receive path separately, checking each task's ownership and continued
+   timer/shell operation.
+
+The task scheduler and cooperative CLOCK/MM/TTY gates are unchanged by this
+step. The 76-byte process-frame ABI still omits SAR and other special state;
+the register-flow tests cover general registers, PC, PS and SP, not a complete
+Xtensa task-context or nested-interrupt proof.
+
+## Current handoff status — image 31, 2026-09-18
+
+Latest supplied hardware logs are image 30, not image 31. Both show TARGET0
+rearmed correctly at IRQs 1 and 2, RAW/ST clearing, CPU interrupt 2 enabled,
+and FS entry reached. They then halt with these two outcomes:
+
+- `EXCCAUSE=0x00000002`, `EPC1=EXCVADDR=0x3FCD6D40` (FS entry SP minus 16).
+- `EXCCAUSE=0x00000014`, `EPC1=0x00000001`, `EXCVADDR=0`.
+
+The source contains a reproducible ownership bug: LOW_USER runs
+`kernel_idle_loop()`, which replayed `cp32_last_selected_fs` without updating
+the running owner or saving the outgoing context. This allows the next IRQ
+to save FS execution into LOW_USER's descriptor and later replay stale FS
+call state. C `switch_to()` had a second direct restore that could abandon
+an unfinished scheduler/IPC call. Image 31 removes both bypasses; actual
+frame restoration remains at IRQ/syscall return. Hardware confirmation that
+this resolves the reported crashes is still required.
+
+[x] Regression tests execute the production idle/switch C bodies against
+fresh and suspended FS selections. The original code fails with a restore
+under the wrong owner; the corrected code passes all five cases.
+
+[x] All 12 host test scripts pass. Clean Xtensa ELF/bin build, image layout,
+section/segment inspection, and `git diff --check` pass without compiler
+warnings. `_iram_end=0x40374268`, `_iram_ext_end=0x4037FFAC`, and
+`_stack_top=0x3FCCCE20` remain within linker limits.
+
+Next hardware image: `[FEATURE SYSTIMER-IRQ 31]1` and
+`[TEST SYSTIMER-IRQ 31]`. Two `[CTX V31 FS-RETURN ...]` lines report the first
+FS selections, including PC/SP/a0/a15 and frame ownership checks. The user
+will flash manually; no automatic flash was performed.
+
+Acceptance: shell remains responsive, FS resumes without an exception, and
+IRQs reach 500 and 1000. Only then proceed to special-register context
+preservation, real TTY request/reply, and CLOCK/MM receive activation. Those
+steps and arbitrary task-context scheduling remain pending.

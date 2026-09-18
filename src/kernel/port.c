@@ -21,6 +21,9 @@ unsigned lost_ticks;
 clock_t tty_timeout;
 tty_t tty_table[NR_CONS + NR_RS_LINES + NR_PTYS];
 tty_t *tty_timelist;
+volatile int cp32_tty_probe_pending;
+volatile int cp32_tty_probe_done;
+volatile int cp32_tty_probe_result;
 
 /* Kernel-side MINIX message wrappers.  The syslib macros map send/receive to
  * these symbols, so call the primitive IPC functions directly; calling the

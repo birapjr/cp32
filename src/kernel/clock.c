@@ -61,6 +61,9 @@ extern struct proc *current_proc;
 extern volatile struct proc *cp32_irq_saved_owner;
 extern volatile struct proc *cp32_irq_return_proc;
 extern volatile int cp32_context_handoff_gate;
+extern volatile int cp32_tty_probe_pending;
+extern volatile int cp32_tty_probe_done;
+extern volatile int cp32_tty_probe_result;
 extern volatile int cp32_irq_dispatch_active;
 extern void kernel_idle_loop(void);
 
@@ -95,7 +98,7 @@ PRIVATE clock_t pending_ticks;                  /* ticks seen by low level only 
 PRIVATE int sched_ticks = SCHED_RATE;           /* counter: when 0, call scheduler  */
 PRIVATE struct proc *prev_ptr;                  /* last user process run by clock task */
 
-/* Incremented by the temporary level-2 SYSTIMER probe handler. */
+/* Count only interrupts dispatched to the registered TARGET0 handler. */
 volatile uint32_t cp32_timer_irq_ticks;
 volatile uint32_t cp32_clock_accounted_ticks;
 volatile uint32_t cp32_clock_alarm_expiries;
@@ -169,6 +172,107 @@ CP32_IRAM_EXT PRIVATE void cp32_print_irq_status(void)
 #endif
 }
 
+/* Removable bring-up diagnostics.  Capture before/after rearm without USB
+ * output between the counter read and comparator load.  The first two
+ * samples prove a second delivery; later samples are limited to 500 ticks.
+ */
+#if CP32_VERBOSE_DIAGNOSTICS
+struct cp32_systimer_sample {
+  uint64_t counter;
+  uint64_t target;
+  uint32_t conf, raw, status;
+};
+PRIVATE struct cp32_systimer_sample cp32_systimer_before;
+PRIVATE struct cp32_systimer_sample cp32_systimer_after;
+PRIVATE uint64_t cp32_systimer_deadline;
+PRIVATE int cp32_systimer_sample_ready;
+
+CP32_IRAM_EXT PRIVATE int cp32_systimer_trace_due(void)
+{
+  return cp32_timer_irq_ticks <= 2 || (cp32_timer_irq_ticks % 500) == 0;
+}
+
+CP32_IRAM_EXT PRIVATE void cp32_systimer_capture(struct cp32_systimer_sample *s)
+{
+  s->counter = systimer_unit0_read();
+  s->target = systimer_target0_read();
+  s->conf = REG_READ(SYSTIMER_CONF_REG);
+  s->raw = REG_READ(SYSTIMER_INT_RAW_REG);
+  s->status = REG_READ(SYSTIMER_INT_ST_REG);
+}
+
+CP32_IRAM_EXT PRIVATE void cp32_systimer_print_ticks(uint64_t ticks)
+{
+  usbj_print_hex32((uint32_t)(ticks >> 32));
+  usbj_print(":");
+  usbj_print_hex32((uint32_t)ticks);
+}
+
+CP32_IRAM_EXT PRIVATE void cp32_systimer_print_sample(
+    const char *phase, const struct cp32_systimer_sample *s)
+{
+  usbj_print("[SYSTIMER V31 n="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print(phase);
+  usbj_print(" now="); cp32_systimer_print_ticks(s->counter);
+  usbj_print(" target="); cp32_systimer_print_ticks(s->target);
+  usbj_print(" conf="); usbj_print_hex32(s->conf);
+  usbj_print(" raw="); usbj_print_hex32(s->raw);
+  usbj_print(" st="); usbj_print_hex32(s->status);
+  usbj_print("]\r\n");
+}
+#endif
+
+CP32_IRAM_EXT PRIVATE void cp32_systimer_report_return(void)
+{
+#if CP32_VERBOSE_DIAGNOSTICS
+  uint32_t intenable, pending, ps;
+  struct proc *rp;
+  if (!cp32_systimer_sample_ready) return;
+  cp32_systimer_sample_ready = 0;
+  __asm__ volatile("rsr %0, intenable" : "=a"(intenable));
+  __asm__ volatile("rsr %0, interrupt" : "=a"(pending));
+  __asm__ volatile("rsr %0, ps" : "=a"(ps));
+  rp = (struct proc *)(cp32_context_handoff_gate ?
+      cp32_irq_return_proc : cp32_irq_saved_owner);
+
+  cp32_systimer_print_sample(" before", &cp32_systimer_before);
+  cp32_systimer_print_sample(" after", &cp32_systimer_after);
+  usbj_print("[SYSTIMER V31 return deadline=");
+  cp32_systimer_print_ticks(cp32_systimer_deadline);
+  usbj_print(" ena="); usbj_print_hex32(REG_READ(SYSTIMER_INT_ENA_REG));
+  usbj_print(" ien="); usbj_print_hex32(intenable);
+  usbj_print(" pending="); usbj_print_hex32(pending);
+  usbj_print(" ps="); usbj_print_hex32(ps);
+  usbj_print(" pc="); usbj_print_hex32(rp == NIL_PROC ? 0 : rp->p_reg.pc);
+  usbj_print(" sp="); usbj_print_hex32(rp == NIL_PROC ? 0 : rp->p_reg.sp);
+  /* RFE clears EXCM; show the status the selected context will run with. */
+  usbj_print(" psout=");
+  usbj_print_hex32(rp == NIL_PROC ? 0 : (rp->p_reg.psw & ~0x10u));
+  usbj_print(" frame="); usbj_print_u32(cp32_irq_return_frame_check());
+  usbj_print("]\r\n");
+#endif
+}
+
+/* Removable trace of initial FS entry and its first scheduled resumption. */
+CP32_IRAM_EXT PRIVATE void cp32_trace_fs_return(void)
+{
+#if CP32_VERBOSE_DIAGNOSTICS
+  static unsigned reports;
+  struct proc *rp = (struct proc *)cp32_irq_return_proc;
+  if (!cp32_context_handoff_gate || rp == NIL_PROC ||
+      rp->p_nr != FS_PROC_NR || reports >= 2) return;
+  reports++;
+  usbj_print("[CTX V31 FS-RETURN n="); usbj_print_u32(reports);
+  usbj_print(" tick="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print(" pc="); usbj_print_hex32(rp->p_reg.pc);
+  usbj_print(" sp="); usbj_print_hex32(rp->p_reg.sp);
+  usbj_print(" a0="); usbj_print_hex32(rp->p_reg.a[0]);
+  usbj_print(" a15="); usbj_print_hex32(rp->p_reg.a[15]);
+  usbj_print(" frame="); usbj_print_u32(cp32_irq_return_frame_check());
+  usbj_print("]\r\n");
+#endif
+}
+
 /*===========================================================================*
  *                              clock_task                                    *
  *===========================================================================*/
@@ -189,11 +293,20 @@ CP32_IRAM_EXT PUBLIC void clock_task()
   init_clock();           /* initialize SYSTIMER and register IRQ handler */
 
   while (TRUE) {
+#if 1
+    /* CLOCK is schedulable, but task-owned HARD_INT receive/resume is not
+     * live yet. Keep its entry cooperative until IPC suspension is proven;
+     * the ISR continues to own tick acknowledge and accounting. */
+    wdt_feed_all();
+    delay(1000);
+    continue;
+#else
     receive(ANY, &mc);
     opcode = mc.m_type;
 
     if (cp32_clock_task_dispatch(opcode) && opcode != HARD_INT)
       send(mc.m_source, &mc);
+#endif
   }
 }
 
@@ -464,21 +577,26 @@ int irq;
   register unsigned ticks;
   clock_t now;
 
-  /* Step 1: Acknowledge the SYSTIMER TARGET0 interrupt.
-   * Clear the peripheral flag BEFORE re-enabling the CPU interrupt line,
-   * otherwise the ISR re-fires immediately.                               */
-  REG_WRITE(SYSTIMER_INT_CLR_REG, SYSTIMER_TARGET0_INT_BIT);
-
-  /* Until the TCA8418 GPIO interrupt is routed, clock ticks provide the
-   * periodic wakeup that lets TTY poll the keyboard FIFO. */
-  interrupt(TTY);
-
-  /* Step 2: Reload next alarm (TARGET0 is one-shot, must reschedule).
-   * Use current counter value as base to avoid drift on missed ticks.    */
+  /* The registered device handler owns acknowledgement: clearing the level
+   * source before assembly reads INTERRUPT can hide it from dispatch. */
+#if CP32_VERBOSE_DIAGNOSTICS
+  if (cp32_systimer_trace_due()) cp32_systimer_capture(&cp32_systimer_before);
+#endif
   {
-    uint64_t next = systimer_unit0_read() + SYSTIMER_TICKS_PER_CLOCK;
-    systimer_set_target0(next);
+    uint64_t deadline = systimer_target0_rearm();
+#if CP32_VERBOSE_DIAGNOSTICS
+    if (cp32_systimer_trace_due()) {
+      cp32_systimer_deadline = deadline;
+      cp32_systimer_capture(&cp32_systimer_after);
+      cp32_systimer_sample_ready = 1;
+    }
+#endif
   }
+
+  /* The bring-up FS console polls the keyboard directly. Do not inject a
+   * synthetic TTY notification from the clock ISR until task-owned IPC
+   * receive/suspend is live; that notification can consume the IRQ return
+   * path and stop subsequent timer ticks. */
 
   /* Step 3: Charge CPU time to the running process.
    * If interrupted inside a kernel handler (k_reenter != 0), charge HARDWARE.
@@ -510,13 +628,10 @@ int irq;
  * Occasional false positives are harmless (do_clocktick is idempotent).
  */
   if (next_alarm <= now ||
-      sched_ticks == 1 &&
-      bill_ptr == prev_ptr &&
-#if (SHADOWING == 0)
-      rdy_head[USER_Q] != NIL_PROC) {
-#else
-      (rdy_head[USER_Q] != NIL_PROC || rdy_head[SHADOW_Q] != NIL_PROC)) {
-#endif
+      (sched_ticks == 1 &&
+       (rdy_head[TASK_Q] != NIL_PROC ||
+        rdy_head[SERVER_Q] != NIL_PROC ||
+        rdy_head[USER_Q] != NIL_PROC))) {
     interrupt(CLOCK);
     return 1;       /* re-enable interrupts */
   }
@@ -537,6 +652,7 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   cp32_clock_irq_bridge_calls++;
   if (frame == 0)
     return;
+  cp32_timer_irq_ticks++;
   if ((((uintptr_t) frame) & 0x0Fu) == 0)
     cp32_clock_irq_frame_aligned_calls++;
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
@@ -547,6 +663,14 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
+  /* Complete the nonblocking bring-up probe at the scheduler boundary. The
+   * final implementation will move this to a real TTY task reply, but this
+   * keeps the FS client asynchronous and prevents a task-context deadlock. */
+  if (cp32_tty_probe_pending) {
+    cp32_tty_probe_result = OK;
+    cp32_tty_probe_pending = 0;
+    cp32_tty_probe_done = 1;
+  }
   unhold();
 
   /* The clock path may schedule while outside the IRQ-owned return contract.
@@ -593,7 +717,9 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * This is the bridge until the full assembly context switch replaces the
    * bring-up scheduler. */
   if (cp32_last_selected_fs != NIL_PROC &&
-      cp32_last_selected_fs->p_flags == 0) {
+      cp32_last_selected_fs->p_flags == 0 &&
+      (proc_ptr == NIL_PROC || proc_ptr->p_nr == IDLE ||
+       proc_ptr->p_nr == FS_PROC_NR)) {
     proc_ptr = (struct proc *)cp32_last_selected_fs;
     current_proc = (struct proc *)cp32_last_selected_fs;
     cp32_irq_return_proc = cp32_last_selected_fs;
@@ -692,14 +818,14 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   }
   #endif
 
-  /* Stable bring-up status: first IRQ, then every 50 IRQs. */
+  cp32_trace_fs_return();
+  cp32_systimer_report_return();
+  /* Stable bring-up status: first IRQ, then every 500 IRQs. */
   if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 500) == 0)
     cp32_print_irq_status();
 }
 
-/* Bring-up probe for the ESP32-S3 clock source. It starts UNIT0 and verifies
- * that the free-running counter advances, but deliberately leaves TARGET0
- * interrupts disabled until the interrupt-matrix route is implemented. */
+/* Start the bare-metal clock source and its registered level-1 IRQ route. */
 PUBLIC void systimer_irq_start()
 {
   /* The bring-up probe starts SYSTIMER before clock_task exists. Initialize
@@ -724,11 +850,20 @@ PUBLIC void systimer_irq_start()
    * become pending. */
   REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_CLK_EN |
               SYSTIMER_TIMER_UNIT0_WORK_EN);
-  systimer_enable_target0_periodic(SYSTIMER_TICKS_PER_CLOCK);
-  systimer_set_target0(systimer_unit0_read() + SYSTIMER_TICKS_PER_CLOCK);
-  REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
-  REG_WRITE(SYSTIMER_INT_CLR_REG, SYSTIMER_TARGET0_INT_BIT);
-  REG_SET_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
+  /* The ISR explicitly arms the next deadline after each acknowledge, so
+   * use one-shot alarm mode instead of mixing periodic and one-shot control. */
+  REG_CLR_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
+  systimer_enable_target0_alarm();
+  systimer_target0_rearm();
+  usbj_print("[BOOT SYSTIMER V31 conf=");
+  usbj_print_hex32(REG_READ(SYSTIMER_CONF_REG));
+  usbj_print(" target=");
+  usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_CONF_REG));
+  usbj_print(" ena=");
+  usbj_print_hex32(REG_READ(SYSTIMER_INT_ENA_REG));
+  usbj_print(" raw=");
+  usbj_print_hex32(REG_READ(SYSTIMER_INT_RAW_REG));
+  usbj_print("]\r\n");
   enable_irq(CP32_SYSTIMER_CPU_INT);
   /* Startup may leave PS.INTLEVEL raised while boot diagnostics run.
    * enable_irq() preserves that state; explicitly open the CPU gate before
@@ -766,16 +901,11 @@ PRIVATE void init_clock()
   REG_SET_BIT(SYSTIMER_CONF_REG, SYSTIMER_TIMER_UNIT0_WORK_EN);
 
   /* Configure TARGET0 in one-shot alarm mode, tied to UNIT0. */
+  REG_CLR_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
   systimer_enable_target0_alarm();
 
-  /* Load first alarm: current counter + one tick period. */
-  {
-    uint64_t first = systimer_unit0_read() + SYSTIMER_TICKS_PER_CLOCK;
-    systimer_set_target0(first);
-  }
-
-  /* Unmask TARGET0 interrupt inside the SYSTIMER peripheral. */
-  REG_SET_BIT(SYSTIMER_INT_ENA_REG, SYSTIMER_TARGET0_INT_BIT);
+  /* Use the same acknowledge/load/enable sequence as boot and every IRQ. */
+  systimer_target0_rearm();
 
   /* Register Minix IRQ handler and enable the CPU-side interrupt line. */
   // TODO: , is this line needed at ESP32-S3?

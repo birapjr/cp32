@@ -197,10 +197,12 @@ CP32_IRAM_EXT PUBLIC void mm_task()
 
     usbj_print("[MM_TASK]\r\n");
     for (;;) {
-        /* A real server must block here.  This makes MM ownership visible to
-         * the scheduler and exercises the normal IPC suspension/resumption
-         * path instead of consuming CPU in a private idle loop. */
-        receive(ANY, &m);
+        /* MM task-context suspension is not live yet.  Keep the task
+         * scheduler-safe while preserving a real server entry point; the
+         * blocking receive is enabled after task-owned IPC return is proven. */
+        wdt_feed_all();
+        delay(1000);
+        continue;
         if (!cp32_mm_source_valid(m.m_source)) continue;
 
         /* A malformed IPC endpoint must never turn into a reply to ANY or a
