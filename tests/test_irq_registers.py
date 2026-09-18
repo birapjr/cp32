@@ -22,6 +22,11 @@ CONSTANTS = {
 }
 
 
+SPECIAL = ("sar", "lbeg", "lend", "lcount")
+ORIGINAL_SPECIAL = (7, 0x40371000, 0x40371020, 9)
+SELECTED_SPECIAL = (23, 0x40372000, 0x40372030, 4)
+
+
 class Machine:
     def __init__(self):
         code = re.sub(r"/\*.*?\*/", "", SOURCE, flags=re.S)
@@ -42,6 +47,7 @@ class Machine:
         self.original = self.reg.copy()
         self.sr = {"ps": 0x110, "epc1": 0x40371234,
                    "exccause": 4, "interrupt": 4, "intenable": 4}
+        self.sr.update(zip(SPECIAL, ORIGINAL_SPECIAL))
         self.mem = {}
         self.symbols = {"_stack_top": 0x3FCFF000}
         self.pc = 0
@@ -73,12 +79,12 @@ class Machine:
     def global_get(self, name):
         return self.mem[self.value(name)]
 
-    def frame_write(self, address, regs, pc, ps):
-        for i, value in enumerate([*regs, pc, ps, regs[1]]):
+    def frame_write(self, address, regs, pc, ps, special=ORIGINAL_SPECIAL):
+        for i, value in enumerate([*regs, pc, ps, regs[1], *special]):
             self.mem[address + 4 * i] = value
 
     def frame_read(self, address):
-        return [self.mem[address + 4 * i] for i in range(19)]
+        return [self.mem[address + 4 * i] for i in range(23)]
 
     def jump(self, label):
         if re.fullmatch(r"\d+[fb]", label):
@@ -164,7 +170,7 @@ class IRQRegisters(unittest.TestCase):
                     # Preserve a nonzero INTLEVEL in the chosen frame; the
                     # decoy proc_ptr has a conflicting status and stack.
                     selected_pc, selected_ps = 0x40374567, 0x103
-                    m.frame_write(selected, regs, selected_pc, selected_ps)
+                    m.frame_write(selected, regs, selected_pc, selected_ps, SELECTED_SPECIAL)
 
                     def dispatch(cpu, name):
                         self.assertEqual(name, "cp32_irq_dispatch")
@@ -172,7 +178,7 @@ class IRQRegisters(unittest.TestCase):
                         self.assertEqual(cpu.global_get("k_reenter"), 1)
                         self.assertEqual(cpu.frame_read(owner),
                                          [*cpu.original, original_pc, original_ps,
-                                          cpu.original[1]])
+                                          cpu.original[1], *ORIGINAL_SPECIAL])
                         self.assertEqual([cpu.mem[cpu.reg[2] + i * 4]
                                           for i in range(16)], cpu.original)
                         self.assertFalse(any(0x60000000 <= a < 0x60100000
@@ -182,6 +188,7 @@ class IRQRegisters(unittest.TestCase):
                         cpu.frame_write(0x3FC83000, [0xDEADBEEF] * 16,
                                         0x40370000, 15)
                         cpu.global_set("cp32_irq_return_proc", selected)
+                        cpu.sr.update(zip(SPECIAL, (31, 0x40373000, 0x40373020, 99)))
                         # call0 caller-saved registers may all be destroyed.
                         for i in range(12):
                             if i != 1:
@@ -196,6 +203,8 @@ class IRQRegisters(unittest.TestCase):
                     self.assertEqual(m.global_get("k_reenter"), 0)
                     self.assertEqual(m.sr["intenable"], 4)
                     self.assertNotIn("192", m.sr)
+                    self.assertEqual(tuple(m.sr[r] for r in SPECIAL),
+                                     SELECTED_SPECIAL if handoff else ORIGINAL_SPECIAL)
 
     def test_syscall_preserves_arguments_and_result(self):
         for entry in ("irq_kernel", "irq_user"):
@@ -211,11 +220,12 @@ class IRQRegisters(unittest.TestCase):
                     self.assertEqual(cpu.reg[4], 0)
                     self.assertEqual(cpu.frame_read(cpu.reg[3]),
                                      [*cpu.original, original_pc, original_ps,
-                                      cpu.original[1]])
+                                      cpu.original[1], *ORIGINAL_SPECIAL])
                     regs = cpu.original.copy()
                     regs[2] = 0x1234
                     cpu.frame_write(owner, regs, original_pc + 3, original_ps)
                     cpu.global_set("cp32_irq_return_proc", owner)
+                    cpu.sr.update(zip(SPECIAL, (31, 0, 0, 0)))
                     cpu.reg[2] = 0
 
                 m.dispatch = dispatch
@@ -226,17 +236,63 @@ class IRQRegisters(unittest.TestCase):
                 self.assertEqual(m.return_pc, original_pc + 3)
                 self.assertEqual(m.sr["ps"], original_ps & ~0x10)
                 self.assertEqual(m.global_get("cp32_user_rfe_count"), 1)
+                self.assertEqual(tuple(m.sr[r] for r in SPECIAL), ORIGINAL_SPECIAL)
+
+    def test_production_syscall_return_and_blocked_handoff(self):
+        for entry in ("irq_kernel", "irq_user"):
+            for blocked in (False, True):
+                with self.subTest(entry=entry, blocked=blocked):
+                    m = self.prepare()
+                    m.global_set("cp32_user_probe_mode", 0)
+                    m.sr["exccause"] = 1
+                    # The shared boot stack must not receive any frame writes.
+                    m.symbols["_stack_top"] = 0x3FCC0000
+                    owner = m.global_get("proc_ptr")
+                    original_pc, original_ps = m.sr["epc1"], m.sr["ps"]
+                    selected = 0x3FC82000 if blocked else owner
+                    expected = m.original.copy()
+                    if blocked:
+                        expected = [0xB0000000 + i * 0x30303 for i in range(16)]
+                        expected[1] = 0x3FCD8000
+                    else:
+                        expected[2] = 0
+                    special = SELECTED_SPECIAL if blocked else ORIGINAL_SPECIAL
+                    pc = 0x4037ABCD if blocked else original_pc + 3
+
+                    def dispatch(cpu, name):
+                        self.assertEqual(name, "cp32_task_ipc_dispatch")
+                        self.assertEqual(cpu.reg[2], owner)
+                        self.assertEqual(cpu.reg[3], cpu.original[1] - 128)
+                        self.assertEqual(cpu.reg[4], 1)
+                        self.assertEqual(cpu.frame_read(cpu.reg[3]),
+                                         [*cpu.original, original_pc, original_ps,
+                                          cpu.original[1], *ORIGINAL_SPECIAL])
+                        cpu.frame_write(selected, expected, pc, original_ps, special)
+                        cpu.global_set("cp32_irq_return_proc", selected)
+                        for i in range(16):
+                            cpu.reg[i] = 0xCCCCCCCC
+                        cpu.sr.update(zip(SPECIAL, (31, 0, 0, 0)))
+                        cpu.reg[2] = 0
+
+                    m.dispatch = dispatch
+                    m.run(entry)
+                    self.assertEqual(m.reg, expected)
+                    self.assertEqual(m.return_pc, pc)
+                    self.assertEqual(m.sr["ps"], original_ps & ~0x10)
+                    self.assertEqual(tuple(m.sr[r] for r in SPECIAL), special)
+                    self.assertFalse(any(0x3FCBFF80 <= a < 0x3FCC0000 for a in m.stores))
 
     def test_initial_entry_restores_every_general_register(self):
         m = self.prepare()
         regs = m.original.copy()
         target = 0x3FC84000
-        m.frame_write(target, regs, 0x4037BEEF, 0x100)
+        m.frame_write(target, regs, 0x4037BEEF, 0x100, (0, 0, 0, 0))
         m.reg[2] = target
         m.run("cp32_enter_initial_user")
         self.assertEqual(m.reg, regs)
         self.assertEqual(m.return_pc, 0x4037BEEF)
         self.assertEqual(m.sr["ps"], 0x100)
+        self.assertEqual(tuple(m.sr[r] for r in SPECIAL), (0, 0, 0, 0))
 
 
 if __name__ == "__main__":

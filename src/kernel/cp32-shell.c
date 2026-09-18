@@ -11,9 +11,6 @@
 extern void cp32_tty_poll_keyboard(void);
 extern int cp32_tty_read_char(char *out);
 extern int _sendrec(int dest, message *m);
-extern volatile int cp32_tty_probe_pending;
-extern volatile int cp32_tty_probe_done;
-extern volatile int cp32_tty_probe_result;
 volatile char cp32_tty_user_byte;
 static char cp32_tty_line[64];
 static unsigned cp32_tty_line_len;
@@ -35,17 +32,24 @@ CP32_IRAM_EXT static void cp32_shell_print_u32(uint32_t value)
 CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 {
   if (strcmp(line, "ipc") == 0) {
-    cp32_tty_probe_done = 0;
-    cp32_tty_probe_pending = 1;
-    /* Until periodic IRQ delivery is proven, publish the local TTY contract
-     * immediately; the shell loop will render it asynchronously. */
-    cp32_tty_probe_result = OK;
-    cp32_tty_probe_pending = 0;
-    cp32_tty_probe_done = 1;
-    /* Keep this diagnostic USB-only while display transactions are still
-     * synchronous; a probe must not hold the console in SPI output. */
-    usbj_print("[TTY IPC probe queued]\r\n");
-    cardputer_display_write("[TTY IPC probe queued]\r\n");
+    message request;
+    struct termios attributes;
+    int result;
+    memset(&request, 0, sizeof(request));
+    memset(&attributes, 0, sizeof(attributes));
+    request.m_type = DEV_IOCTL;
+    request.TTY_LINE = 0;
+    request.PROC_NR = FS_PROC_NR;
+    request.TTY_REQUEST = TCGETS;
+    request.ADDRESS = (char *)&attributes;
+    result = _sendrec(TTY_PROC_NR, &request);
+    if (result == OK && (request.m_source != TTY_PROC_NR ||
+        request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
+      result = EIO;
+    if (result == OK) result = request.REP_STATUS;
+    cp32_shell_print("[TTY IPC V33 reply-result=");
+    cp32_shell_print_u32((uint32_t)result);
+    cp32_shell_print("]\r\n");
   } else if (strcmp(line, "ls") == 0) {
     cp32_shell_print("ramdisk\r\n");
     cp32_shell_print("boot\r\n");
@@ -70,12 +74,6 @@ CP32_IRAM_EXT void cp32_tty_read_client(void)
 {
   usbj_print("[TTY user-entry]\r\n");
   for (;;) {
-    if (cp32_tty_probe_done) {
-      cp32_tty_probe_done = 0;
-      cp32_shell_print("[TTY IPC probe task-result=");
-      cp32_shell_print_u32((uint32_t)cp32_tty_probe_result);
-      cp32_shell_print("]\r\n");
-    }
     cp32_tty_poll_keyboard();
     if (cp32_tty_read_char((char *)&cp32_tty_user_byte) == 1) {
       usbj_print("[TTY user-char=");

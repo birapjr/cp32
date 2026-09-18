@@ -21,11 +21,15 @@
 #define CP32_IRQ_A15_OFFSET 60
 
 /* struct stackframe_s offsets in proc.p_reg (bytes). */
-#define CP32_PROC_FRAME_BYTES 76
+#define CP32_PROC_FRAME_BYTES 92
 #define CP32_REG_A0_OFFSET   0
 #define CP32_REG_A1_OFFSET   4
 #define CP32_REG_A15_OFFSET 60
 #define CP32_REG_PC_OFFSET  64
 #define CP32_REG_PSW_OFFSET 68
 #define CP32_REG_SP_OFFSET  72
+#define CP32_REG_SAR_OFFSET 76
+#define CP32_REG_LBEG_OFFSET 80
+#define CP32_REG_LEND_OFFSET 84
+#define CP32_REG_LCOUNT_OFFSET 88
 #endif

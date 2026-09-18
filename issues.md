@@ -111,8 +111,81 @@ The first two FS IRQ returns emit `[CTX V31 FS-RETURN ...]` with PC, SP,
 return register a0, frame pointer a15 and ownership validation. Timer
 diagnostics retain their sample rate under the V31 label.
 
-Image 31 is built, not hardware-validated or automatically flashed. The user
-requested manual flashing. Check for sustained IRQ counts 500/1000, continued
-shell operation, and no exception after repeated FS returns. If the crash
-persists, use the two FS-return records and the new ELF to continue tracing;
-do not treat the reproduced software defect as proof of hardware resolution.
+Hardware result: the user manually flashed image 31 and supplied
+`docs/hardware/systimer-v31.log`. The reported crash does not recur in this
+capture. Timer counts reach 500, 1000 and 1500; sampled rearming clears RAW/ST,
+CPU INTENABLE remains `0x00000004`, and return checks report `frame=1`.
+FS enters at tick 5 and resumes at tick 11 with PC `0x4037D285`, SP/a15
+`0x3FCD6DF0`, and code return address a0 `0x4037D241`.
+
+Keyboard characters form the `ipc` command while the timer continues. The
+queued marker and result `0` appear, with an idle heartbeat interleaved inside
+the result line. That result is still the local fallback, not real TTY IPC.
+No `ls` run or extended stress result is present. This validates the bounded
+crash-fix/timer acceptance run; special-register preservation and blocking
+task IPC remain separate work. No automatic flashing was performed.
+
+## Image 32 — integer special-register preservation
+
+MINIX restores each selected process's execution state at restart. On Xtensa,
+general registers alone omit SAR (used by variable shifts) and LBEG/LEND/
+LCOUNT (hardware loops). C interrupt dispatch can overwrite these registers
+while the interrupted process still needs their previous values.
+
+The process and syscall frames now append these four registers at offsets
+76/80/84/88 (92 bytes total). IRQ temporary frames use offsets 64..79 without
+changing their 80-byte stack allocation. Entry captures the values before C;
+the return epilogue restores the selected values while EXCM is still set.
+Fresh descriptors zero the new state and C frame-copy paths preserve it.
+This follows the SAR/loop save and restore pattern in Espressif's local
+ESP-IDF v5.5.3 `components/xtensa/xtensa_context.S`; CP32 remains bare-metal.
+
+All 12 host scripts pass. The assembly interpreter tests distinct outgoing
+and selected special-register values, C clobbering, gate-off return, syscall
+return, and zero-initialized entry. Layout assertions, clean Xtensa build,
+and ELF/image layout checks pass. This is build/contract validation only.
+
+Manual hardware image: `[FEATURE CONTEXT-SPECIAL 32]1` and
+`[TEST CONTEXT-SPECIAL 32]`. Check continued FS resumption, keyboard/shell
+operation and IRQs through 1500; V32 FS-return records include SAR/LCOUNT.
+The subsequent hardware result is recorded below; no automatic flash was performed. Floating-
+point/MAC/other extension state and real blocking task IPC remain unvalidated.
+
+
+Image-32 hardware result: the manually flashed image ran through IRQ 1500
+without an exception in `docs/hardware/context-special-v32.log`. FS return
+at tick 11 reports SAR `0x15`, LCOUNT `0`, and `frame=1`; timer samples clear
+RAW/ST after rearm and retain CPU INTENABLE `0x4`. Keyboard input forms
+`ipc` and the existing fallback returns `0`. Idle heartbeats split the result
+line; this is interleaved diagnostic output, not proof of a real IPC reply.
+The capture passes the bounded regression check, but does not exercise an
+active nonzero loop count or establish exhaustive special-register coverage.
+Next work is the real TTY IPC suspension/request/reply path.
+
+
+## Image 33 — first real TTY IPC exchange confirmed on hardware
+
+The former `ipc` success came from shared-slot shell/clock fallbacks. Those
+fallbacks are removed. `_send`, `_receive` and `_sendrec` now use SYSCALL and
+resume through a saved task frame. The queued BOTH bug is fixed: accepting a
+request clears SENDING only; the client remains RECEIVING until the reply.
+TTY receives and handles DEV_IOCTL/TCGETS and replies through actual IPC.
+The shell checks reply source, type and process before printing status.
+CLOCK/SYS remain stopped; MM remains cooperative pending separate activation.
+
+Markers: `[FEATURE TTY-IPC 33]1`, `[TEST TTY-IPC 33]`, first/per-5000-operation
+`[IPC V33 op=... n=... owner=... blocked=... next=... frame=...]`, and
+`[TTY IPC V33 reply-result=0]` on successful shell exchanges.
+
+All 13 host test scripts pass, including production IPC/scheduler tests for
+both message arrival orders and assembly SYSCALL immediate/blocked returns.
+Clean build and image layout pass; ELF `_iram_end=0x4037432C`,
+`_iram_ext_end=0x40380390`, `_stack_top=0x3FCCD500`.
+The user manually flashed image 33. `docs/hardware/tty-ipc-v33.log` confirms
+one real exchange: TTY RECEIVE blocks, FS BOTH blocks, TTY SEND replies, and
+the resumed shell reports 0. Heartbeats split the result line; it is not
+a crash. IPC return frames pass, and IRQs continue through 500 and 1000
+without an exception. Repeated `ipc`, post-reply keyboard/`ls`, and IRQ 1500
+remain pending before CLOCK/MM activation.
+This validates the first task request/reply path, not full terminal input IPC,
+CLOCK/MM service activation, nested interrupts or optional extension context.

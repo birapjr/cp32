@@ -59,11 +59,7 @@
 #include "tty.h"
 #include "cardputer.h"
 
-#define CP32_TTY_NONBLOCKING_TASK 1
 
-extern volatile int cp32_tty_probe_pending;
-extern volatile int cp32_tty_probe_done;
-extern volatile int cp32_tty_probe_result;
 
 extern volatile char cp32_tty_user_byte;
 
@@ -265,24 +261,9 @@ CP32_IRAM_EXT PUBLIC void tty_task()
   for (tp = FIRST_TTY; tp < END_TTY; tp++) tty_init(tp);
 
   while (TRUE) {
-	if (cp32_tty_probe_pending) {
-	  /* TTY owns completion; the shell never blocks waiting for this state. */
-	  cp32_tty_probe_result = tty_active(&tty_table[0]) ? OK : ENXIO;
-	  cp32_tty_probe_pending = 0;
-	  cp32_tty_probe_done = 1;
-	}
 	/* Handle any events on any of the ttys. */
 	for (tp = FIRST_TTY; tp < END_TTY; tp++) {
 		if (tp->tty_events) handle_events(tp);
-	}
-	/* During bring-up, a task selected through the IRQ return frame cannot
-	 * yet suspend through receive() and return to the scheduler. Yield after
-	 * servicing local work; the full blocking receive is enabled once task
-	 * context suspension is proven. */
-	if (CP32_TTY_NONBLOCKING_TASK) {
-	  wdt_feed_all();
-	  delay(1000);
-	  continue;
 	}
     /* Keyboard polling is owned by the CP32 bring-up FS client until the
      * production TTY IRQ wakeup path is enabled. */
@@ -315,7 +296,8 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 	}
 	#endif
 
-	receive(ANY, &tty_mess);
+	if (receive(ANY, &tty_mess) != OK)
+		panic("TTY receive failed", NO_NUM);
 
 	/* A hardware interrupt is an invitation to check for events. */
 	if (tty_mess.m_type == HARD_INT) continue;

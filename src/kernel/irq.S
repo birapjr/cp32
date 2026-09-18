@@ -152,6 +152,7 @@ irq_kernel:
     wsr     a0, excsave1
     rsr     a0, exccause
     beqi    a0, 4, irq_level1
+    beqi    a0, 1, .Luser_saved_a0
     bnez    a0, .Lkernel_fatal
     movi    a0, cp32_user_probe_mode
     l32i    a0, a0, 0
@@ -195,6 +196,16 @@ irq_level1:
     s32i    a0, a1, 4
     rsr     a0, excsave1
     s32i    a0, a1, 0
+
+    /* Capture integer special state before the C handler can clobber it. */
+    rsr     a0, sar
+    s32i    a0, a1, 64
+    rsr     a0, lbeg
+    s32i    a0, a1, 68
+    rsr     a0, lend
+    s32i    a0, a1, 72
+    rsr     a0, lcount
+    s32i    a0, a1, 76
 
     /* 2. Now load the base pointer to p_reg */
     movi    a2, proc_ptr
@@ -250,6 +261,15 @@ irq_level1:
     s32i    a3, a2, 72           /* p_reg.sp */
 
     
+    l32i    a3, a1, 64
+    s32i    a3, a2, CP32_REG_SAR_OFFSET
+    l32i    a3, a1, 68
+    s32i    a3, a2, CP32_REG_LBEG_OFFSET
+    l32i    a3, a1, 72
+    s32i    a3, a2, CP32_REG_LEND_OFFSET
+    l32i    a3, a1, 76
+    s32i    a3, a2, CP32_REG_LCOUNT_OFFSET
+
     /* Track interrupt nesting */
     movi    a2, k_reenter
     l32i    a3, a2, 0
@@ -306,8 +326,8 @@ irq_user:
      * recovered from EXCSAVE1 after original a1 has been saved.  Save every
      * general register before using one as the exception-cause scratch; this
      * preserves the interrupted user a5 as well as the other call0 state. */
-    movi    a0, _stack_top
-    addi    a0, a0, -128
+    /* Each task owns its exception stack; never overwrite the boot stack. */
+    addi    a0, a1, -128
     s32i    a1, a0, 4
     s32i    a2, a0, 8
     s32i    a3, a0, 12
@@ -333,12 +353,22 @@ irq_user:
     l32i    a1, a0, 4
     s32i    a1, a0, 72
 
+    rsr     a1, sar
+    s32i    a1, a0, CP32_REG_SAR_OFFSET
+    rsr     a1, lbeg
+    s32i    a1, a0, CP32_REG_LBEG_OFFSET
+    rsr     a1, lend
+    s32i    a1, a0, CP32_REG_LEND_OFFSET
+    rsr     a1, lcount
+    s32i    a1, a0, CP32_REG_LCOUNT_OFFSET
+
     movi    a2, proc_ptr
     l32i    a2, a2, 0
     mov     a3, a0
     rsr     a4, exccause
     mov     a1, a3
     mov     a15, a1
+    beqi    a4, 1, .Ltask_ipc
     call0   cp32_user_trap_dispatch
     mov     a1, a15
 
@@ -390,6 +420,11 @@ irq_user:
     s32i    a2, a3, 0
     j       .Lrestore_process_frame
 
+.Ltask_ipc:
+    call0   cp32_task_ipc_dispatch
+    bnez    a2, 4f
+    j       2b
+
 4:
 
     rsr     a2, exccause
@@ -400,6 +435,17 @@ irq_user:
     addi    a1, a1, -16
     call0   exception_dump
 .size irq_user, .-irq_user
+
+/* call0 arguments a2=function, a3=endpoint, a4=message. The exception
+ * advances EPC1 past this three-byte instruction; a0 remains the caller's
+ * return address, including after a blocked request resumes. */
+.align 4
+.global cp32_ipc_trap
+.type cp32_ipc_trap, @function
+cp32_ipc_trap:
+    syscall
+    ret
+.size cp32_ipc_trap, .-cp32_ipc_trap
 
 .align 4
 .global cp32_enter_initial_user
@@ -418,9 +464,8 @@ cp32_enter_initial_user:
  * has no EXCM bit, so level-1 cannot interrupt this partial restore. Never
  * borrow a general register again after restoring its final value.
  *
- * The 76-byte process ABI still lacks SAR and optional loop/FPU state. This
- * bounded repair preserves all represented state; those special registers
- * need an explicit frame extension before arbitrary instruction preemption.
+ * Integer SAR/loop state belongs to the selected process too. Floating-point,
+ * MAC and other optional extension state still require a separate policy.
  */
 .align 4
 .Lrestore_process_frame:
@@ -430,6 +475,14 @@ cp32_enter_initial_user:
     movi    a3, 0x10             /* PS.EXCM */
     or      a2, a2, a3
     wsr     a2, ps
+    l32i    a2, a15, CP32_REG_SAR_OFFSET
+    wsr     a2, sar
+    l32i    a2, a15, CP32_REG_LBEG_OFFSET
+    wsr     a2, lbeg
+    l32i    a2, a15, CP32_REG_LEND_OFFSET
+    wsr     a2, lend
+    l32i    a2, a15, CP32_REG_LCOUNT_OFFSET
+    wsr     a2, lcount
     l32i    a0, a15, 0
     l32i    a1, a15, CP32_REG_SP_OFFSET
     l32i    a2, a15, 8

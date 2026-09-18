@@ -61,9 +61,6 @@ extern struct proc *current_proc;
 extern volatile struct proc *cp32_irq_saved_owner;
 extern volatile struct proc *cp32_irq_return_proc;
 extern volatile int cp32_context_handoff_gate;
-extern volatile int cp32_tty_probe_pending;
-extern volatile int cp32_tty_probe_done;
-extern volatile int cp32_tty_probe_result;
 extern volatile int cp32_irq_dispatch_active;
 extern void kernel_idle_loop(void);
 
@@ -211,7 +208,7 @@ CP32_IRAM_EXT PRIVATE void cp32_systimer_print_ticks(uint64_t ticks)
 CP32_IRAM_EXT PRIVATE void cp32_systimer_print_sample(
     const char *phase, const struct cp32_systimer_sample *s)
 {
-  usbj_print("[SYSTIMER V31 n="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print("[SYSTIMER V33 n="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(phase);
   usbj_print(" now="); cp32_systimer_print_ticks(s->counter);
   usbj_print(" target="); cp32_systimer_print_ticks(s->target);
@@ -237,7 +234,7 @@ CP32_IRAM_EXT PRIVATE void cp32_systimer_report_return(void)
 
   cp32_systimer_print_sample(" before", &cp32_systimer_before);
   cp32_systimer_print_sample(" after", &cp32_systimer_after);
-  usbj_print("[SYSTIMER V31 return deadline=");
+  usbj_print("[SYSTIMER V33 return deadline=");
   cp32_systimer_print_ticks(cp32_systimer_deadline);
   usbj_print(" ena="); usbj_print_hex32(REG_READ(SYSTIMER_INT_ENA_REG));
   usbj_print(" ien="); usbj_print_hex32(intenable);
@@ -262,12 +259,14 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_fs_return(void)
   if (!cp32_context_handoff_gate || rp == NIL_PROC ||
       rp->p_nr != FS_PROC_NR || reports >= 2) return;
   reports++;
-  usbj_print("[CTX V31 FS-RETURN n="); usbj_print_u32(reports);
+  usbj_print("[CTX V33 FS-RETURN n="); usbj_print_u32(reports);
   usbj_print(" tick="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(" pc="); usbj_print_hex32(rp->p_reg.pc);
   usbj_print(" sp="); usbj_print_hex32(rp->p_reg.sp);
   usbj_print(" a0="); usbj_print_hex32(rp->p_reg.a[0]);
   usbj_print(" a15="); usbj_print_hex32(rp->p_reg.a[15]);
+  usbj_print(" sar="); usbj_print_hex32(rp->p_reg.sar);
+  usbj_print(" lcount="); usbj_print_hex32(rp->p_reg.lcount);
   usbj_print(" frame="); usbj_print_u32(cp32_irq_return_frame_check());
   usbj_print("]\r\n");
 #endif
@@ -663,14 +662,6 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
    * whether the selected process frame is handed back to the IRQ return path. */
   if (cp32_clock_irq_bridge_enabled)
     clock_handler(0);
-  /* Complete the nonblocking bring-up probe at the scheduler boundary. The
-   * final implementation will move this to a real TTY task reply, but this
-   * keeps the FS client asynchronous and prevents a task-context deadlock. */
-  if (cp32_tty_probe_pending) {
-    cp32_tty_probe_result = OK;
-    cp32_tty_probe_pending = 0;
-    cp32_tty_probe_done = 1;
-  }
   unhold();
 
   /* The clock path may schedule while outside the IRQ-owned return contract.
@@ -855,7 +846,7 @@ PUBLIC void systimer_irq_start()
   REG_CLR_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
   systimer_enable_target0_alarm();
   systimer_target0_rearm();
-  usbj_print("[BOOT SYSTIMER V31 conf=");
+  usbj_print("[BOOT SYSTIMER V33 conf=");
   usbj_print_hex32(REG_READ(SYSTIMER_CONF_REG));
   usbj_print(" target=");
   usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_CONF_REG));

@@ -125,6 +125,7 @@ void main(void)
      * INTLEVEL zero in the initial call0 task/server status. */
     rp->p_reg.psw = 0x100;
     memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
+    rp->p_reg.sar = rp->p_reg.lbeg = rp->p_reg.lend = rp->p_reg.lcount = 0;
 
     if (t < 0) {
       rp->p_reg.sp = (kernel_stack + 4096) & ~0x0F;
@@ -164,7 +165,11 @@ void main(void)
     rp->p_map[S].mem_len = 4;
     rp->p_flags = 0;
 
-    if (!isidlehardware(t)) lock_ready(rp);
+    /* CLOCK/SYS activation is a separate hardware step after TTY IPC.
+     * Keep their descriptors valid but stopped, rather than accidentally
+     * entering them when TTY first blocks. MM retains its cooperative loop. */
+    if (t == CLOCK || t == SYSTASK) rp->p_flags = P_STOP;
+    if (!isidlehardware(t) && rp->p_flags == 0) lock_ready(rp);
   }
 
   proc_ptr = proc_addr(IDLE);
@@ -177,7 +182,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE SYSTIMER-IRQ 31]");
+  usbj_print("[FEATURE TTY-IPC 33]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -296,7 +301,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST SYSTIMER-IRQ 31]\r\n");
+  usbj_print("[TEST TTY-IPC 33]\r\n");
   kernel_idle_loop();
 }
 

@@ -257,6 +257,10 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   owner->p_reg.pc = (reg_t)frame->pc;
   owner->p_reg.psw = (reg_t)frame->psw;
   owner->p_reg.sp = (reg_t)frame->sp;
+  owner->p_reg.sar = (reg_t)frame->sar;
+  owner->p_reg.lbeg = (reg_t)frame->lbeg;
+  owner->p_reg.lend = (reg_t)frame->lend;
+  owner->p_reg.lcount = (reg_t)frame->lcount;
 
   /* Save the post-trap PC before sys_call can snapshot a blocked frame. */
   owner->p_reg.pc = (reg_t)frame->pc;
@@ -349,6 +353,10 @@ CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   frame->pc = (uint32_t)next->p_reg.pc;
   frame->psw = (uint32_t)next->p_reg.psw;
   frame->sp = (uint32_t)next->p_reg.sp;
+  frame->sar = (uint32_t)next->p_reg.sar;
+  frame->lbeg = (uint32_t)next->p_reg.lbeg;
+  frame->lend = (uint32_t)next->p_reg.lend;
+  frame->lcount = (uint32_t)next->p_reg.lcount;
   if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     int frame_copy_ok = frame->pc == (uint32_t)next->p_reg.pc &&
         frame->psw == (uint32_t)next->p_reg.psw &&
@@ -560,6 +568,7 @@ CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int resu
   }
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
+  rp->p_blocked_frame_pc = rp->p_blocked_frame_psw = rp->p_blocked_frame_sp = 0;
   if (cp32_blocked_return_proc == rp)
     cp32_blocked_return_proc = NIL_PROC;
   if (rp->p_flags == 0) ready(rp);
@@ -1083,20 +1092,53 @@ report:
       cp32_blocked_return_proc = rp;
       current_proc = rp;
     }
-    /* Deliberately disabled until the syscall return frame is proven safe. */
-    if (blocked_handoff_eligible(rp)
-#if !defined(CP32_ENABLE_BLOCKED_PROBE) && !defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-        )
-      sched();
-#else
-        ) { }
-#endif
+    /* The exception dispatcher selects the return frame after IPC finishes. */
   } else if (cp32_blocked_return_proc == rp) {
     cp32_blocked_return_proc = NIL_PROC;
   }
   return result;
 }
  
+/* Removable first-use/per-5000 IPC return diagnostics, one counter per op. */
+CP32_IRAM_EXT PRIVATE void cp32_trace_task_ipc(struct proc *owner, int operation)
+{
+  static unsigned counts[4];
+  unsigned n;
+  if (operation < SEND || operation > BOTH) return;
+  n = ++counts[operation];
+  if (n != 1 && n % 5000 != 0) return;
+  usbj_print("[IPC V33 op="); usbj_print_u32((uint32_t)operation);
+  usbj_print(" n="); usbj_print_u32(n);
+  usbj_print(" owner="); usbj_print_u32((uint32_t)owner->p_nr);
+  usbj_print(" blocked="); usbj_print_u32((uint32_t)!!(owner->p_flags & (SENDING | RECEIVING)));
+  usbj_print(" next="); usbj_print_u32((uint32_t)proc_ptr->p_nr);
+  usbj_print(" frame="); usbj_print_u32((uint32_t)cp32_irq_return_frame_check());
+  usbj_print("]\r\n");
+}
+
+/* Production SYSCALL entry: EXCM excludes level-1 IRQs until assembly RFE.
+ * MINIX mpx saves the caller before sys_call and restarts the selected process.
+ * Here the complete call0 frame supplies that same suspension contract. */
+CP32_IRAM_EXT PUBLIC int cp32_task_ipc_dispatch(struct proc *owner,
+                                               cp32_user_frame_t *frame,
+                                               unsigned cause)
+{
+  int result;
+  if (cause != 1 || owner == NIL_PROC || owner != proc_ptr ||
+      owner != current_proc || owner->p_flags != 0 || k_reenter != 0 ||
+      !cp32_user_frame_contract_valid(frame)) return EINVAL;
+  memcpy(&owner->p_reg, frame, sizeof(*frame));
+  owner->p_reg.pc += 3; /* SYSCALL is a three-byte instruction. */
+  result = sys_call((int)frame->a[2], (int)frame->a[3],
+                    (message *)frame->a[4]);
+  owner->p_reg.a[2] = (reg_t)result;
+  if (owner->p_flags & (SENDING | RECEIVING)) sched();
+  else proc_ptr = current_proc = owner;
+  cp32_irq_return_proc = proc_ptr;
+  cp32_trace_task_ipc(owner, (int)frame->a[2]);
+  return cp32_irq_return_frame_check() ? OK : EINVAL;
+}
+
 /*===========================================================================*
  *				mini_send				     * 
  *===========================================================================*/
@@ -1243,7 +1285,11 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
           previous_ptr->p_sendlink = sender_ptr->p_sendlink;
 
         sender_ptr->p_sendlink = NIL_PROC;
-        cp32_complete_blocked_frame(sender_ptr, OK);
+        /* MINIX sendrec: accepting the request completes only SEND.
+         * RECEIVE and its saved continuation remain pending until the reply. */
+        sender_ptr->p_flags &= ~SENDING;
+        if (!(sender_ptr->p_flags & RECEIVING))
+          cp32_complete_blocked_frame(sender_ptr, OK);
         return OK;
       }
     }
@@ -1327,6 +1373,7 @@ PRIVATE void pick_proc()
     if (rp == NIL_PROC) {
       /* No ready task/server/user: run the MINIX idle process and bill it. */
       proc_ptr = proc_addr(IDLE);
+      current_proc = proc_ptr;
       bill_ptr = proc_ptr;
       return;
     }

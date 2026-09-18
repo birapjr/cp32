@@ -12,7 +12,7 @@
  *   +8  interrupted a2
  *   ...
  *   +60 interrupted a15
- *   +64..79 reserved padding; the assembly frame is kept 80 bytes so its
+ *   +64..79 saved SAR/LBEG/LEND/LCOUNT; the assembly frame is kept 80 bytes so its
  *        16-byte alignment is preserved across the call0 boundary.
  */
 typedef struct cp32_irq_frame {
@@ -32,7 +32,7 @@ typedef struct cp32_irq_frame {
   uint32_t a13;
   uint32_t a14;
   uint32_t a15;
-  uint32_t reserved[4];
+  uint32_t sar, lbeg, lend, lcount;
 } cp32_irq_frame_t;
 
 typedef char cp32_irq_frame_size_must_be_80[
@@ -45,10 +45,11 @@ typedef struct cp32_syscall_return_contract {
   uint32_t pc;
   uint32_t psw;
   uint32_t sp;
+  uint32_t sar, lbeg, lend, lcount;
 } cp32_syscall_return_contract_t;
 
-typedef char cp32_syscall_contract_size_must_be_76[
-    sizeof(cp32_syscall_return_contract_t) == 76 ? 1 : -1];
+typedef char cp32_syscall_contract_size_must_be_92[
+    sizeof(cp32_syscall_return_contract_t) == 92 ? 1 : -1];
 typedef char cp32_syscall_contract_result_register_must_be_a2[
     __builtin_offsetof(cp32_syscall_return_contract_t, a[2]) == 8 ? 1 : -1];
 typedef char cp32_syscall_contract_pc_offset_must_be_64[
@@ -61,14 +62,33 @@ typedef struct cp32_user_frame {
   uint32_t pc;
   uint32_t psw;
   uint32_t sp;
+  uint32_t sar, lbeg, lend, lcount;
 } cp32_user_frame_t;
 
-typedef char cp32_user_frame_size_must_be_76[
-    sizeof(cp32_user_frame_t) == 76 ? 1 : -1];
+typedef char cp32_user_frame_size_must_be_92[
+    sizeof(cp32_user_frame_t) == 92 ? 1 : -1];
 typedef char cp32_user_frame_pc_offset_must_be_64[
     __builtin_offsetof(cp32_user_frame_t, pc) == 64 ? 1 : -1];
 typedef char cp32_user_frame_sp_offset_must_be_72[
     __builtin_offsetof(cp32_user_frame_t, sp) == 72 ? 1 : -1];
+
+typedef char cp32_irq_frame_t_special_offsets[
+    __builtin_offsetof(cp32_irq_frame_t, sar) == 64 &&
+    __builtin_offsetof(cp32_irq_frame_t, lbeg) == 68 &&
+    __builtin_offsetof(cp32_irq_frame_t, lend) == 72 &&
+    __builtin_offsetof(cp32_irq_frame_t, lcount) == 76 ? 1 : -1];
+
+typedef char cp32_user_frame_t_special_offsets[
+    __builtin_offsetof(cp32_user_frame_t, sar) == 76 &&
+    __builtin_offsetof(cp32_user_frame_t, lbeg) == 80 &&
+    __builtin_offsetof(cp32_user_frame_t, lend) == 84 &&
+    __builtin_offsetof(cp32_user_frame_t, lcount) == 88 ? 1 : -1];
+
+typedef char cp32_syscall_return_contract_t_special_offsets[
+    __builtin_offsetof(cp32_syscall_return_contract_t, sar) == 76 &&
+    __builtin_offsetof(cp32_syscall_return_contract_t, lbeg) == 80 &&
+    __builtin_offsetof(cp32_syscall_return_contract_t, lend) == 84 &&
+    __builtin_offsetof(cp32_syscall_return_contract_t, lcount) == 88 ? 1 : -1];
 
 /* A handoff is safe only after a real dispatch selected a runnable target. */
 static inline int cp32_irq_handoff_allowed(int bridge_enabled, int nested,

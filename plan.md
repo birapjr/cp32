@@ -240,11 +240,14 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 30 now has hardware evidence for two consecutive timer IRQs, but
-crashes after FS console entry. Image 31 removes unsafe direct FS handoffs
-and is built for the user to flash manually. Start with the image-31 section
-below: validate continued FS resumption and IRQ counts 500/1000 before
-enabling real TTY IPC or CLOCK/MM blocking receives.
+Image 31 passed the supplied hardware run through IRQ 1500 with FS resumption,
+keyboard input and no exception. Evidence: `docs/hardware/systimer-v31.log`.
+Image 32 passed its hardware regression through IRQ 1500, with a nonzero
+saved SAR on FS resumption. Image 33 now implements real TTY request/reply
+and blocked-call resumption. The supplied hardware log confirms one real
+TTY exchange returning 0 and continued IRQs through 1000 without an exception.
+Repeat `ipc`, then `ls` and keyboard input, and capture IRQ 1500 before
+activating CLOCK/MM receives. Evidence: `docs/hardware/tty-ipc-v33.log`.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -298,7 +301,7 @@ Xtensa task-context or nested-interrupt proof.
 
 ## Current handoff status — image 31, 2026-09-18
 
-Latest supplied hardware logs are image 30, not image 31. Both show TARGET0
+The preceding image-30 hardware logs show TARGET0
 rearmed correctly at IRQs 1 and 2, RAW/ST clearing, CPU interrupt 2 enabled,
 and FS entry reached. They then halt with these two outcomes:
 
@@ -311,8 +314,8 @@ the running owner or saving the outgoing context. This allows the next IRQ
 to save FS execution into LOW_USER's descriptor and later replay stale FS
 call state. C `switch_to()` had a second direct restore that could abandon
 an unfinished scheduler/IPC call. Image 31 removes both bypasses; actual
-frame restoration remains at IRQ/syscall return. Hardware confirmation that
-this resolves the reported crashes is still required.
+frame restoration remains at IRQ/syscall return. The subsequent image-31
+hardware run below no longer reproduces the crash through IRQ 1500.
 
 [x] Regression tests execute the production idle/switch C bodies against
 fresh and suspended FS selections. The original code fails with a restore
@@ -323,12 +326,115 @@ section/segment inspection, and `git diff --check` pass without compiler
 warnings. `_iram_end=0x40374268`, `_iram_ext_end=0x4037FFAC`, and
 `_stack_top=0x3FCCCE20` remain within linker limits.
 
-Next hardware image: `[FEATURE SYSTIMER-IRQ 31]1` and
+Validated hardware image: `[FEATURE SYSTIMER-IRQ 31]1` and
 `[TEST SYSTIMER-IRQ 31]`. Two `[CTX V31 FS-RETURN ...]` lines report the first
 FS selections, including PC/SP/a0/a15 and frame ownership checks. The user
-will flash manually; no automatic flash was performed.
+flashed manually; no automatic flash was performed.
 
-Acceptance: shell remains responsive, FS resumes without an exception, and
-IRQs reach 500 and 1000. Only then proceed to special-register context
-preservation, real TTY request/reply, and CLOCK/MM receive activation. Those
-steps and arbitrary task-context scheduling remain pending.
+[x] Supplied hardware log reaches IRQ counts 500, 1000 and 1500 without an
+exception. All sampled rearms clear RAW/ST, enable CPU interrupt 2 and report
+`frame=1`. FS first enters at tick 5 and resumes at tick 11 with a saved code
+return address (`a0=0x4037D241`) and `frame=1`.
+
+[x] Keyboard input and shell command dispatch work during continued IRQs:
+the log captures `ipc`, its queued marker and fallback result `0`. A heartbeat
+interleaves with that result line; this is not an exception or IPC proof.
+
+Evidence: `docs/hardware/systimer-v31.log`. This capture does not show `ls`,
+long-duration stress, or real TTY message delivery. Special-register context
+preservation, real TTY request/reply, CLOCK/MM receive activation, and
+arbitrary task-context scheduling remain pending.
+
+## Integer special-register context — image 32
+
+[x] Save and restore SAR, LBEG, LEND and LCOUNT for level-1 interrupts,
+syscall frames and selected-task return. The process/syscall frame is now
+92 bytes; existing GPR/PC/PS/SP offsets stay unchanged. IRQ temporary frames
+remain 80 bytes by using their former padding. Fresh descriptors initialize
+the four registers to zero, and syscall/blocked-handoff copies include them.
+
+[x] All 12 host scripts pass, including assembly tests that clobber the four
+registers in the C-handler mock and verify interrupted versus selected
+context restoration. Compile-time checks cover the extended frame offsets.
+A clean Xtensa build and image-layout/section checks pass.
+
+[x] Hardware regression passed in `docs/hardware/context-special-v32.log`:
+`[FEATURE CONTEXT-SPECIAL 32]1` and `[TEST CONTEXT-SPECIAL 32]` identify the
+image. IRQs reach 500/1000/1500 without an exception; sampled returns report
+`frame=1`, RAW/ST clear after rearm, and CPU interrupt 2 remains enabled.
+FS resumes at tick 11 with saved `SAR=0x15`, `LCOUNT=0`, and `frame=1`.
+Keyboard input and `ipc` command dispatch work; the result remains fallback
+`0`, interleaved with heartbeat output. No automatic flash was performed.
+
+This is a successful hardware regression, not an exhaustive register test:
+the log shows no active nonzero hardware-loop count, no `ls`, and no real
+TTY IPC exchange. Assembly host tests cover distinct nonzero loop state.
+
+This covers integer shift/loop state, not floating-point, MAC or other
+optional extension state. Full task-context IPC suspension and real TTY
+request/reply are next; CLOCK/MM blocking receive paths remain gated.
+
+
+## Real TTY request/reply — image 33, 2026-09-18
+
+Identity: `[FEATURE TTY-IPC 33]1`, `[TEST TTY-IPC 33]`.
+
+MINIX reference: `minix-2.0.0/src/kernel/proc.c` mini_rec clears only
+SENDING when a queued request is accepted. A BOTH caller remains RECEIVING
+until the server replies. CP32 previously cleared both bits and returned
+from ordinary C wrappers even when their caller had blocked.
+
+The wrappers now execute Xtensa SYSCALL (EXCCAUSE 1, confirmed by the local
+ESP32-S3 Xtensa corebits definitions). Assembly saves the full 92-byte context
+in a 128-byte aligned frame on the caller's stack. The dispatcher records the
+post-SYSCALL PC, performs IPC under EXCM, selects a runnable process if blocked,
+and returns through the shared RFE epilogue. Owner pointers and restored frame
+must agree. No wrapper fabricates the FS owner. Completing SEND for a BOTH
+caller leaves its receive buffer and saved continuation intact until reply.
+Completed frame metadata is cleared consistently with the runtime invariants.
+
+TTY now runs its real receive/dispatch/reply loop. Shell `ipc` sends DEV_IOCTL
+TCGETS with a local message and termios buffer, and validates TASK_REPLY,
+source TTY_PROC_NR and REP_PROC_NR before reporting status. All four shared-slot
+completion fallbacks are removed. CLOCK and SYS descriptors are stopped until
+separate activation; MM retains its cooperative loop. Keyboard polling still
+belongs to the FS bring-up client; this is not a full FS server or DEV_READ path.
+
+Removable `[IPC V33 op=... n=... owner=... blocked=... next=... frame=...]`
+reports the first call of each operation and every 5000th. Expect RECEIVE
+(op=2) to block TTY; BOTH (op=3) to block FS; SEND (op=1) to complete the
+reply without changing the currently executing TTY owner. A resumed shell
+prints `[TTY IPC V33 reply-result=0]` for each successful exchange.
+
+[x] Host verification: all 13 test scripts pass. New tests execute production
+IPC, dispatcher and scheduler functions for 100 exchanges in both arrival
+orders, SEND-only wake, invalid endpoint/buffer/opcode, self-send and deadlock.
+They check message provenance, blocked BOTH state, saved PC/SP/special registers,
+ready queues and selection of the resumed caller. Assembly tests cover both
+exception vectors with immediate and blocked SYSCALL returns and private
+stack frame placement. These are host models, not silicon execution.
+
+[x] Clean build, ELF sections/segments and image layout pass without warnings.
+Disassembly confirms the three-byte SYSCALL followed by RET at PC+3.
+`_iram_end=0x4037432C`, `_iram_ext_end=0x40380390`,
+`_stack_top=0x3FCCD500`.
+
+Hardware follow-up: the user has manually flashed image 33; the first exchange
+is confirmed below. Repeated `ipc`, then `ls` and keyboard input after the
+reply, plus IRQ 1500 remain pending. Do not activate CLOCK/MM blocking
+receives until these checks are confirmed. Nested interrupts and optional
+floating-point/MAC context remain outside this image's validation.
+
+
+[x] Image-33 first hardware exchange: `docs/hardware/tty-ipc-v33.log`
+identifies TTY-IPC 33 and shows all boot CORE checks passing. TTY (-9,
+unsigned 4294967287) blocks on RECEIVE; FS (1) blocks on BOTH; TTY resumes
+and sends its reply while retaining current ownership. Each sampled IPC
+return reports `frame=1`. The shell resumes and prints reply-result 0,
+with heartbeats interleaved between the prefix and `0]`. IRQ 500 and 1000
+continue with RAW/ST cleared after rearm, INTENABLE 0x4 and `frame=1`.
+No exception appears in this capture.
+
+This log contains one `ipc` command, no `ls`, and ends at IRQ 1000. Repeated
+exchanges, post-reply keyboard/shell use and IRQ 1500 remain unverified;
+the full image-33 hardware regression is not yet marked complete.

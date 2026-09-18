@@ -14,7 +14,7 @@ static int complete_receive(int flags, int frame_valid)
 static int complete_send(int flags, int frame_valid)
 {
   if ((flags & SENDING) == 0 || !frame_valid) return -1;
-  return flags & ~(SENDING | RECEIVING);
+  return flags & ~SENDING;
 }
 
 static int bounded_queue_walk(int links, int limit)
@@ -38,7 +38,7 @@ int main(void)
   failures += check(complete_receive(0, 1) < 0);
   failures += check(complete_receive(RECEIVING, 0) < 0);
   failures += check(complete_send(SENDING, 1) == 0);
-  failures += check(complete_send(SENDING | RECEIVING, 1) == 0);
+  failures += check(complete_send(SENDING | RECEIVING, 1) == RECEIVING);
   failures += check(complete_send(0, 1) < 0);
   failures += check(complete_send(SENDING, 0) < 0);
   failures += check(bounded_queue_walk(3, 4) == 3);
