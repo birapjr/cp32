@@ -240,14 +240,14 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 39 confirms four successful SYS queries with increasing uptime,
-MM/TTY success and CLOCK progress through IRQ 10000; evidence is saved in
-`docs/hardware/sys-ipc-v39.log`. Console output still takes thousands of ticks.
-Image 40 fixes LCD scroll batching, cursor preservation and bottom-row wrap;
-all 17 host tests and a clean build pass. Next: manually flash image 40,
-repeat ls with the screen full, inspect LCD text/prompt/scrolling, and confirm
-sys/mm/ipc plus CLOCK progress. Physical display behavior and speed remain
-unverified for this image; software SPI remains in use.
+Image 40 confirms one scrolling pass on hardware, but its full-screen black
+clear is still slow. The user reports this visually; serial evidence in
+`docs/hardware/console-batch-v40.log` confirms repeated ls and successful
+MM/SYS/TTY with CLOCK progress through IRQ 5000. Image 41 eliminates the
+scroll-time full-screen clear and paints only changed text cells. All 17 host
+scripts and the clean image build pass. Next: manually flash image 41 and
+verify scrolling has no black-screen pass, no stale text and correct prompt
+placement. Startup/explicit screen clear still writes black pixels once.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -660,3 +660,33 @@ scrolling and prompt position, and compare responsiveness with image 39.
 Then run sys/mm/ipc and capture continued CLOCK progress. Fewer modeled redraws
 do not prove a specific on-device speedup. A single full redraw still uses
 software SPI; further transport work may be needed after this validation.
+
+
+[x] Image-40 hardware: user confirms batching produces one scroll pass.
+`docs/hardware/console-batch-v40.log` records three ls commands, MM result 0,
+SYS result 0 at uptime 5143, TTY result 0, and CLOCK 587 messages at IRQ 5000.
+No exception appears. The remaining slow black pass is a user-observed LCD
+issue, not something a serial log alone can validate.
+
+## Changed-cell LCD updates — image 41, 2026-09-19
+
+Identity: `[FEATURE LCD-CELLS 41]1`, `[TEST LCD-CELLS 41]`.
+Keep a 192-byte shadow of characters actually painted on the LCD. Scrolls
+modify textbuf; the outer batch compares final text with the painted shadow
+and redraws only differing opaque 15x10 cells, including spaces. Glyphs
+already paint foreground and background, so no full-screen black pass is
+needed. Unchanged cells and inter-row black gaps remain untouched. Explicit
+clear resets both shadows; the one-time boot clear still initializes pixels.
+This extends the existing MINIX-style buffered-output approach using CP32's
+text grid; SPI timing/commands are unchanged.
+
+[x] All 17 host scripts pass. The pixel model confirms zero full-screen scroll
+clears, equality to clean-screen rasterization, correct space erasure/wrapping,
+cursor preservation and clear/shadow reset. The representative sequence uses
+161 cell writes batched versus 430 unbatched (including initial text setup).
+These counts are not a measured hardware speedup.
+[x] Clean build without warnings and ELF/image layout pass:
+`_iram_end=0x40374264`, `_iram_ext_end=0x40380AD0`, `_stack_top=0x3FCCDF00`.
+Hardware pending: repeat ls with a full LCD and check absence of the black
+cleanup pass, correct blank cells and prompt placement; then sys/mm/ipc.
+Software SPI can still limit the speed of the changed cells themselves.

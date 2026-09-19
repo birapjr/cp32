@@ -314,3 +314,19 @@ shows identical final batched/unbatched output with 7 scroll redraws reduced
 to 1. Symbols: `_iram_end=0x40374224`, `_iram_ext_end=0x40380AD0`,
 `_stack_top=0x3FCCDE50`. Manual LCD appearance/performance validation remains
 pending; test full-screen ls followed by sys/mm/ipc and CLOCK progress.
+
+
+## Scroll black-pass delay — image 41 removes it in software
+
+User confirms image 40's one-pass scrolling but reports slow full-screen
+black cleanup. `docs/hardware/console-batch-v40.log` confirms repeated ls,
+successful MM/SYS/TTY and CLOCK progress at IRQ 5000 without an exception.
+Image 41 adds a 192-byte painted-character shadow and updates only changed
+opaque cells, including spaces, at batch flush. Scrolling no longer issues a
+full-screen clear. Explicit/boot clear remains and resets both text shadows.
+Markers: `[FEATURE LCD-CELLS 41]1`, `[TEST LCD-CELLS 41]`.
+All 17 host scripts and clean ELF/image checks pass; pixel-model tests verify
+zero scroll clears and equality to a complete reference rasterization.
+`_iram_end=0x40374264`, `_iram_ext_end=0x40380AD0`, `_stack_top=0x3FCCDF00`.
+Manual display verification remains pending; software SPI still limits pixel
+transfer speed. No claim of a hardware single-command fill is made.

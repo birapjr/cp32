@@ -7,7 +7,7 @@ import sys
 sys.dont_write_bytecode=True
 from test_idle_handoff import extract_function
 ROOT=Path(__file__).resolve().parents[1]
-names=['cardputer_display_begin_batch','cardputer_display_end_batch',
+names=['cardputer_display_clear','cardputer_display_begin_batch','cardputer_display_end_batch',
        'glyph_scaled','cardputer_display_putc','cardputer_display_write']
 bodies=[extract_function(ROOT/'src/kernel/display.c',n) for n in names]
 PRELUDE=r'''
@@ -18,15 +18,16 @@ PRELUDE=r'''
 #define DC 1
 #define CS 2
 static unsigned x,y,ready,spi_fault,display_batch,display_redraw_pending;
-static char textbuf[12][16];
+static char textbuf[12][16], painted[12][16];
 static uint16_t pixels[240*135], expected_pixels[240*135];
 static char expected_text[12][16];
-static unsigned wx,wy,ww,wh,pos,clears;
+static unsigned wx,wy,ww,wh,pos,clears,cells;
 static void out(unsigned pin,unsigned value) { (void)pin; (void)value; }
 static void win(unsigned a,unsigned b,unsigned c,unsigned d) {
   assert(c<240 && d<135 && a<=c && b<=d);
   wx=a; wy=b; ww=c-a+1; wh=d-b+1; pos=0;
   if(ww==240 && wh==135) clears++;
+  if(ww==15 && wh==10) cells++;
 }
 static void px(uint16_t value) {
   assert(pos<ww*wh); pixels[(wy+pos/ww)*240+wx+pos%ww]=value; pos++;
@@ -34,8 +35,8 @@ static void px(uint16_t value) {
 '''
 TESTS=r'''
 static void reset(void) {
-  x=y=display_batch=display_redraw_pending=spi_fault=clears=0; ready=1;
-  memset(textbuf,' ',sizeof(textbuf)); memset(pixels,0,sizeof(pixels));
+  x=y=display_batch=display_redraw_pending=spi_fault=clears=cells=0; ready=1;
+  memset(textbuf,' ',sizeof(textbuf)); memset(painted,' ',sizeof(painted)); memset(pixels,0,sizeof(pixels));
 }
 static void seed(void) {
   for(int i=0;i<11;i++) cardputer_display_write("seed text\n");
@@ -45,7 +46,7 @@ int main(void) {
   const char *lines="\nramdisk\nboot\nREADME\n[CMD ls capacity=65536 formatted=0]\n$ ";
   reset(); seed();
   for(const char *p=lines;*p;p++) cardputer_display_putc(*p);
-  assert(clears>1); unsigned oldclears=clears, final_x=x,final_y=y;
+  assert(clears==0); unsigned oldcells=cells, final_x=x,final_y=y;
   memcpy(expected_pixels,pixels,sizeof(pixels)); memcpy(expected_text,textbuf,sizeof(textbuf));
   reset(); seed(); cardputer_display_begin_batch();
   cardputer_display_write("\nramdisk\n");
@@ -53,24 +54,38 @@ int main(void) {
   cardputer_display_write("[CMD ls capacity=65536 formatted=0]\n$ ");
   assert(clears==0 && display_batch==1 && display_redraw_pending);
   cardputer_display_end_batch();
-  assert(clears==1 && !display_batch && !display_redraw_pending);
+  assert(clears==0 && !display_batch && !display_redraw_pending);
   assert(x==final_x && y==final_y && x==30);
   assert(!memcmp(expected_pixels,pixels,sizeof(pixels)));
   assert(!memcmp(expected_text,textbuf,sizeof(textbuf)));
-  cardputer_display_end_batch(); assert(!display_batch && clears==1);
+  unsigned batchedcells=cells;
+  assert(batchedcells<oldcells);
+  cardputer_display_end_batch(); assert(!display_batch && clears==0 && cells==batchedcells);
+  /* Independent clean-screen rasterization must match the incremental LCD. */
+  memcpy(expected_pixels,pixels,sizeof(pixels)); memset(pixels,0,sizeof(pixels));
+  unsigned save_x=x,save_y=y;
+  for(unsigned r=0;r<12;r++) for(unsigned c=0;c<16;c++) {
+    x=c*15; y=r*11; glyph_scaled(textbuf[r][c]);
+  }
+  assert(!memcmp(expected_pixels,pixels,sizeof(pixels))); x=save_x; y=save_y;
   /* Full bottom line wraps through the text buffer instead of overwriting it. */
   reset(); y=121; cardputer_display_write("abcdefghijklmnopQ");
   assert(!memcmp(textbuf[10],"abcdefghijklmnop",16));
-  assert(textbuf[11][0]=='Q' && x==15 && y==121 && clears==1);
+  assert(textbuf[11][0]=='Q' && x==15 && y==121 && clears==0);
   /* Exact-width line followed by newline advances only once. */
   reset(); cardputer_display_write("abcdefghijklmnop\nQ");
   assert(textbuf[1][0]=='Q' && x==15 && y==11 && clears==0);
   /* Overwriting a character with a space erases its pixels. */
   reset(); cardputer_display_write("A\b ");
   for(unsigned i=0;i<240*135;i++) assert(!pixels[i]);
+  cardputer_display_write("clear me"); cardputer_display_clear();
+  assert(clears==1 && x==0 && y==0);
+  for(unsigned r=0;r<12;r++) for(unsigned c=0;c<16;c++)
+    assert(textbuf[r][c]==' ' && painted[r][c]==' ');
+  for(unsigned i=0;i<240*135;i++) assert(!pixels[i]);
   reset(); spi_fault=1; cardputer_display_write("hidden\n");
   assert(!display_batch && clears==0 && x==0 && y==0);
-  printf("LCD model: identical batched pixels/cursor, %u scroll redraws reduced to 1, wrap/space/fault checks passed\n",oldclears);
+  printf("LCD model: zero scroll clears, %u versus %u cell writes, pixel/cursor/wrap/erasure checks passed\n",batchedcells,oldcells);
   return 0;
 }
 '''

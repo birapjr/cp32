@@ -52,6 +52,8 @@
 #define BIT(p) (1u << (p))
 static unsigned ready, x, y, spi_fault, spi_transactions, spi_timeouts;
 static char textbuf[12][16];
+/* Last character actually painted in each opaque 15x10 text cell. */
+static char painted[12][16];
 static unsigned display_batch, display_redraw_pending;
 static void out(unsigned p,int v){
   if (p < 32u) *(volatile uint32_t *)(v?GPIO_OUT_W1TS:GPIO_OUT_W1TC)=BIT(p);
@@ -154,26 +156,24 @@ void cardputer_display_clear(void){
   for(n=0;n<240u*135u;n++) px(0x0000);
   out(CS,1);
   x=y=0;
-  for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=' ';
+  for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=painted[row][col]=' ';
 }
 static void glyph_scaled(char c);
-/* Nested writes belong to the outer command batch. Only a scroll requires
- * repainting the whole screen; subsequent scrolls update the text buffer. */
+/* Nested writes share one flush. Compare final text with painted cells so
+ * scrolling never blanks the screen or retransmits unchanged characters. */
 void cardputer_display_begin_batch(void){
   if (display_batch++ == 0) display_redraw_pending=0;
 }
 void cardputer_display_end_batch(void){
-  unsigned row,col,n,saved_x,saved_y;
+  unsigned row,col,saved_x,saved_y;
   if (!display_batch || --display_batch || !display_redraw_pending) return;
   display_redraw_pending=0;
   if (!ready || spi_fault) return;
   saved_x=x; saved_y=y;
-  win(0,0,239,134); out(DC,1); out(CS,0);
-  for(n=0;n<240u*135u;n++) px(0x0000);
-  out(CS,1);
   for(row=0;row<12;row++) for(col=0;col<16;col++) {
-    if(textbuf[row][col]==' ') continue;
+    if(textbuf[row][col]==painted[row][col]) continue;
     x=col*15; y=row*11; glyph_scaled(textbuf[row][col]);
+    painted[row][col]=textbuf[row][col];
   }
   x=saved_x; y=saved_y;
 }
@@ -220,7 +220,10 @@ void cardputer_display_putc(char c){
   if(x>=240) cardputer_display_putc('\n');
   row=y/11; col=x/15;
   if(row<12 && col<16) textbuf[row][col]=c;
-  if(!display_redraw_pending) glyph_scaled(c);
+  if(!display_redraw_pending && row<12 && col<16 && painted[row][col]!=c){
+    glyph_scaled(c);
+    painted[row][col]=c;
+  }
   x+=15;
 }
 void cardputer_display_write(const char *s){
