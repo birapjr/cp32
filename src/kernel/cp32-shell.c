@@ -94,13 +94,13 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
         request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
       result = EIO;
     if (result == OK) result = request.REP_STATUS;
-    cp32_shell_print("[TTY IPC V41 reply-result=");
+    cp32_shell_print("[TTY IPC V44 reply-result=");
     cp32_shell_print_u32((uint32_t)result);
     cp32_shell_print("]\r\n");
   } else if (strcmp(line, "mm") == 0) {
     int result = cp32_shell_mm_exchange();
     int saved_ps = lock_save();
-    usbj_print("[MM IPC V41 alloc-release-result=");
+    usbj_print("[MM IPC V44 alloc-release-result=");
     usbj_print_u32((uint32_t)result);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
@@ -110,12 +110,37 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     uint32_t ticks = 0;
     int result = cp32_shell_sys_query(&ticks);
     int saved_ps = lock_save();
-    usbj_print("[SYS IPC V41 result="); usbj_print_u32((uint32_t)result);
+    usbj_print("[SYS IPC V44 result="); usbj_print_u32((uint32_t)result);
     usbj_print(" uptime="); usbj_print_u32(ticks);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
     cardputer_display_write(result == OK ? "SYS queries OK\r\n" :
                                            "SYS queries failed\r\n");
+  } else if (strcmp(line, "write") == 0) {
+    char text[] = "TTY write via IPC\n";
+    message request;
+    int result, saved_ps;
+    memset(&request, 0, sizeof(request));
+    request.m_type = DEV_WRITE;
+    request.TTY_LINE = 0;
+    request.PROC_NR = FS_PROC_NR;
+    request.COUNT = sizeof(text) - 1;
+    request.ADDRESS = text;
+    result = _sendrec(TTY_PROC_NR, &request);
+    if (result == OK && (request.m_source != TTY_PROC_NR ||
+        request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
+      result = EIO;
+    if (result == OK) result = request.REP_STATUS;
+    saved_ps = lock_save();
+    usbj_print("[TTY WRITE V44 result="); usbj_print_u32((uint32_t)result);
+    usbj_print(" expected="); usbj_print_u32(sizeof(text) - 1);
+    usbj_print("]\r\n");
+    restore_lock(saved_ps);
+  } else if (strcmp(line, "font") == 0) {
+    cp32_shell_print("hyphen: -\r\n");
+    cp32_shell_print("under:  _\r\n");
+    cp32_shell_print("slash:  /\r\n");
+    cp32_shell_print("equals: =\r\n");
   } else if (strcmp(line, "ls") == 0) {
     cp32_shell_print("ramdisk\r\n");
     cp32_shell_print("boot\r\n");

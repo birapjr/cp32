@@ -240,14 +240,13 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 40 confirms one scrolling pass on hardware, but its full-screen black
-clear is still slow. The user reports this visually; serial evidence in
-`docs/hardware/console-batch-v40.log` confirms repeated ls and successful
-MM/SYS/TTY with CLOCK progress through IRQ 5000. Image 41 eliminates the
-scroll-time full-screen clear and paints only changed text cells. All 17 host
-scripts and the clean image build pass. Next: manually flash image 41 and
-verify scrolling has no black-screen pass, no stale text and correct prompt
-placement. Startup/explicit screen clear still writes black pixels once.
+User confirms image-43 punctuation is correct; `docs/hardware/lcd-punct-v43.log`
+records '-' as 0x2D, '_' as 0x5F and CLOCK progress to IRQ 5000. Image 44
+connects TTY DEV_WRITE to the LCD and adds shell write for a real byte-count
+reply. All 18 host scripts and the clean build pass. Next: manually flash,
+run write repeatedly and expect result=18 expected=18 plus LCD text, then
+sys/mm/ipc/ls with continued CLOCK progress. Device-backed DEV_READ and
+full shell routing through TTY remain later work.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -690,3 +689,65 @@ These counts are not a measured hardware speedup.
 Hardware pending: repeat ls with a full LCD and check absence of the black
 cleanup pass, correct blank cells and prompt placement; then sys/mm/ipc.
 Software SPI can still limit the speed of the changed cells themselves.
+
+
+## Punctuation follow-up — images 42/43, 2026-09-19
+
+Image 42 (`LCD-HYPHEN 42`) added a horizontal hyphen glyph with a pixel test.
+User reports that it still looks incorrect. The pasted log confirms the image
+identity, SYS result 0/uptime 401, MM result 0, TTY result 0 and ls completion;
+it contains no typed hyphen event. Root cause of the visual mismatch remains
+unconfirmed. Image-41 scrolling was explicitly accepted by the user; its log
+is saved as `docs/hardware/lcd-cells-v41.log`.
+
+Image 43: `[FEATURE LCD-PUNCT 43]1`, `[TEST LCD-PUNCT 43]`. Hyphen is centered
+within the text cell; underscore, slash and colon now have explicit glyphs
+instead of generated placeholder patterns. Slash appears in the existing
+MM alloc/release status. This is a plausible distinct source of a bad symbol,
+not an established explanation for the user's hyphen report.
+Shell font prints labelled hyphen, underscore, slash and equals samples through
+the same normal display path. It provides a reproducible check independent of
+keyboard punctuation input. Keyboard table storage now includes string
+terminators (15 bytes for 14 key columns); mapping and column bounds are unchanged.
+
+[x] All 17 tests pass, including pixel-exact hyphen/underscore/slash checks and
+production keyboard decoding for minus, shifted underscore and release events.
+Clean build and image layout pass: `_iram_end=0x403742F8`,
+`_iram_ext_end=0x40380B18`, `_stack_top=0x3FCCDF90`.
+Hardware pending: run font and compare the labelled samples with typed '-' and
+Shift+'-'. If either differs, capture its LCD appearance and USB character code.
+Existing scrolling and quiet diagnostic intervals are preserved.
+
+
+[x] Image-43 punctuation hardware confirmation: user states characters now
+look correct. `docs/hardware/lcd-punct-v43.log` includes minus (0x2D), underscore
+(0x5F), lower/uppercase input and CLOCK count 587 at IRQ 5000 with no exception.
+
+## Real TTY device output — image 44, 2026-09-19
+
+Identity: `[FEATURE TTY-WRITE 44]1`, `[TEST TTY-WRITE 44]`.
+MINIX reference: kernel/console.c cons_write copies bounded chunks, updates
+write counts, flushes console output and replies with consumed bytes. CP32
+scr_init now connects tty_devwrite to a real Cardputer LCD backend instead
+of tty_devnop. numap validates each source chunk, at most 64 bytes are copied
+at a time, and existing out_process applies termios newline/tab processing.
+LCD writes preserve command batching and changed-cell updates. Completion
+resets counts and replies once with input bytes consumed; mapping/display
+errors return EFAULT/EIO. Existing inhibited-output behavior remains intact.
+
+Shell write sends DEV_WRITE containing "TTY write via IPC\n" from its own
+stack and validates reply provenance. Expect `[TTY WRITE V44 result=18
+expected=18]` and the text on LCD. The count is input bytes, independent of
+newline expansion. A surrounding shell batch may defer physical LCD flush
+until the command/prompt is complete. This does not yet route every shell
+output through TTY or implement device-backed reads/escape sequences.
+
+[x] All 18 host scripts pass. New tests execute production do_write,
+cp32_console_write and out_process with modeled memory/LCD/reply boundaries:
+150-byte multi-chunk write, newline/tab expansion, byte counts, zero/negative
+counts, bad mapping, busy output, LCD fault and inhibited output paths.
+Existing IPC, scheduler and LCD pixel tests also pass.
+[x] Clean build without warnings and ELF/image layout pass:
+`_iram_end=0x40374310`, `_iram_ext_end=0x40380DD0`, `_stack_top=0x3FCCE280`.
+Hardware pending: repeat write, verify the LCD text and matching byte counts,
+then regress sys/mm/ipc/ls and CLOCK progress. Manual flashing only.

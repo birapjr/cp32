@@ -330,3 +330,38 @@ zero scroll clears and equality to a complete reference rasterization.
 `_iram_end=0x40374264`, `_iram_ext_end=0x40380AD0`, `_stack_top=0x3FCCDF00`.
 Manual display verification remains pending; software SPI still limits pixel
 transfer speed. No claim of a hardware single-command fill is made.
+
+
+## Hyphen appearance unresolved — image 43 adds direct comparison
+
+User accepted image-41 scrolling but reports '-' still incorrect on image 42.
+The pasted image-42 log shows SYS/MM/TTY success and ls, with no hyphen input
+trace; it cannot establish the visual cause. Image 43 centers the hyphen,
+adds explicit underscore/slash/colon glyphs, and introduces shell font with
+labelled '- _ / =' samples. Slash previously used a placeholder even in the
+MM alloc/release message; this may be a separate observed symbol issue.
+
+Markers: `[FEATURE LCD-PUNCT 43]1`, `[TEST LCD-PUNCT 43]`.
+All 17 host scripts and clean build/image checks pass. Pixel tests verify
+hyphen/underscore/slash shapes; the real keyboard decoder emits '-' or '_'
+according to Shift state. Keyboard arrays now accommodate their terminators.
+`_iram_end=0x403742F8`, `_iram_ext_end=0x40380B18`, `_stack_top=0x3FCCDF90`.
+Hardware punctuation correctness remains pending. Run font and compare with
+typed punctuation; an LCD photo and USB code would distinguish any remaining
+rendering issue from an input mismatch. No automatic flashing performed.
+
+
+## Punctuation confirmed; image 44 adds real DEV_WRITE
+
+User confirms image-43 characters are correct; saved evidence is
+`docs/hardware/lcd-punct-v43.log`. TTY output was still a no-op backend despite
+working ioctl IPC. Image 44 connects console DEV_WRITE to mapped, bounded
+buffer copies, existing termios output processing, batched LCD output and a
+real consumed-byte reply. Shell write exercises it with 18 input bytes.
+Markers: `[FEATURE TTY-WRITE 44]1`, `[TEST TTY-WRITE 44]`,
+`[TTY WRITE V44 result=18 expected=18]`. All 18 host scripts and clean
+ELF/image checks pass; hardware confirmation is pending. Symbols:
+`_iram_end=0x40374310`, `_iram_ext_end=0x40380DD0`, `_stack_top=0x3FCCE280`.
+Device input, full shell TTY routing and complete terminal control sequences
+remain incomplete. LCD batch flush may occur after the byte-count reply when
+the shell owns an outer command batch. No automatic flashing performed.

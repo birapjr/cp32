@@ -10,11 +10,13 @@ ROOT=Path(__file__).resolve().parents[1]
 names=['cardputer_display_clear','cardputer_display_begin_batch','cardputer_display_end_batch',
        'glyph_scaled','cardputer_display_putc','cardputer_display_write']
 bodies=[extract_function(ROOT/'src/kernel/display.c',n) for n in names]
+bodies.append(extract_function(ROOT/'src/kernel/tty.c','cp32_cardputer_key'))
 PRELUDE=r'''
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#define CP32_IRAM_EXT
 #define DC 1
 #define CS 2
 static unsigned x,y,ready,spi_fault,display_batch,display_redraw_pending;
@@ -83,6 +85,26 @@ int main(void) {
   for(unsigned r=0;r<12;r++) for(unsigned c=0;c<16;c++)
     assert(textbuf[r][c]==' ' && painted[r][c]==' ');
   for(unsigned i=0;i<240*135;i++) assert(!pixels[i]);
+  /* Hyphen is one horizontal stroke, with no fallback-pattern pixels. */
+  reset(); cardputer_display_write("-");
+  assert(x==15 && y==0 && textbuf[0][0]=='-');
+  for(unsigned py=0;py<135;py++) for(unsigned px=0;px<240;px++)
+    assert(pixels[py*240+px]==((py>=4 && py<6 && px>=2 && px<12) ? 0xFFFF : 0));
+  reset(); cardputer_display_write("_");
+  for(unsigned py=0;py<135;py++) for(unsigned px=0;px<240;px++)
+    assert(pixels[py*240+px]==((py>=8 && py<10 && px>=2 && px<12) ? 0xFFFF : 0));
+  reset(); cardputer_display_write("/");
+  for(unsigned py=0;py<10;py++) for(unsigned px=0;px<15;px++) {
+    unsigned start=10-2*(py/2);
+    assert(pixels[py*240+px]==((px>=start && px<start+2) ? 0xFFFF : 0));
+  }
+  char key=0;
+  assert(cp32_cardputer_key(55,&key)==1 && key=='-');
+  assert(cp32_cardputer_key(7,&key)==0); /* Shift pressed. */
+  assert(cp32_cardputer_key(55,&key)==1 && key=='_');
+  assert(cp32_cardputer_key(0x87,&key)==0); /* Shift released. */
+  assert(cp32_cardputer_key(55,&key)==1 && key=='-');
+  assert(cp32_cardputer_key(55|0x80,&key)==0);
   reset(); spi_fault=1; cardputer_display_write("hidden\n");
   assert(!display_batch && clears==0 && x==0 && y==0);
   printf("LCD model: zero scroll clears, %u versus %u cell writes, pixel/cursor/wrap/erasure checks passed\n",batchedcells,oldcells);

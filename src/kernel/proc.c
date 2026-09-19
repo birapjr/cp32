@@ -1107,7 +1107,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_task_ipc(struct proc *owner, int operation
   if (operation < SEND || operation > BOTH) return;
   n = ++counts[operation];
   if (n != 1 && n % 5000 != 0) return;
-  usbj_print("[IPC V41 op="); usbj_print_u32((uint32_t)operation);
+  usbj_print("[IPC V44 op="); usbj_print_u32((uint32_t)operation);
   usbj_print(" n="); usbj_print_u32(n);
   usbj_print(" owner="); usbj_print_u32((uint32_t)owner->p_nr);
   usbj_print(" blocked="); usbj_print_u32((uint32_t)!!(owner->p_flags & (SENDING | RECEIVING)));
