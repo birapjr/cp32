@@ -240,13 +240,14 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 38 confirms successful MM/TTY exchanges, ls output, CLOCK progress to
-587 messages at IRQ 5000 and the quieter diagnostic cadence without an
-exception (`docs/hardware/quiet-systimer-v38.log`). Image 39 enables SYS_TASK
-and adds shell `sys` for saved-stack-pointer and uptime queries via real IPC.
-All 16 host test scripts and a clean build pass. Next: manually flash image
-39, run `sys` repeatedly (result=0, increasing uptime), then mm/ipc/ls and
-capture continued CLOCK progress. SYS hardware validation remains pending.
+Image 39 confirms four successful SYS queries with increasing uptime,
+MM/TTY success and CLOCK progress through IRQ 10000; evidence is saved in
+`docs/hardware/sys-ipc-v39.log`. Console output still takes thousands of ticks.
+Image 40 fixes LCD scroll batching, cursor preservation and bottom-row wrap;
+all 17 host tests and a clean build pass. Next: manually flash image 40,
+repeat ls with the screen full, inspect LCD text/prompt/scrolling, and confirm
+sys/mm/ipc plus CLOCK progress. Physical display behavior and speed remain
+unverified for this image; software SPI remains in use.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -621,3 +622,41 @@ Hardware pending: repeat sys and confirm result=0, increasing uptime and SYS
 resumed=1, then exercise mm/ipc/ls with continued CLOCK progress to tick 5000.
 Manual flashing only. Full SYS service correctness and CPU accounting accuracy
 are not established by these read-only bring-up queries.
+
+
+[x] Image-39 SYS hardware result: `docs/hardware/sys-ipc-v39.log` records
+SYS resumed=1 and four result=0 queries at uptimes 255, 614, 966 and 1495.
+TTY and MM return 0, ls completes, CLOCK reaches 1175 dispatches at IRQ
+10000, and heartbeats continue through tick 11732 without an exception.
+The long gaps between ls lines show console latency remains a real issue.
+
+## Console scroll batching — image 40, 2026-09-19
+
+Identity: `[FEATURE CONSOLE-BATCH 40]1`, `[TEST CONSOLE-BATCH 40]`.
+MINIX console.c buffers output and flushes it after processing a write.
+CP32's ST7789 uses software SPI and a text shadow buffer, not PC video RAM.
+The existing batch API never set redraw_pending on scroll and was unused by
+shell commands. Every newline at the bottom cleared/repainted the whole LCD.
+
+Nested display writes now share the outer shell-command batch, including
+its newline and prompt. A scroll updates the text buffer and marks one repaint
+pending; later scrolls coalesce until the outer batch ends. Repainting preserves
+the logical cursor. Glyph rendering no longer advances or clamps that cursor:
+putc owns wrapping, so long bottom-row lines scroll the buffer correctly.
+Spaces now paint background pixels, allowing them to erase previous glyphs.
+Interrupts remain enabled during rendering; no SPI register/timing change is
+made. Reduced heartbeat and timer diagnostic intervals are preserved.
+
+[x] All 17 host test scripts pass. A new pixel-addressed LCD model runs the
+production renderer and compares batched and unbatched output: a representative
+command produces identical final pixels/text/cursor with 7 full scroll redraws
+reduced to 1. It covers nested batches, bottom-row wrap, exact-width newline,
+space erasure and faulted-display behavior. Existing SYS/MM/TTY/CLOCK tests pass.
+
+[x] Clean build without warnings and ELF/image checks pass:
+`_iram_end=0x40374224`, `_iram_ext_end=0x40380AD0`, `_stack_top=0x3FCCDE50`.
+Hardware pending: repeat ls on a full display; verify complete lines, correct
+scrolling and prompt position, and compare responsiveness with image 39.
+Then run sys/mm/ipc and capture continued CLOCK progress. Fewer modeled redraws
+do not prove a specific on-device speedup. A single full redraw still uses
+software SPI; further transport work may be needed after this validation.

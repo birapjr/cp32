@@ -157,22 +157,33 @@ void cardputer_display_clear(void){
   for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=' ';
 }
 static void glyph_scaled(char c);
-void cardputer_display_begin_batch(void){display_batch=1;display_redraw_pending=0;}
+/* Nested writes belong to the outer command batch. Only a scroll requires
+ * repainting the whole screen; subsequent scrolls update the text buffer. */
+void cardputer_display_begin_batch(void){
+  if (display_batch++ == 0) display_redraw_pending=0;
+}
 void cardputer_display_end_batch(void){
-  unsigned row,col;
-  if(!display_redraw_pending){display_batch=0;return;}
-  display_batch=0; display_redraw_pending=0;
-  { unsigned n; win(0,0,239,134); out(DC,1); out(CS,0); for(n=0;n<240u*135u;n++) px(0x0000); out(CS,1); }
-  for(row=0;row<12;row++) for(col=0;col<16;col++) if(textbuf[row][col]!=' '){x=col*15;y=row*11;glyph_scaled(textbuf[row][col]);}
-  x=0; y=121;
+  unsigned row,col,n,saved_x,saved_y;
+  if (!display_batch || --display_batch || !display_redraw_pending) return;
+  display_redraw_pending=0;
+  if (!ready || spi_fault) return;
+  saved_x=x; saved_y=y;
+  win(0,0,239,134); out(DC,1); out(CS,0);
+  for(n=0;n<240u*135u;n++) px(0x0000);
+  out(CS,1);
+  for(row=0;row<12;row++) for(col=0;col<16;col++) {
+    if(textbuf[row][col]==' ') continue;
+    x=col*15; y=row*11; glyph_scaled(textbuf[row][col]);
+  }
+  x=saved_x; y=saved_y;
 }
 static void glyph_scaled(char c){
   static const uint8_t f[26][5]={{14,17,16,17,14},{30,17,30,17,30},{14,17,16,17,14},{30,17,17,17,30},{31,16,30,16,31},{31,16,30,16,16},{14,16,23,17,14},{17,17,31,17,17},{14,4,4,4,14},{7,2,2,18,12},{17,18,28,18,17},{16,16,16,16,31},{17,27,21,17,17},{17,25,21,19,17},{14,17,17,17,14},{30,17,30,16,16},{14,17,17,21,14},{30,17,30,18,17},{15,16,14,1,30},{31,4,4,1,30},{17,17,17,17,14},{17,17,17,10,4},{17,17,21,27,17},{17,10,4,10,17},{17,10,4,4,4},{31,2,4,8,31}};
   static const uint8_t d[10][5]={{14,17,17,17,14},{4,12,4,4,14},{14,1,6,8,31},{30,1,14,1,30},{2,6,10,31,2},{31,16,30,1,30},{14,16,30,17,14},{31,1,2,4,4},{14,17,14,17,14},{14,17,15,1,14}};
   static const uint8_t l[26][5]={{0,14,1,15,15},{16,16,30,17,30},{0,14,16,16,14},{1,1,15,17,15},{0,14,31,16,14},{6,9,28,8,8},{0,15,17,15,1},{16,16,30,17,17},{4,0,12,4,14},{2,0,6,2,18},{16,18,28,18,17},{12,4,4,4,14},{0,26,21,17,17},{0,30,17,17,17},{0,14,17,17,14},{0,30,17,30,16},{0,15,17,15,1},{0,22,25,16,16},{0,15,28,3,30},{8,8,28,8,7},{0,17,17,19,13},{0,17,17,10,4},{0,17,21,21,10},{0,17,10,4,10},{0,17,17,15,1},{0,31,2,4,31}};
   uint8_t r[5]; unsigned i,row,col,sx,sy;
-  if(c==' '){x+=15;if(x>=240){x=0;y+=11;}return;}
-  if(c>='a'&&c<='z') for(i=0;i<5;i++) r[i]=l[c-'a'][i];
+  if(c==' ') for(i=0;i<5;i++) r[i]=0;
+  else if(c>='a'&&c<='z') for(i=0;i<5;i++) r[i]=l[c-'a'][i];
   else if(c>='A'&&c<='Z') for(i=0;i<5;i++) r[i]=f[c-'A'][i];
   else if(c>='0'&&c<='9') for(i=0;i<5;i++) r[i]=d[c-'0'][i];
   else if(c=='[') { r[0]=6; r[1]=4; r[2]=4; r[3]=4; r[4]=6; }
@@ -184,32 +195,37 @@ static void glyph_scaled(char c){
   for(row=0;row<5;row++) for(sy=0;sy<2;sy++)
     for(col=0;col<8;col++) for(sx=0;sx<(col<7 ? 2u : 1u);sx++)
       px((col<7 && (r[row]&(1u<<(6-col)))) ? 0xFFFF : 0x0000);
-  out(CS,1); x+=15;
-  if(x>=240){x=0;y+=11;} if(y>123){y=121;}
+  out(CS,1);
 }
 void cardputer_display_putc(char c){
-  unsigned row,col,n;
+  unsigned row,col;
   if(!ready||spi_fault)return;
   if(c=='\r')return;
   if(c=='\n'){
     x=0; y+=11;
     if(y<=123)return;
-    for(row=0;row<11;row++) for(col=0;col<16;col++) textbuf[row][col]=textbuf[row+1][col];
+    for(row=0;row<11;row++) for(col=0;col<16;col++)
+      textbuf[row][col]=textbuf[row+1][col];
     for(col=0;col<16;col++) textbuf[11][col]=' ';
-    if(display_batch){x=0;y=121;return;}
-    win(0,0,239,134); out(DC,1); out(CS,0);
-    for(n=0;n<240u*135u;n++) px(0x0000);
-    out(CS,1);
-    for(row=0;row<11;row++) for(col=0;col<16;col++) if(textbuf[row][col]!=' '){x=col*15;y=row*11;glyph_scaled(textbuf[row][col]);}
-    x=0;y=121;
+    x=0; y=121;
+    if(display_batch){display_redraw_pending=1;return;}
+    cardputer_display_begin_batch();
+    display_redraw_pending=1;
+    cardputer_display_end_batch();
     return;
   }
   if(c=='\b'){if(x>=15)x-=15;return;}
+  /* Delay wrap until the next printable character; newline after a full
+   * line advances exactly once. Scrolling must update textbuf too. */
   if(x>=240) cardputer_display_putc('\n');
   row=y/11; col=x/15;
   if(row<12 && col<16) textbuf[row][col]=c;
-  if(display_batch && display_redraw_pending)return;
-  glyph_scaled(c);
+  if(!display_redraw_pending) glyph_scaled(c);
+  x+=15;
 }
-void cardputer_display_write(const char *s){while(*s)cardputer_display_putc(*s++);}
+void cardputer_display_write(const char *s){
+  cardputer_display_begin_batch();
+  while(*s)cardputer_display_putc(*s++);
+  cardputer_display_end_batch();
+}
 unsigned cardputer_display_faulted(void){return spi_fault;}

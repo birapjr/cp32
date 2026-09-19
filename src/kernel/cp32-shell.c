@@ -94,13 +94,13 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
         request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
       result = EIO;
     if (result == OK) result = request.REP_STATUS;
-    cp32_shell_print("[TTY IPC V39 reply-result=");
+    cp32_shell_print("[TTY IPC V40 reply-result=");
     cp32_shell_print_u32((uint32_t)result);
     cp32_shell_print("]\r\n");
   } else if (strcmp(line, "mm") == 0) {
     int result = cp32_shell_mm_exchange();
     int saved_ps = lock_save();
-    usbj_print("[MM IPC V39 alloc-release-result=");
+    usbj_print("[MM IPC V40 alloc-release-result=");
     usbj_print_u32((uint32_t)result);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
@@ -110,7 +110,7 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     uint32_t ticks = 0;
     int result = cp32_shell_sys_query(&ticks);
     int saved_ps = lock_save();
-    usbj_print("[SYS IPC V39 result="); usbj_print_u32((uint32_t)result);
+    usbj_print("[SYS IPC V40 result="); usbj_print_u32((uint32_t)result);
     usbj_print(" uptime="); usbj_print_u32(ticks);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
@@ -150,9 +150,11 @@ CP32_IRAM_EXT void cp32_tty_read_client(void)
       } else if (cp32_tty_user_byte == '\r' || cp32_tty_user_byte == '\n') {
         cp32_tty_line[cp32_tty_line_len] = '\0';
         usbj_print("[TTY line="); usbj_print(cp32_tty_line); usbj_print("]\r\n");
+        cardputer_display_begin_batch();
         cardputer_display_putc('\n');
         cp32_shell_command(cp32_tty_line);
         cardputer_display_write("$ ");
+        cardputer_display_end_batch();
         cp32_tty_line_len = 0;
       } else if (cp32_tty_user_byte >= 0x20 &&
                  cp32_tty_user_byte <= 0x7E && cp32_tty_line_len < 63) {

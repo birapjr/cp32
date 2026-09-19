@@ -295,3 +295,22 @@ All 16 host test scripts, clean build and ELF/image checks pass, with
 Hardware confirmation awaits manual flashing, repeated sys queries and
 mm/ipc/ls with continued CLOCK progress. Other existing SYS handlers and
 full CPU-accounting correctness remain unvalidated.
+
+
+## SYS hardware pass; console latency fix in image 40
+
+`docs/hardware/sys-ipc-v39.log` confirms four SYS replies with increasing
+uptime (255/614/966/1495), MM/TTY success and CLOCK count 1175 at IRQ 10000.
+No exception appears through heartbeat tick 11732. ls completes slowly,
+with thousands of ticks between lines.
+
+Image 40 fixes the unused/broken LCD batch path: scrolling marks a pending
+repaint, nested writes coalesce to one outer-command redraw, and the final
+cursor is preserved. Bottom-row wrapping now scrolls the text buffer instead
+of clamping/overwriting; spaces erase old glyphs. SPI transport is unchanged.
+Markers: `[FEATURE CONSOLE-BATCH 40]1`, `[TEST CONSOLE-BATCH 40]`.
+All 17 host scripts and the clean ELF/image build pass. Pixel-model testing
+shows identical final batched/unbatched output with 7 scroll redraws reduced
+to 1. Symbols: `_iram_end=0x40374224`, `_iram_ext_end=0x40380AD0`,
+`_stack_top=0x3FCCDE50`. Manual LCD appearance/performance validation remains
+pending; test full-screen ls followed by sys/mm/ipc and CLOCK progress.

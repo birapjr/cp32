@@ -143,7 +143,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_sys_receive(void)
   extern struct proc *current_proc;
   if (++received > 2 && received % 5000 != 0) return;
   saved_ps = lock_save();
-  usbj_print("[SYS V39 received="); usbj_print_u32(received);
+  usbj_print("[SYS V40 received="); usbj_print_u32(received);
   usbj_print(" op="); usbj_print_u32((uint32_t)m.m_type);
   usbj_print(" source="); usbj_print_u32((uint32_t)m.m_source);
   usbj_print(" resumed=");
