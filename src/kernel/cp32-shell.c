@@ -47,7 +47,7 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
         request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
       result = EIO;
     if (result == OK) result = request.REP_STATUS;
-    cp32_shell_print("[TTY IPC V33 reply-result=");
+    cp32_shell_print("[TTY IPC V35 reply-result=");
     cp32_shell_print_u32((uint32_t)result);
     cp32_shell_print("]\r\n");
   } else if (strcmp(line, "ls") == 0) {

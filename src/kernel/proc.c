@@ -1029,9 +1029,9 @@ CP32_IRAM_EXT PUBLIC void interrupt(int task)
   }
   cp32_irq_notify_delivered++;
   rp->p_int_blocked = FALSE;
-  rp->p_flags &= ~RECEIVING;
-  if (cp32_blocked_return_proc == rp) cp32_blocked_return_proc = NIL_PROC;
-  if (rp->p_flags == 0) ready(rp);
+  /* HARD_INT completes the same saved RECEIVE as a normal message.
+   * Clear its snapshot and result slot before publishing runnable state. */
+  cp32_complete_blocked_frame(rp, OK);
   /* IRQ return selects a frame after this notification; do not change the
    * owner of the interrupted frame here. */
 }
@@ -1107,7 +1107,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_task_ipc(struct proc *owner, int operation
   if (operation < SEND || operation > BOTH) return;
   n = ++counts[operation];
   if (n != 1 && n % 5000 != 0) return;
-  usbj_print("[IPC V33 op="); usbj_print_u32((uint32_t)operation);
+  usbj_print("[IPC V35 op="); usbj_print_u32((uint32_t)operation);
   usbj_print(" n="); usbj_print_u32(n);
   usbj_print(" owner="); usbj_print_u32((uint32_t)owner->p_nr);
   usbj_print(" blocked="); usbj_print_u32((uint32_t)!!(owner->p_flags & (SENDING | RECEIVING)));
@@ -1332,24 +1332,9 @@ PRIVATE void pick_proc()
       rp->p_nextready = NIL_PROC;
       cp32_ready_blocked_skip_count++;
     }
-    /* Bring-up task entries such as MM/SYS still use blocking receive()
-     * without a complete task-context return path. Prefer the cooperative
-     * TTY task while the live console probe is being exercised; otherwise a
-     * first quantum can enter MM and stop before the next IRQ. */
-    if (q == TASK_Q && rdy_head[q] != NIL_PROC) {
-      int rotations = 0;
-      while (rdy_head[q] != NIL_PROC &&
-             rdy_head[q]->p_nr != TTY_PROC_NR &&
-             rotations++ < NR_TASKS) {
-        struct proc *head = rdy_head[q];
-        rdy_head[q] = head->p_nextready;
-        if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
-        head->p_nextready = NIL_PROC;
-        if (rdy_tail[q] == NIL_PROC) rdy_head[q] = head;
-        else rdy_tail[q]->p_nextready = head;
-        rdy_tail[q] = head;
-      }
-    }
+    /* MINIX selects the queue head. A fixed rotation to prefer a sleeping
+     * TTY repeatedly selects the same tail when five tasks are runnable,
+     * starving CLOCK after HARD_INT wakes it. Preserve FIFO within a class. */
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
       if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||

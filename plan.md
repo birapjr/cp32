@@ -240,14 +240,14 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 31 passed the supplied hardware run through IRQ 1500 with FS resumption,
-keyboard input and no exception. Evidence: `docs/hardware/systimer-v31.log`.
-Image 32 passed its hardware regression through IRQ 1500, with a nonzero
-saved SAR on FS resumption. Image 33 now implements real TTY request/reply
-and blocked-call resumption. The supplied hardware log confirms one real
-TTY exchange returning 0 and continued IRQs through 1000 without an exception.
-Repeat `ipc`, then `ls` and keyboard input, and capture IRQ 1500 before
-activating CLOCK/MM receives. Evidence: `docs/hardware/tty-ipc-v33.log`.
+Image 35 confirms CLOCK receive/resume on hardware: resumed=1 at ticks 15
+and 32, clock-msgs=57 at IRQ 500 and 115 at IRQ 1000. TTY completes a real
+IPC exchange with result 0 and heartbeats continue through tick 1106 without
+an exception. Evidence: `docs/hardware/clock-fair-v35.log`.
+Next implementation step: activate MM's blocking receive loop separately,
+with an explicit request/reply test and continued CLOCK/TTY regression checks.
+The longer image-35 checks (IRQ 1500, repeated ipc and ls) remain uncaptured;
+do not treat those as passed. SYS remains stopped.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -438,3 +438,63 @@ No exception appears in this capture.
 This log contains one `ipc` command, no `ls`, and ends at IRQ 1000. Repeated
 exchanges, post-reply keyboard/shell use and IRQ 1500 remain unverified;
 the full image-33 hardware regression is not yet marked complete.
+
+
+## CLOCK activation and scheduler fairness — images 34/35, 2026-09-19
+
+MINIX reference: interrupt() delivers HARDWARE/HARD_INT to a waiting task;
+clock_task receives, accounts pending ticks, handles timer work, and receives
+again. MINIX pick_proc selects a queue head. Xtensa task-context C cannot
+change the selected owner without first capturing the outgoing register frame.
+
+Image 34 (`[FEATURE CLOCK-IPC 34]1`, `[TEST CLOCK-IPC 34]`) enabled CLOCK's
+real receive loop and HARD_INT dispatch. Interrupt delivery now completes the
+saved RECEIVE frame with the same result/metadata cleanup as ordinary IPC.
+Boot owns SYSTIMER initialization once: CLOCK no longer resets live uptime,
+rearms an existing deadline, or enables the legacy PC IRQ 0. clock_stop masks
+the actual CPU line 2. CLOCK quantum handling preserves task ownership;
+timer IRQ scheduling already rotates contexts using captured frames. Pending
+tick accounting and get_uptime preserve the caller's interrupt-mask state.
+
+Hardware evidence: `docs/hardware/clock-ipc-v34.log` identifies image 34,
+passes boot checks, enters CLOCK, and reports a blocked CLOCK wake. However,
+no CLOCK receive-return marker follows, and clock-msgs stays zero at IRQ 500
+and 1000. TTY still completes a real exchange with result 0; no exception
+appears. This is a failed CLOCK activation check, not a successful dispatch.
+
+Image 35 (`[FEATURE CLOCK-FAIR 35]1`, `[TEST CLOCK-FAIR 35]`) removes the
+fixed nine-rotation TTY preference from pick_proc. With TTY asleep and five
+runnable tasks, that workaround repeatedly selected the same tail rather
+than progressing through the queue. FIFO selection within each class now
+preserves the existing rotation between task/server/user classes.
+
+[x] A production-code fairness regression reproduced starvation of task -3
+before the fix and passes afterward. All 14 host test scripts pass, including
+100 TTY BOTH exchanges; HARD_INT delivery while blocked, before RECEIVE,
+with source filtering, and held/coalesced/replayed notifications; saved frame
+cleanup and unchanged interrupted ownership; CLOCK receive/dispatch/reply,
+retained uptime, interrupt-mask preservation, quantum ownership and alarms.
+The deferred-notification model is not a hardware nested-interrupt proof.
+
+[x] Clean image-35 build, sections/segments and image-layout checks pass
+without compiler warnings. `_iram_end=0x403741C0`,
+`_iram_ext_end=0x4038056C`, `_stack_top=0x3FCCD770`.
+
+Hardware pending: `[CLOCK V35 received=... type=2 source=4294967295 ...
+owner=4294967293 resumed=1]` appears on the first two receives and every
+5000th. Periodic IRQ diagnostics include clock-msgs, which must increase.
+Confirm IRQ 500/1000/1500, repeated `[TTY IPC V35 reply-result=0]`, and `ls`
+after the exchanges. Then proceed to MM receive activation as a separate
+image. No automatic flashing was performed.
+
+
+[x] Image-35 CLOCK progress hardware check: `docs/hardware/clock-fair-v35.log`
+identifies CLOCK-FAIR 35 and reports CLOCK receiving HARDWARE/HARD_INT at
+ticks 15 and 32 with owner -3 (unsigned 4294967293) and resumed=1.
+clock-msgs advances from 57 at IRQ 500 to 115 at IRQ 1000, confirming repeated
+service progress after the scheduler fix. All boot CORE checks pass, sampled
+return frames report frame=1, timer RAW/ST clear after rearm and CPU line 2
+remains enabled. The real TTY exchange returns 0, with heartbeats interleaved
+inside the result line. Heartbeats continue through tick 1106; no exception
+appears. The capture contains one ipc command, no ls, and no IRQ 1500 sample.
+CLOCK progress is confirmed; the longer shell regression remains outstanding.

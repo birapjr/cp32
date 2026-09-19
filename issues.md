@@ -189,3 +189,41 @@ without an exception. Repeated `ipc`, post-reply keyboard/`ls`, and IRQ 1500
 remain pending before CLOCK/MM activation.
 This validates the first task request/reply path, not full terminal input IPC,
 CLOCK/MM service activation, nested interrupts or optional extension context.
+
+
+## CLOCK wake starvation — image 34 observed, image 35 fix pending hardware
+
+`docs/hardware/clock-ipc-v34.log` shows CLOCK entering and its blocked frame
+waking, but clock-msgs remains zero through IRQ 1000. A real TTY exchange
+still returns 0 and the capture contains no exception. CLOCK activation
+therefore failed its progress check despite continued timer delivery.
+
+The legacy scheduler's fixed nine rotations to prefer TTY can continually
+select the same tail when TTY sleeps and five tasks are runnable. A test of
+production pick_proc/sched reproduced starvation of CLOCK (-3). Image 35
+removes the preference and restores FIFO within each queue class.
+
+This includes image 34's real CLOCK receive/dispatch loop, saved-frame
+completion for HARD_INT, single boot-time SYSTIMER initialization, correct
+CPU line 2 at stop, and task-safe quantum accounting. MM remains cooperative;
+SYS remains stopped. IRQ/RFE retains ownership of context selection.
+
+Markers: `[FEATURE CLOCK-FAIR 35]1`, `[TEST CLOCK-FAIR 35]`,
+`[CLOCK V35 received=... owner=4294967293 resumed=1]`, periodic IRQ
+`clock-msgs=...`, and `[TTY IPC V35 reply-result=0]`.
+All 14 test scripts, clean build and ELF/image layout checks pass.
+Symbols: `_iram_end=0x403741C0`, `_iram_ext_end=0x4038056C`,
+`_stack_top=0x3FCCD770`. Hardware validation remains pending; user flashes
+manually and captures increasing clock-msgs, IRQ 1500 and repeated IPC/ls.
+
+
+## Image 35 hardware result — CLOCK starvation fix confirmed
+
+Evidence: `docs/hardware/clock-fair-v35.log`. CLOCK receives HARD_INT from
+HARDWARE at ticks 15 and 32 with resumed=1. Its dispatch count advances to
+57 at IRQ 500 and 115 at IRQ 1000. One real TTY IPC exchange returns 0;
+heartbeats continue through tick 1106 with no exception. The split reply
+line is diagnostic interleaving. This confirms the scheduler fix restores
+CLOCK progress. Repeated ipc, ls and IRQ 1500 are not present in this capture.
+Next implementation work is separate MM receive/request/reply activation;
+SYS remains stopped.
