@@ -240,14 +240,13 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 35 confirms CLOCK receive/resume on hardware: resumed=1 at ticks 15
-and 32, clock-msgs=57 at IRQ 500 and 115 at IRQ 1000. TTY completes a real
-IPC exchange with result 0 and heartbeats continue through tick 1106 without
-an exception. Evidence: `docs/hardware/clock-fair-v35.log`.
-Next implementation step: activate MM's blocking receive loop separately,
-with an explicit request/reply test and continued CLOCK/TTY regression checks.
-The longer image-35 checks (IRQ 1500, repeated ipc and ls) remain uncaptured;
-do not treat those as passed. SYS remains stopped.
+Image 37 confirms the quieter heartbeat (ticks 1698 and 3368), successful
+MM/TTY IPC, and CLOCK progress through IRQ 3500 (411 messages), without an
+exception. Evidence: `docs/hardware/quiet-heartbeat-v37.log`.
+Image 38 reduces recurring SYSTIMER/IRQ/RFE diagnostics from every 500 to
+5000 samples, retaining initial startup evidence. All 15 host tests and the
+clean build pass; manual flashing and cadence validation remain pending.
+SYS remains stopped.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -498,3 +497,86 @@ remains enabled. The real TTY exchange returns 0, with heartbeats interleaved
 inside the result line. Heartbeats continue through tick 1106; no exception
 appears. The capture contains one ipc command, no ls, and no IRQ 1500 sample.
 CLOCK progress is confirmed; the longer shell regression remains outstanding.
+
+
+## MM receive/request/reply — image 36, 2026-09-19
+
+Identity: `[FEATURE MM-IPC 36]1`, `[TEST MM-IPC 36]`.
+MINIX reference: `minix-2.0.0/src/mm/main.c` get_work receives ANY, dispatches
+by request type, and replies with status in m_type. CP32 uses that server
+loop with its existing small allocate/release protocol, not full MINIX MM
+process management. Xtensa suspension uses the proven task-owned SYSCALL/RFE
+path; MM is endpoint 0 and runs in SERVER_Q rather than the kernel-task queue.
+
+MM's cooperative delay/continue is replaced by receive, validated-source
+dispatch and reply. Failed receive/send reports a panic rather than silently
+continuing with stale state. Its nonnegative descriptor cannot use numap's
+negative-task shortcut: boot now gives MM the same flat SRAM D map as the
+bring-up FS client, allowing messages on MM's own stack. This is a bring-up
+mapping, not process memory isolation.
+
+The shared `minix/cp32_mm.h` describes existing allocate/release request codes
+and click-based fields. The new shell `mm` command allocates one click via
+SENDREC and releases its returned base through a second SENDREC. It checks
+MM reply provenance and both statuses and does not directly call the allocator
+or dereference allocated memory. MM assigns ownership using IPC m_source.
+
+Removable `[MM V36 received=... op=... source=... resumed=1]` reports the first
+two requests and every 5000th. Successful shell completion prints one USB line
+`[MM IPC V36 alloc-release-result=0]` with interrupt state preserved and a
+short LCD status. Existing TTY/CLOCK/timer diagnostics identify V36.
+
+[x] All 15 host scripts pass. New MM tests execute the production server loop,
+allocator, protocol handler and numap: 200 allocate/release cycles, full-region
+reuse, ownership rejection, duplicate release, zero/negative allocation,
+unknown operation, invalid source and MM stack-buffer translation. Production
+IPC/scheduler tests now cover both arrival orders for MM's server endpoint as
+well as TTY, in addition to CLOCK interrupt wakeup and queue fairness checks.
+
+[x] Clean build without warnings, ELF sections/segments and image layout pass.
+`_iram_end=0x403741C4`, `_iram_ext_end=0x403807E0`, `_stack_top=0x3FCCDA90`.
+
+Hardware pending: repeat `mm`, check resumed=1 and alloc-release-result=0,
+then exercise `ipc` and `ls` with increasing clock-msgs at IRQ 500/1000/1500.
+MM initially blocking must not stop timer or shell operation. SYS stays stopped.
+No automatic flashing was performed. This does not establish full MINIX MM,
+user isolation, allocated-memory access, or nested-interrupt correctness.
+
+
+[x] Image-36 hardware validation: `docs/hardware/mm-ipc-v36.log` identifies
+MM-IPC 36, shows both MM requests with resumed=1, and four
+alloc-release-result=0 completions. The ls command reports capacity 65536
+and formatted=0; a later real TTY IPC reply returns 0. CLOCK messages reach
+1175 at IRQ 10000, with heartbeats through tick 10193 and no exception.
+Shell output is slow and interleaved with diagnostics; successful completion
+does not establish acceptable console latency.
+
+## Quieter heartbeat — image 37, 2026-09-19
+
+User requested less frequent heartbeat output. `[FEATURE QUIET-HEARTBEAT 37]1`
+and `[TEST QUIET-HEARTBEAT 37]` identify the image. The shared idle-loop
+heartbeat now reports once per 400 iterations instead of 20: a 20-fold
+reduction, approximately every 30 seconds at the image-36 observed rate.
+This is an iteration limit, not a guaranteed wall-clock interval. Timer and
+IPC sampling intervals are unchanged; versioned diagnostics now say V37.
+Clean build, all 15 existing test scripts and image-layout verification pass.
+Manual flashing and observation of the quieter cadence remain pending.
+
+
+[x] Image-37 hardware result: `docs/hardware/quiet-heartbeat-v37.log` shows
+heartbeat 1 at tick 1698 and heartbeat 2 at tick 3368. MM allocate/release and
+TTY IPC both return 0, CLOCK reports resumed=1 and reaches 411 messages at
+IRQ 3500. No exception appears in the supplied capture.
+
+## Quieter SYSTIMER diagnostics — image 38, 2026-09-19
+
+At the user's request, recurring timer diagnostics now share
+CP32_TIMER_TRACE_INTERVAL=5000 rather than 500 (10 times less frequent).
+The first two SYSTIMER before/after/return samples and initial IRQ/RFE reports
+remain visible. Recurring SYSTIMER and IRQ status report every 5000 ticks;
+RFE sampling uses the same interval on its existing return-trace counter.
+At nominal 60 Hz this is about 83 seconds, not a wall-clock guarantee.
+Heartbeat remains every 400 idle-loop iterations; IPC sampling is unchanged.
+Identity: `[FEATURE QUIET-SYSTIMER 38]1`, `[TEST QUIET-SYSTIMER 38]`.
+Versioned diagnostics now say V38. All 15 existing test scripts, clean build
+and ELF/image-layout checks pass; hardware cadence validation is pending.

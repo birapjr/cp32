@@ -74,8 +74,9 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
      * loop also runs under LOW_USER: replaying a previous FS selection here
      * would execute its stack while proc_ptr still names LOW_USER, causing
      * the next IRQ to save FS registers into the wrong descriptor. */
-    /* Keep a low-rate boot heartbeat while the scheduler is restored. */
-    if (++executions % 20 == 0) {
+    /* Aggregate across idle descriptors: report every 400 iterations,
+     * 20 times less often than image 36 (roughly 30 seconds in that run). */
+    if (++executions % 400 == 0) {
       usbj_print("[CTX kernel-running ticks=");
       usbj_print_u32(cp32_timer_irq_ticks);
       usbj_print(" heartbeat=");
@@ -153,10 +154,10 @@ void main(void)
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
       rp->p_map[D].mem_len = 0x100;
     }
-    if (t == FS_PROC_NR) {
-      /* The bring-up FS client uses a kernel SRAM stack as its user buffer.
-       * Map the complete reserved stack window as flat D memory so TTY's
-       * numap() accepts read/write buffers without a synthetic segment fault. */
+    if (t == FS_PROC_NR || t == MM_PROC_NR) {
+      /* Both bring-up servers use physical SRAM stack buffers. MM is a
+       * server (nonnegative endpoint), so numap's kernel-task fast path does
+       * not apply. Give it the same flat D map as the FS IPC client. */
       rp->p_map[D].mem_vir = 0x3FC00000;
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
       rp->p_map[D].mem_len = 0x1000;
@@ -165,8 +166,7 @@ void main(void)
     rp->p_map[S].mem_len = 4;
     rp->p_flags = 0;
 
-    /* CLOCK now receives real HARD_INT messages. SYS activation remains a
-     * separate step; MM retains its cooperative loop. */
+    /* CLOCK and MM now block in receive. SYS activation remains separate. */
     if (t == SYSTASK) rp->p_flags = P_STOP;
     if (!isidlehardware(t) && rp->p_flags == 0) lock_ready(rp);
   }
@@ -181,7 +181,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE CLOCK-FAIR 35]");
+  usbj_print("[FEATURE QUIET-SYSTIMER 38]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -300,7 +300,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST CLOCK-FAIR 35]\r\n");
+  usbj_print("[TEST QUIET-SYSTIMER 38]\r\n");
   kernel_idle_loop();
 }
 

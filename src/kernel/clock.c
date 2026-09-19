@@ -149,6 +149,9 @@ CP32_IRAM_EXT PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pe
   }
 }
 
+/* Recurring timer diagnostics: retain startup samples, then report sparsely. */
+#define CP32_TIMER_TRACE_INTERVAL 5000u
+
 CP32_IRAM_EXT PRIVATE void cp32_print_irq_status(void)
 {
 #if CP32_VERBOSE_DIAGNOSTICS
@@ -171,7 +174,7 @@ CP32_IRAM_EXT PRIVATE void cp32_print_irq_status(void)
 
 /* Removable bring-up diagnostics.  Capture before/after rearm without USB
  * output between the counter read and comparator load.  The first two
- * samples prove a second delivery; later samples are limited to 500 ticks.
+ * samples prove a second delivery; later samples are limited to CP32_TIMER_TRACE_INTERVAL ticks.
  */
 #if CP32_VERBOSE_DIAGNOSTICS
 struct cp32_systimer_sample {
@@ -186,7 +189,7 @@ PRIVATE int cp32_systimer_sample_ready;
 
 CP32_IRAM_EXT PRIVATE int cp32_systimer_trace_due(void)
 {
-  return cp32_timer_irq_ticks <= 2 || (cp32_timer_irq_ticks % 500) == 0;
+  return cp32_timer_irq_ticks <= 2 || (cp32_timer_irq_ticks % CP32_TIMER_TRACE_INTERVAL) == 0;
 }
 
 CP32_IRAM_EXT PRIVATE void cp32_systimer_capture(struct cp32_systimer_sample *s)
@@ -208,7 +211,7 @@ CP32_IRAM_EXT PRIVATE void cp32_systimer_print_ticks(uint64_t ticks)
 CP32_IRAM_EXT PRIVATE void cp32_systimer_print_sample(
     const char *phase, const struct cp32_systimer_sample *s)
 {
-  usbj_print("[SYSTIMER V35 n="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print("[SYSTIMER V38 n="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(phase);
   usbj_print(" now="); cp32_systimer_print_ticks(s->counter);
   usbj_print(" target="); cp32_systimer_print_ticks(s->target);
@@ -234,7 +237,7 @@ CP32_IRAM_EXT PRIVATE void cp32_systimer_report_return(void)
 
   cp32_systimer_print_sample(" before", &cp32_systimer_before);
   cp32_systimer_print_sample(" after", &cp32_systimer_after);
-  usbj_print("[SYSTIMER V35 return deadline=");
+  usbj_print("[SYSTIMER V38 return deadline=");
   cp32_systimer_print_ticks(cp32_systimer_deadline);
   usbj_print(" ena="); usbj_print_hex32(REG_READ(SYSTIMER_INT_ENA_REG));
   usbj_print(" ien="); usbj_print_hex32(intenable);
@@ -259,7 +262,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_fs_return(void)
   if (!cp32_context_handoff_gate || rp == NIL_PROC ||
       rp->p_nr != FS_PROC_NR || reports >= 2) return;
   reports++;
-  usbj_print("[CTX V35 FS-RETURN n="); usbj_print_u32(reports);
+  usbj_print("[CTX V38 FS-RETURN n="); usbj_print_u32(reports);
   usbj_print(" tick="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(" pc="); usbj_print_hex32(rp->p_reg.pc);
   usbj_print(" sp="); usbj_print_hex32(rp->p_reg.sp);
@@ -279,7 +282,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_clock_receive(void)
   int saved_ps;
   if (++received > 2 && received % 5000 != 0) return;
   saved_ps = lock_save();
-  usbj_print("[CLOCK V35 received="); usbj_print_u32(received);
+  usbj_print("[CLOCK V38 received="); usbj_print_u32(received);
   usbj_print(" type="); usbj_print_u32((uint32_t)mc.m_type);
   usbj_print(" source="); usbj_print_u32((uint32_t)mc.m_source);
   usbj_print(" tick="); usbj_print_u32(cp32_timer_irq_ticks);
@@ -812,7 +815,7 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   /* This is intentionally adjacent to the scheduler call: it records the
    * frame selected for the assembly rfi path, without tracing every IRQ. */
   if (cp32_irq_return_proc != NIL_PROC &&
-      (rfe_trace_count++ == 0 || (rfe_trace_count % 500) == 0)) {
+      (rfe_trace_count++ == 0 || (rfe_trace_count % CP32_TIMER_TRACE_INTERVAL) == 0)) {
     usbj_print("[RFE target=");
     usbj_print_u32((uint32_t)cp32_irq_return_proc->p_nr);
     usbj_print(" current=");
@@ -830,8 +833,8 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 
   cp32_trace_fs_return();
   cp32_systimer_report_return();
-  /* Stable bring-up status: first IRQ, then every 500 IRQs. */
-  if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % 500) == 0)
+  /* Stable bring-up status: first IRQ, then every CP32_TIMER_TRACE_INTERVAL IRQs. */
+  if (cp32_irq_status_reports == 0 || (cp32_timer_irq_ticks % CP32_TIMER_TRACE_INTERVAL) == 0)
     cp32_print_irq_status();
 }
 
@@ -864,7 +867,7 @@ PUBLIC void systimer_irq_start()
   REG_CLR_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
   systimer_enable_target0_alarm();
   systimer_target0_rearm();
-  usbj_print("[BOOT SYSTIMER V35 conf=");
+  usbj_print("[BOOT SYSTIMER V38 conf=");
   usbj_print_hex32(REG_READ(SYSTIMER_CONF_REG));
   usbj_print(" target=");
   usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_CONF_REG));

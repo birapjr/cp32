@@ -6,6 +6,7 @@
 #include "tty.h"
 #include <string.h>
 #include <minix/com.h>
+#include <minix/cp32_mm.h>
 #include <minix/callnr.h>
 #include <errno.h>
 extern void cp32_tty_poll_keyboard(void);
@@ -29,6 +30,27 @@ CP32_IRAM_EXT static void cp32_shell_print_u32(uint32_t value)
   cp32_shell_print(p);
 }
 
+/* Allocate/release via MM's real IPC service; never touch allocator state
+ * from the client. The temporary allocation is released on every success. */
+CP32_IRAM_EXT static int cp32_shell_mm_exchange(void)
+{
+  message m;
+  int result;
+  memset(&m, 0, sizeof(m));
+  m.m_type = CP32_MM_ALLOCATE;
+  m.m1_i1 = 1;
+  result = _sendrec(MM_PROC_NR, &m);
+  if (result != OK) return result;
+  if (m.m_source != MM_PROC_NR) return EIO;
+  if (m.m_type != OK) return m.m_type;
+  if (m.m1_i1 <= 0) return EIO;
+  m.m_type = CP32_MM_RELEASE;
+  result = _sendrec(MM_PROC_NR, &m);
+  if (result != OK) return result;
+  if (m.m_source != MM_PROC_NR) return EIO;
+  return m.m_type;
+}
+
 CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 {
   if (strcmp(line, "ipc") == 0) {
@@ -47,9 +69,18 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
         request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
       result = EIO;
     if (result == OK) result = request.REP_STATUS;
-    cp32_shell_print("[TTY IPC V35 reply-result=");
+    cp32_shell_print("[TTY IPC V38 reply-result=");
     cp32_shell_print_u32((uint32_t)result);
     cp32_shell_print("]\r\n");
+  } else if (strcmp(line, "mm") == 0) {
+    int result = cp32_shell_mm_exchange();
+    int saved_ps = lock_save();
+    usbj_print("[MM IPC V38 alloc-release-result=");
+    usbj_print_u32((uint32_t)result);
+    usbj_print("]\r\n");
+    restore_lock(saved_ps);
+    cardputer_display_write(result == OK ? "MM alloc/release OK\r\n" :
+                                           "MM alloc/release failed\r\n");
   } else if (strcmp(line, "ls") == 0) {
     cp32_shell_print("ramdisk\r\n");
     cp32_shell_print("boot\r\n");

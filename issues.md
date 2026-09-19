@@ -227,3 +227,53 @@ line is diagnostic interleaving. This confirms the scheduler fix restores
 CLOCK progress. Repeated ipc, ls and IRQ 1500 are not present in this capture.
 Next implementation work is separate MM receive/request/reply activation;
 SYS remains stopped.
+
+
+## MM activation — image 36 built, hardware confirmation pending
+
+MM's old cooperative loop never reached receive and its descriptor had no
+usable map for its stack message buffer. Image 36 enables receive/handle/reply
+and supplies the same flat SRAM map used by the bring-up FS client. This is
+the existing small allocate/release service, not a complete MINIX MM server.
+Shell `mm` performs two real SENDREC calls to allocate one click and release
+it, checking MM source and status. SYS remains stopped; CLOCK and TTY stay live.
+
+Markers: `[FEATURE MM-IPC 36]1`, `[TEST MM-IPC 36]`,
+`[MM V36 received=... op=... source=... resumed=1]` and
+`[MM IPC V36 alloc-release-result=0]`.
+All 15 test scripts pass, including 200 production MM service cycles,
+allocator ownership/error/coalescing checks, stack mapping, and server-queue
+IPC suspension/resumption. Clean build and ELF/image checks pass without
+warnings: `_iram_end=0x403741C4`, `_iram_ext_end=0x403807E0`,
+`_stack_top=0x3FCCDA90`.
+User flashes manually; repeated mm/ipc/ls and increasing CLOCK messages through
+IRQ 1500 remain to be verified. Host checks do not certify hardware behavior.
+
+
+## Image 36 hardware pass; image 37 quieter heartbeat
+
+`docs/hardware/mm-ipc-v36.log` confirms four successful MM allocate/release
+exchanges with resumed=1, ls capacity 65536/formatted=0, and a later TTY reply
+of 0. CLOCK dispatch reaches 1175 messages at IRQ 10000; no exception appears
+through the last heartbeat at tick 10193. Shell rendering is slow and its
+USB lines interleave with diagnostics; responsiveness remains a separate issue.
+
+At the user's request, image 37 changes the shared idle heartbeat interval
+from 20 to 400 loop iterations (20 times less frequent, roughly 30 seconds
+at the observed rate). Markers: `[FEATURE QUIET-HEARTBEAT 37]1` and
+`[TEST QUIET-HEARTBEAT 37]`. Other diagnostic sampling rates are unchanged.
+Clean build, all 15 existing host test scripts and image layout pass; the
+new heartbeat cadence awaits manual hardware validation.
+
+
+## Images 37/38 — quieter runtime diagnostics
+
+Image-37 evidence in `docs/hardware/quiet-heartbeat-v37.log` confirms the
+heartbeat spacing (ticks 1698 and 3368), successful MM/TTY IPC, and CLOCK
+progress to 411 messages at IRQ 3500 without an exception.
+
+Image 38 reduces recurring SYSTIMER, IRQ status and RFE trace intervals from
+500 to 5000, keeping initial startup samples. Heartbeat and IPC sampling
+intervals are unchanged. Markers: `[FEATURE QUIET-SYSTIMER 38]1` and
+`[TEST QUIET-SYSTIMER 38]`. All 15 existing host scripts, clean build and
+ELF/image layout pass; manual hardware verification of the cadence is pending.
