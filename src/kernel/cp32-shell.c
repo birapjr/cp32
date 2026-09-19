@@ -51,6 +51,31 @@ CP32_IRAM_EXT static int cp32_shell_mm_exchange(void)
   return m.m_type;
 }
 
+/* Read-only MINIX SYS queries through the production system-task loop. */
+CP32_IRAM_EXT static int cp32_shell_sys_query(uint32_t *ticks)
+{
+  message request;
+  int result;
+  memset(&request, 0, sizeof(request));
+  request.m_type = SYS_GETSP;
+  request.PROC1 = FS_PROC_NR;
+  result = _sendrec(SYSTASK, &request);
+  if (result != OK) return result;
+  if (request.m_source != SYSTASK) return EIO;
+  if (request.m_type != OK) return request.m_type;
+  if (request.STACK_PTR == (char *)0 || ((uintptr_t)request.STACK_PTR & 15))
+    return EIO;
+  memset(&request, 0, sizeof(request));
+  request.m_type = SYS_TIMES;
+  request.PROC1 = FS_PROC_NR;
+  result = _sendrec(SYSTASK, &request);
+  if (result != OK) return result;
+  if (request.m_source != SYSTASK) return EIO;
+  if (request.m_type != OK) return request.m_type;
+  *ticks = (uint32_t)request.BOOT_TICKS;
+  return OK;
+}
+
 CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 {
   if (strcmp(line, "ipc") == 0) {
@@ -69,18 +94,28 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
         request.m_type != TASK_REPLY || request.REP_PROC_NR != FS_PROC_NR))
       result = EIO;
     if (result == OK) result = request.REP_STATUS;
-    cp32_shell_print("[TTY IPC V38 reply-result=");
+    cp32_shell_print("[TTY IPC V39 reply-result=");
     cp32_shell_print_u32((uint32_t)result);
     cp32_shell_print("]\r\n");
   } else if (strcmp(line, "mm") == 0) {
     int result = cp32_shell_mm_exchange();
     int saved_ps = lock_save();
-    usbj_print("[MM IPC V38 alloc-release-result=");
+    usbj_print("[MM IPC V39 alloc-release-result=");
     usbj_print_u32((uint32_t)result);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
     cardputer_display_write(result == OK ? "MM alloc/release OK\r\n" :
                                            "MM alloc/release failed\r\n");
+  } else if (strcmp(line, "sys") == 0) {
+    uint32_t ticks = 0;
+    int result = cp32_shell_sys_query(&ticks);
+    int saved_ps = lock_save();
+    usbj_print("[SYS IPC V39 result="); usbj_print_u32((uint32_t)result);
+    usbj_print(" uptime="); usbj_print_u32(ticks);
+    usbj_print("]\r\n");
+    restore_lock(saved_ps);
+    cardputer_display_write(result == OK ? "SYS queries OK\r\n" :
+                                           "SYS queries failed\r\n");
   } else if (strcmp(line, "ls") == 0) {
     cp32_shell_print("ramdisk\r\n");
     cp32_shell_print("boot\r\n");

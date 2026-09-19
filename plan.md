@@ -240,13 +240,13 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 37 confirms the quieter heartbeat (ticks 1698 and 3368), successful
-MM/TTY IPC, and CLOCK progress through IRQ 3500 (411 messages), without an
-exception. Evidence: `docs/hardware/quiet-heartbeat-v37.log`.
-Image 38 reduces recurring SYSTIMER/IRQ/RFE diagnostics from every 500 to
-5000 samples, retaining initial startup evidence. All 15 host tests and the
-clean build pass; manual flashing and cadence validation remain pending.
-SYS remains stopped.
+Image 38 confirms successful MM/TTY exchanges, ls output, CLOCK progress to
+587 messages at IRQ 5000 and the quieter diagnostic cadence without an
+exception (`docs/hardware/quiet-systimer-v38.log`). Image 39 enables SYS_TASK
+and adds shell `sys` for saved-stack-pointer and uptime queries via real IPC.
+All 16 host test scripts and a clean build pass. Next: manually flash image
+39, run `sys` repeatedly (result=0, increasing uptime), then mm/ipc/ls and
+capture continued CLOCK progress. SYS hardware validation remains pending.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -580,3 +580,44 @@ Heartbeat remains every 400 idle-loop iterations; IPC sampling is unchanged.
 Identity: `[FEATURE QUIET-SYSTIMER 38]1`, `[TEST QUIET-SYSTIMER 38]`.
 Versioned diagnostics now say V38. All 15 existing test scripts, clean build
 and ELF/image-layout checks pass; hardware cadence validation is pending.
+
+
+[x] Image-38 hardware result: `docs/hardware/quiet-systimer-v38.log` confirms
+two MM successes, TTY result 0, complete ls output, and CLOCK dispatch count
+587 at IRQ 5000. Initial timer samples and the next sample at tick 5000
+confirm the reduced cadence. Heartbeats reach tick 5063; no exception appears.
+
+## SYS task activation — image 39, 2026-09-19
+
+Identity: `[FEATURE SYS-IPC 39]1`, `[TEST SYS-IPC 39]`.
+MINIX reference: `minix-2.0.0/src/kernel/system.c` sys_task receives ANY,
+dispatches the requested service and replies with status in m_type. CP32 now
+makes the existing SYS descriptor runnable and uses that production loop
+through the same Xtensa SYSCALL/RFE suspension contract as TTY/CLOCK/MM.
+Receive/reply errors now panic rather than silently continuing with stale data.
+
+Shell `sys` sends SYS_GETSP for its own FS descriptor, validates the reply
+source/status and nonzero aligned stack pointer, then requests SYS_TIMES and
+reports uptime. These are read-only requests. Both handlers now reject unused
+process slots; SYS_TIMES preserves the interrupt-mask state while sampling
+accounting counters. Other existing SYS services are not validated by this
+image: fork/exec/exit, signals, trace, memory mutation and reset remain work.
+
+Removable `[SYS V39 received=... op=... source=... resumed=1]` records the
+first two receives and every 5000th. `[SYS IPC V39 result=0 uptime=...]`
+reports successful command completion. Existing reduced heartbeat/timer
+intervals are retained; other versioned markers now say V39.
+
+[x] All 16 host test scripts pass. New SYS tests execute the production
+receive/dispatch/reply loop for 250 valid/invalid requests, actual GETSP/TIMES
+handlers and shell query helper; they check saved SP, accounting, uptime,
+free/out-of-range targets, unknown requests and interrupt-mask preservation.
+Other SYS handlers are stubbed in this bounded host test. Production IPC tests
+now include SYS endpoint -2 with both arrival orders, alongside MM and TTY.
+
+[x] Clean build without warnings, ELF sections/segments and image layout pass:
+`_iram_end=0x403741B4`, `_iram_ext_end=0x40380AC8`, `_stack_top=0x3FCCDE30`.
+Hardware pending: repeat sys and confirm result=0, increasing uptime and SYS
+resumed=1, then exercise mm/ipc/ls with continued CLOCK progress to tick 5000.
+Manual flashing only. Full SYS service correctness and CPU accounting accuracy
+are not established by these read-only bring-up queries.

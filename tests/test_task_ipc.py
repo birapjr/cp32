@@ -36,7 +36,7 @@ PRELUDE = r'''
 enum { OK=0, EINVAL=-1, EFAULT=-2, ELOCKED=-3, E_BAD_DEST=-4,
        E_BAD_SRC=-5, EBADCALL=-6, SEND=1, RECEIVE=2, BOTH=3,
        P_SLOT_FREE=1, SENDING=4, RECEIVING=8, NR_TASKS=9, NR_PROCS=4,
-       TTY_PROC_NR=-9, IDLE=-7, CLOCK=-3, HARDWARE=-1, HARD_INT=2, FS_PROC_NR=1, MM_PROC_NR=0, LOW_USER=2,
+       TTY_PROC_NR=-9, IDLE=-7, CLOCK=-3, SYSTASK=-2, HARDWARE=-1, HARD_INT=2, FS_PROC_NR=1, MM_PROC_NR=0, LOW_USER=2,
        ANY=104, NQ=3, TASK_Q=0, SERVER_Q=1, USER_Q=2 };
 typedef uintptr_t reg_t;
 typedef uintptr_t vir_bytes;
@@ -89,7 +89,7 @@ static void reset(void) {
   for (int i=0;i<NR_TASKS+NR_PROCS;i++) {
     pproc_addr[i]=&proc[i]; proc[i].p_nr=i-NR_TASKS; proc[i].p_flags=P_SLOT_FREE;
   }
-  int active[]={IDLE,TTY_PROC_NR,FS_PROC_NR,CLOCK,MM_PROC_NR};
+  int active[]={IDLE,TTY_PROC_NR,FS_PROC_NR,CLOCK,MM_PROC_NR,SYSTASK};
   held_head=held_tail=NIL_PROC; k_reenter=switching=irq_mask=0;
   for (unsigned i=0;i<sizeof(active)/sizeof(active[0]);i++) {
     struct proc *p=proc_addr(active[i]); p->p_flags=0;
@@ -210,7 +210,7 @@ static void task_queue_fairness(void) {
   }
 }
 int main(void) {
-  for (int i=0;i<100;i++) { exchange(i&1,TTY_PROC_NR); exchange(i&1,MM_PROC_NR); hardware_receive(i&1); }
+  for (int i=0;i<100;i++) { exchange(i&1,TTY_PROC_NR); exchange(i&1,MM_PROC_NR); exchange(i&1,SYSTASK); hardware_receive(i&1); }
   hardware_filtered_receive();
   task_queue_fairness();
   reset();

@@ -211,7 +211,7 @@ CP32_IRAM_EXT PRIVATE void cp32_systimer_print_ticks(uint64_t ticks)
 CP32_IRAM_EXT PRIVATE void cp32_systimer_print_sample(
     const char *phase, const struct cp32_systimer_sample *s)
 {
-  usbj_print("[SYSTIMER V38 n="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print("[SYSTIMER V39 n="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(phase);
   usbj_print(" now="); cp32_systimer_print_ticks(s->counter);
   usbj_print(" target="); cp32_systimer_print_ticks(s->target);
@@ -237,7 +237,7 @@ CP32_IRAM_EXT PRIVATE void cp32_systimer_report_return(void)
 
   cp32_systimer_print_sample(" before", &cp32_systimer_before);
   cp32_systimer_print_sample(" after", &cp32_systimer_after);
-  usbj_print("[SYSTIMER V38 return deadline=");
+  usbj_print("[SYSTIMER V39 return deadline=");
   cp32_systimer_print_ticks(cp32_systimer_deadline);
   usbj_print(" ena="); usbj_print_hex32(REG_READ(SYSTIMER_INT_ENA_REG));
   usbj_print(" ien="); usbj_print_hex32(intenable);
@@ -262,7 +262,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_fs_return(void)
   if (!cp32_context_handoff_gate || rp == NIL_PROC ||
       rp->p_nr != FS_PROC_NR || reports >= 2) return;
   reports++;
-  usbj_print("[CTX V38 FS-RETURN n="); usbj_print_u32(reports);
+  usbj_print("[CTX V39 FS-RETURN n="); usbj_print_u32(reports);
   usbj_print(" tick="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(" pc="); usbj_print_hex32(rp->p_reg.pc);
   usbj_print(" sp="); usbj_print_hex32(rp->p_reg.sp);
@@ -282,7 +282,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_clock_receive(void)
   int saved_ps;
   if (++received > 2 && received % 5000 != 0) return;
   saved_ps = lock_save();
-  usbj_print("[CLOCK V38 received="); usbj_print_u32(received);
+  usbj_print("[CLOCK V39 received="); usbj_print_u32(received);
   usbj_print(" type="); usbj_print_u32((uint32_t)mc.m_type);
   usbj_print(" source="); usbj_print_u32((uint32_t)mc.m_source);
   usbj_print(" tick="); usbj_print_u32(cp32_timer_irq_ticks);
@@ -867,7 +867,7 @@ PUBLIC void systimer_irq_start()
   REG_CLR_BIT(SYSTIMER_CONF_REG, SYSTIMER_TARGET0_WORK_EN);
   systimer_enable_target0_alarm();
   systimer_target0_rearm();
-  usbj_print("[BOOT SYSTIMER V38 conf=");
+  usbj_print("[BOOT SYSTIMER V39 conf=");
   usbj_print_hex32(REG_READ(SYSTIMER_CONF_REG));
   usbj_print(" target=");
   usbj_print_hex32(REG_READ(SYSTIMER_TARGET0_CONF_REG));

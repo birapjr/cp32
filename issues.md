@@ -277,3 +277,21 @@ Image 38 reduces recurring SYSTIMER, IRQ status and RFE trace intervals from
 intervals are unchanged. Markers: `[FEATURE QUIET-SYSTIMER 38]1` and
 `[TEST QUIET-SYSTIMER 38]`. All 15 existing host scripts, clean build and
 ELF/image layout pass; manual hardware verification of the cadence is pending.
+
+
+## SYS task activation — image 39 pending hardware
+
+Image-38 evidence (`docs/hardware/quiet-systimer-v38.log`) confirms MM/TTY
+success, ls completion, CLOCK count 587 at IRQ 5000 and quieter diagnostics
+without an exception. Image 39 enables the SYS descriptor and its real
+receive/dispatch/reply loop. Shell sys queries its saved SP and uptime via
+SYS_GETSP/SYS_TIMES. Those handlers reject free process slots; time sampling
+preserves the interrupt mask. Receive/send failures are now explicit panics.
+
+Markers: `[FEATURE SYS-IPC 39]1`, `[TEST SYS-IPC 39]`,
+`[SYS V39 received=... resumed=1]`, `[SYS IPC V39 result=0 uptime=...]`.
+All 16 host test scripts, clean build and ELF/image checks pass, with
+`_iram_end=0x403741B4`, `_iram_ext_end=0x40380AC8`, `_stack_top=0x3FCCDE30`.
+Hardware confirmation awaits manual flashing, repeated sys queries and
+mm/ipc/ls with continued CLOCK progress. Other existing SYS handlers and
+full CPU-accounting correctness remain unvalidated.
