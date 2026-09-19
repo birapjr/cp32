@@ -137,7 +137,10 @@ CP32_IRAM_EXT int cardputer_keyboard_read_config(unsigned char *rows, unsigned c
 CP32_IRAM_EXT int cardputer_keyboard_read_event(unsigned char *event)
 {
   int ack;
-  if (event == (unsigned char *)0) return -1;
+  /* The caller supplies a stack byte. Reject corrupted/non-SRAM pointers
+   * before the I2C path writes through it, keeping a bad poll recoverable. */
+  if ((uintptr_t)event < 0x3FC00000u || (uintptr_t)event >= 0x3FD00000u)
+    return -1;
   if (!kbd_ready) return 0;
   /* Do not interleave bit-banged I2C transactions from competing poll paths. */
   if (kbd_transaction_busy) return 0;

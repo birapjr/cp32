@@ -6,6 +6,8 @@
 #include "irq_frame.h"
 #include "cardputer.h"
 #include "ramdisk.h"
+#include "display.h"
+#include "cp32-shell.h"
 #include <string.h>
 #include <minix/com.h>
 
@@ -20,7 +22,6 @@ extern struct proc *proc_ptr;
 
 extern volatile int cp32_clock_irq_bridge_enabled;
 extern volatile int cp32_context_restore_gate;
-extern void cp32_enter_initial_user(struct proc *rp);
 extern volatile int cp32_context_handoff_gate;
 extern volatile int cp32_blocked_handoff_gate;
 extern volatile int cp32_user_handoff_gate;
@@ -28,55 +29,28 @@ extern volatile uint32_t cp32_timer_irq_ticks;
 extern int _sendrec(int dest, message *m);
 extern unsigned cardputer_keyboard_stale_events;
 extern tty_t tty_table[];
-extern void cp32_tty_poll_keyboard(void);
-extern int cp32_tty_read_char(char *out);
-volatile char cp32_tty_user_byte;
-static char cp32_tty_line[64];
-static unsigned cp32_tty_line_len;
 
-CP32_IRAM_EXT static void cp32_shell_command(const char *line)
+/* Validate the first task-owned descriptor before the IRQ return path is
+ * enabled.  CLOCK is the first production task and its private stack window
+ * is the smallest useful proof that the saved call0 frame is self-owned. */
+static int cp32_boot_clock_descriptor_check(void)
 {
-  if (strcmp(line, "ls") == 0) {
-    usbj_print("[CMD ls ramdisk=");
-    usbj_print_u32(cp32_ramdisk_capacity());
-    usbj_print(" formatted=");
-    usbj_print_u32((uint32_t)cp32_ramdisk_is_formatted());
-    usbj_print("]\r\n");
-  } else if (strcmp(line, "ramdisk") == 0) {
-    usbj_print("[CMD ramdisk capacity=");
-    usbj_print_u32(cp32_ramdisk_capacity());
-    usbj_print("]\r\n");
-  } else if (line[0] != '\0') {
-    usbj_print("[CMD unknown=");
-    usbj_print(line);
-    usbj_print("]\r\n");
-  }
-}
+  struct proc *rp = proc_addr(CLOCK);
+  reg_t stack_lo = (reg_t)_stack_bottom;
+  reg_t stack_hi = stack_lo + 0x10000;
 
-CP32_IRAM_EXT static void cp32_tty_read_client(void)
-{
-  usbj_print("[TTY user-entry]\r\n");
-  for (;;) {
-    cp32_tty_poll_keyboard();
-    if (cp32_tty_read_char((char *)&cp32_tty_user_byte) == 1) {
-      usbj_print("[TTY user-char=");
-      usbj_print_hex32((uint32_t)(unsigned char)cp32_tty_user_byte);
-      usbj_print("]\r\n");
-      if (cp32_tty_user_byte == '\b') {
-        if (cp32_tty_line_len != 0) cp32_tty_line_len--;
-      } else if (cp32_tty_user_byte == '\r' || cp32_tty_user_byte == '\n') {
-        cp32_tty_line[cp32_tty_line_len] = '\0';
-        usbj_print("[TTY line=");
-        usbj_print(cp32_tty_line);
-        usbj_print("]\r\n");
-        cp32_shell_command(cp32_tty_line);
-        cp32_tty_line_len = 0;
-      } else if (cp32_tty_user_byte >= 0x20 &&
-                 cp32_tty_user_byte <= 0x7E && cp32_tty_line_len < 63) {
-        cp32_tty_line[cp32_tty_line_len++] = cp32_tty_user_byte;
-      }
-    }
-  }
+  if (rp == NIL_PROC || rp->p_flags == P_SLOT_FREE ||
+      rp->p_reg.pc != (reg_t)clock_task || rp->p_reg.sp == 0 ||
+      rp->p_reg.a[1] != rp->p_reg.sp || rp->p_reg.a[15] == 0 ||
+      rp->p_reg.psw == 0 || (rp->p_reg.sp & 0x0F) != 0)
+    return FALSE;
+
+  /* The task stack must be inside the reserved DRAM stack area and leave a
+   * complete 4 KiB window below its top for call0 frames. */
+  if (rp->p_reg.sp <= stack_lo || rp->p_reg.sp > stack_hi ||
+      rp->p_reg.sp - stack_lo < 4096)
+    return FALSE;
+  return TRUE;
 }
 
 CP32_IRAM_EXT void kernel_idle_loop(void)
@@ -84,7 +58,6 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
   static uint32_t heartbeat;
   static uint32_t executions;
   static int announced;
-  extern volatile struct proc *cp32_last_selected_fs;
 
   /* main() enters here with the boot lock held so its test marker cannot be
    * interrupted; open the CPU gate at the first instruction of the loop. */
@@ -97,17 +70,13 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
   for (;;) {
     wdt_feed_all();
     delay(100000);
-    /* The clock task can select FS outside an IRQ (nest=0). Enter its saved
-     * call0 frame directly because no rfe path exists in that case. */
-    if (cp32_last_selected_fs != NIL_PROC &&
-        cp32_last_selected_fs->p_nr == FS_PROC_NR &&
-        cp32_last_selected_fs->p_flags == 0 &&
-        cp32_last_selected_fs->p_reg.pc != 0 &&
-        cp32_last_selected_fs->p_reg.sp != 0) {
-      cp32_enter_initial_user((struct proc *)cp32_last_selected_fs);
-    }
-    /* Keep a low-rate boot heartbeat while the scheduler is restored. */
-    if (++executions % 20 == 0) {
+    /* Only the IRQ/syscall return boundary may restore another task. This
+     * loop also runs under LOW_USER: replaying a previous FS selection here
+     * would execute its stack while proc_ptr still names LOW_USER, causing
+     * the next IRQ to save FS registers into the wrong descriptor. */
+    /* Aggregate across idle descriptors: report every 400 iterations,
+     * 20 times less often than image 36 (roughly 30 seconds in that run). */
+    if (++executions % 400 == 0) {
       usbj_print("[CTX kernel-running ticks=");
       usbj_print_u32(cp32_timer_irq_ticks);
       usbj_print(" heartbeat=");
@@ -119,6 +88,8 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
 
 void main(void)
 {
+  cardputer_display_init();
+  cardputer_display_write("CP32\r\n");
   unsigned char kbd_status = 0, kbd_count = 0;
   int kbd_init_result;
   status_line("\r\nmain() started", 2);
@@ -147,16 +118,15 @@ void main(void)
      * loop and is the first real consumer of task-owned IPC suspension. */
     rp->p_reg.pc = (t == CLOCK) ? (reg_t)clock_task :
         (t == SYSTASK) ? (reg_t)sys_task :
-        (t == TTY) ? (reg_t)tty_task :
+        (t == TTY_PROC_NR) ? (reg_t)tty_task :
         (t == MM_PROC_NR) ? (reg_t)mm_task :
         (t == FS_PROC_NR) ? (reg_t)cp32_tty_read_client :
         (reg_t)kernel_idle_loop;
-    /* rfi restores EPS1, not the live PS.  A zero saved PSW leaves the first
-     * process return in an exception-level state on Xtensa; use the same
-     * call0-compatible baseline for task and server descriptors. */
+    /* The level-1 epilogue writes PS and uses RFE to clear EXCM.  Keep
+     * INTLEVEL zero in the initial call0 task/server status. */
     rp->p_reg.psw = 0x100;
     memset(rp->p_reg.a, 0, sizeof(rp->p_reg.a));
-    rp->p_reg.a[15] = 0x3FC00000;
+    rp->p_reg.sar = rp->p_reg.lbeg = rp->p_reg.lend = rp->p_reg.lcount = 0;
 
     if (t < 0) {
       rp->p_reg.sp = (kernel_stack + 4096) & ~0x0F;
@@ -166,6 +136,9 @@ void main(void)
                       (t * 4096) + 4096) & ~0x0F;
     }
     rp->p_reg.a[1] = rp->p_reg.sp;
+    /* call0 uses a15 as the frame pointer. Keep every fresh descriptor's
+     * frame in its own stack window; a shared fixed base faults on entry. */
+    rp->p_reg.a[15] = rp->p_reg.sp;
     rp->p_map[T].mem_phys = 0;
     rp->p_map[T].mem_len = 0;
     rp->p_map[T].mem_vir = 0x3FC00000;
@@ -181,10 +154,10 @@ void main(void)
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
       rp->p_map[D].mem_len = 0x100;
     }
-    if (t == FS_PROC_NR) {
-      /* The bring-up FS client uses a kernel SRAM stack as its user buffer.
-       * Map the complete reserved stack window as flat D memory so TTY's
-       * numap() accepts read/write buffers without a synthetic segment fault. */
+    if (t == FS_PROC_NR || t == MM_PROC_NR) {
+      /* Both bring-up servers use physical SRAM stack buffers. MM is a
+       * server (nonnegative endpoint), so numap's kernel-task fast path does
+       * not apply. Give it the same flat D map as the FS IPC client. */
       rp->p_map[D].mem_vir = 0x3FC00000;
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
       rp->p_map[D].mem_len = 0x1000;
@@ -193,7 +166,8 @@ void main(void)
     rp->p_map[S].mem_len = 4;
     rp->p_flags = 0;
 
-    if (!isidlehardware(t)) lock_ready(rp);
+    /* TTY, CLOCK, MM and SYS suspend through their own receive frames. */
+    if (!isidlehardware(t) && rp->p_flags == 0) lock_ready(rp);
   }
 
   proc_ptr = proc_addr(IDLE);
@@ -206,6 +180,9 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
+  usbj_print("[FEATURE TTY-WRITE 44]");
+  usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
+  usbj_print("\r\n");
 
   usbj_print("[KBD probe=");
   usbj_print_u32((uint32_t)cardputer_keyboard_probe());
@@ -259,6 +236,9 @@ void main(void)
   usbj_print("[RAMDISK capacity=");
   usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
   usbj_print("]\r\n");
+  cardputer_display_clear();
+  usbj_print("[LCD clear-done]\r\n");
+  cardputer_display_write("CP32 OS\r\n$ ");
   usbj_print("[TTY user-ready nr=");
   usbj_print_u32((uint32_t)FS_PROC_NR);
   usbj_print(" pc=");
@@ -271,10 +251,55 @@ void main(void)
   /* Do not enable preemption until all boot-time keyboard diagnostics finish. */
   lock();
   systimer_irq_start();
-    usbj_print("[TEST CARDPUTER-KBD 245]\r\n");
-    usbj_print("[TEST CARDPUTER-CORE 8]\r\n");
-  /* Image/test identity: this is the IRQ handler-registration dispatcher
-   * build, immediately before control enters the diagnostic workload. */
+    usbj_print("[TEST SCHEDULER 2]\r\n");
+
+    usbj_print("[CORE readyq=");
+    usbj_print_u32((uint32_t)cp32_ready_queue_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE heldq=");
+    usbj_print_u32((uint32_t)cp32_held_queue_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE blockedowner=");
+    usbj_print_u32((uint32_t)cp32_blocked_owner_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE blockedframe=");
+    usbj_print_u32((uint32_t)cp32_blocked_frame_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE runtime=");
+    usbj_print_u32((uint32_t)cp32_runtime_owner_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE maps=");
+    usbj_print_u32((uint32_t)cp32_map_state_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE flags=");
+    usbj_print_u32((uint32_t)cp32_process_flags_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE contexts=");
+    usbj_print_u32((uint32_t)cp32_saved_context_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE owners=");
+    usbj_print_u32((uint32_t)cp32_scheduler_owner_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE ipcstate=");
+    usbj_print_u32((uint32_t)cp32_ipc_state_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE ipcqueue=");
+    usbj_print_u32((uint32_t)cp32_ipc_queue_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE ipclinks=");
+    usbj_print_u32((uint32_t)cp32_ipc_link_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE proctab=");
+    usbj_print_u32((uint32_t)cp32_process_table_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE tasks=");
+    usbj_print_u32((uint32_t)cp32_task_table_check());
+    usbj_print("]\r\n");
+    usbj_print("[CORE systask=");
+    usbj_print_u32((uint32_t)cp32_system_task_check());
+    usbj_print("]\r\n");
+  /* Keep image identity adjacent to the handoff into the idle workload. */
+  usbj_print("[TEST TTY-WRITE 44]\r\n");
   kernel_idle_loop();
 }
 

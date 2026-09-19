@@ -12,18 +12,18 @@
 #include "irq_const.h"
 /* Xtensa LX7 does not have the Intel-style segment/register frame.  Keep
  * only the process state that the ESP32-S3 kernel actually saves/restores:
- * the scratch return register, frame pointer, program counter, stack pointer,
- * and processor status.
+ * general registers, PC/SP/PS, SAR and hardware-loop state.
  */
 struct stackframe_s {           /* proc_ptr points here */
   reg_t a[16];			/* general purpose registers a0-a15 */
   reg_t pc;			/* next instruction to execute */
   reg_t psw;			/* saved processor status */
   reg_t sp;			/* stack pointer */
+  reg_t sar, lbeg, lend, lcount; /* integer shift and hardware-loop state */
 };
 
 /* Keep the assembly contract explicit: a[16], pc, psw, sp are contiguous. */
-typedef char cp32_stackframe_layout_must_be_76[
+typedef char cp32_stackframe_layout_must_be_92[
   sizeof(struct stackframe_s) == CP32_PROC_FRAME_BYTES ? 1 : -1];
 typedef char cp32_stackframe_a0_offset_must_be_0[
   __builtin_offsetof(struct stackframe_s, a[0]) == CP32_REG_A0_OFFSET ? 1 : -1];
@@ -37,6 +37,11 @@ typedef char cp32_stackframe_psw_offset_must_be_68[
   __builtin_offsetof(struct stackframe_s, psw) == CP32_REG_PSW_OFFSET ? 1 : -1];
 typedef char cp32_stackframe_sp_offset_must_be_72[
   __builtin_offsetof(struct stackframe_s, sp) == CP32_REG_SP_OFFSET ? 1 : -1];
+typedef char cp32_stackframe_special_offsets[
+  __builtin_offsetof(struct stackframe_s, sar) == CP32_REG_SAR_OFFSET &&
+  __builtin_offsetof(struct stackframe_s, lbeg) == CP32_REG_LBEG_OFFSET &&
+  __builtin_offsetof(struct stackframe_s, lend) == CP32_REG_LEND_OFFSET &&
+  __builtin_offsetof(struct stackframe_s, lcount) == CP32_REG_LCOUNT_OFFSET ? 1 : -1];
 #endif
 
 struct proc {
@@ -136,5 +141,21 @@ EXTERN struct proc *pproc_addr[NR_TASKS + NR_PROCS];
 EXTERN struct proc *bill_ptr;	/* ptr to process to bill for clock ticks */
 EXTERN struct proc *rdy_head[NQ];	/* pointers to ready list headers */
 EXTERN struct proc *rdy_tail[NQ];	/* pointers to ready list tails */
+EXTERN int cp32_ready_queue_check(void);
+EXTERN int cp32_held_queue_check(void);
+EXTERN int cp32_process_table_check(void);
+EXTERN int cp32_task_table_check(void);
+EXTERN int cp32_system_task_check(void);
+EXTERN int cp32_ipc_link_check(void);
+EXTERN int cp32_ipc_queue_check(void);
+EXTERN int cp32_ipc_state_check(void);
+EXTERN int cp32_scheduler_owner_check(void);
+EXTERN int cp32_saved_context_check(void);
+EXTERN int cp32_process_flags_check(void);
+EXTERN int cp32_map_state_check(void);
+EXTERN int cp32_runtime_owner_check(void);
+EXTERN int cp32_blocked_frame_check(void);
+EXTERN int cp32_blocked_owner_check(void);
+EXTERN int cp32_irq_return_frame_check(void);
 
 #endif /* PROC_H */

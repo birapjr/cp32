@@ -17,6 +17,8 @@
 
 #define TTY		(DL_ETH - 1)
 				/* terminal I/O class */
+#define TTY_PROC_NR	(-NR_TASKS)
+				/* MINIX task-table number: TTY is initialized first */
 #	define CANCEL       0	/* general req to force a task to cancel */
 #	define HARD_INT     2	/* fcn code for all hardware interrupts */
 #	define DEV_READ	    3	/* fcn code for reading from tty */

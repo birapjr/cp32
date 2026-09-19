@@ -58,6 +58,9 @@
 #endif
 #include "tty.h"
 #include "cardputer.h"
+#include "display.h"
+
+
 
 extern volatile char cp32_tty_user_byte;
 
@@ -74,11 +77,11 @@ CP32_IRAM_EXT static int cp32_read_keyboard_event(unsigned char *event)
 }
 CP32_IRAM_EXT static int cp32_cardputer_key(unsigned char event, char *ch)
 {
-	static const char keys[4][14] = {
+	static const char keys[4][15] = {
 		"`1234567890-=\b", "\tqwertyuiop[]\\",
 		"\001\002asdfghjkl;'\n", "\003\004\005zxcvbnm,./ "
 	};
-	static const char shifted[4][14] = {
+	static const char shifted[4][15] = {
 		"~!@#$%^&*()_+\b", "\tQWERTYUIOP{}|",
 		"\001\002ASDFGHJKL:\"\n", "\003\004\005ZXCVBNM<>? "
 	};
@@ -130,6 +133,8 @@ CP32_IRAM_EXT PUBLIC void cp32_tty_poll_keyboard(void)
 	char input;
 	/* Bit-banged I2C must never begin while servicing an interrupt. */
 	if (k_reenter != 0) return;
+	/* KEY_EVENT_A is valid only while the controller asserts active-low INT. */
+	if (!cardputer_keyboard_interrupt_asserted()) return;
 	if (cp32_read_keyboard_event(&event) <= 0) return;
 	if (cp32_cardputer_key(event, &input)) {
 		lock();
@@ -292,7 +297,8 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 	}
 	#endif
 
-	receive(ANY, &tty_mess);
+	if (receive(ANY, &tty_mess) != OK)
+		panic("TTY receive failed", NO_NUM);
 
 	/* A hardware interrupt is an invitation to check for events. */
 	if (tty_mess.m_type == HARD_INT) continue;
@@ -417,9 +423,7 @@ message *m_ptr;			/* pointer to message sent to the task */
 /*===========================================================================*
  *				do_write				     *
  *===========================================================================*/
-CP32_IRAM_EXT PRIVATE void do_write(tp, m_ptr)
-register tty_t *tp;
-register message *m_ptr;	/* pointer to message sent to the task */
+CP32_IRAM_EXT PRIVATE void do_write(tty_t *tp, message *m_ptr)
 {
 /* A process wants to write on a terminal. */
   int r;
@@ -1204,11 +1208,8 @@ register tty_t *tp;		/* pointer to tty struct */
 /*==========================================================================*
  *				out_process				    *
  *==========================================================================*/
-CP32_IRAM_EXT PUBLIC void out_process(tp, bstart, bpos, bend, icount, ocount)
-tty_t *tp;
-char *bstart, *bpos, *bend;	/* start/pos/end of circular buffer */
-int *icount;			/* # input chars / input chars used */
-int *ocount;			/* max output chars / output chars used */
+CP32_IRAM_EXT PUBLIC void out_process(tty_t *tp, char *bstart, char *bpos,
+                                       char *bend, int *icount, int *ocount)
 {
 /* Perform output processing on a circular buffer.  *icount is the number of
  * bytes to process, and the number of bytes actually processed on return.
@@ -1525,12 +1526,46 @@ tty_t *tp;
   /* Some functions need not be implemented at the device level. */
 }
 
-/* Minimal ESP32-S3 stubs until console and UART drivers are connected. */
+/* MINIX cons_write's bounded copy/complete contract, with ST7789 output.
+ * The caller remains blocked in IPC while TTY owns its copied output bytes. */
+CP32_IRAM_EXT PRIVATE void cp32_console_write(tty_t *tp)
+{
+  char buffer[64], expanded[8];
+  int result = OK;
+  if (tp->tty_outleft == 0 || tp->tty_inhibited) return;
+  cardputer_display_begin_batch();
+  while (tp->tty_outleft > 0) {
+    int count = tp->tty_outleft, i;
+    phys_bytes source;
+    if (cardputer_display_faulted()) { result = EIO; break; }
+    if (count > (int)sizeof(buffer)) count = sizeof(buffer);
+    source = numap(tp->tty_outproc, tp->tty_out_vir, count);
+    if (!source) { result = EFAULT; break; }
+    phys_copy(source, vir2phys(buffer), count);
+    for (i = 0; i < count; i++) {
+      int consumed = 1, produced = sizeof(expanded), j;
+      expanded[0] = buffer[i];
+      out_process(tp, expanded, expanded, expanded + sizeof(expanded),
+                  &consumed, &produced);
+      for (j = 0; j < produced; j++) cardputer_display_putc(expanded[j]);
+    }
+    tp->tty_out_vir += count;
+    tp->tty_outcum += count;
+    tp->tty_outleft -= count;
+  }
+  cardputer_display_end_batch();
+  if (cardputer_display_faulted()) result = EIO;
+  if (result == OK) result = tp->tty_outcum;
+  tp->tty_outleft = tp->tty_outcum = 0;
+  tty_reply(tp->tty_outrepcode, tp->tty_outcaller, tp->tty_outproc, result);
+}
+
+/* The Cardputer console writes to LCD; input and UART remain separate. */
 CP32_IRAM_EXT PUBLIC void scr_init(tp)
 tty_t *tp;
 {
   tp->tty_devread = tty_devnop;
-  tp->tty_devwrite = tty_devnop;
+  tp->tty_devwrite = cp32_console_write;
 }
 
 CP32_IRAM_EXT PUBLIC void rs_init(tp)

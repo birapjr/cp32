@@ -4,9 +4,7 @@
 #include <minix/com.h>
 #include <minix/callnr.h>
 
-/* Private CP32 MM protocol.  Message fields use MINIX m1 semantics. */
-#define CP32_MM_ALLOCATE 1001
-#define CP32_MM_RELEASE  1002
+#include <minix/cp32_mm.h>
 
 #define CP32_MAX_MEM_BLOCKS 64
 struct cp32_mem_block { phys_clicks base, size; int owner, used; };
@@ -30,7 +28,8 @@ CP32_IRAM_EXT static void cp32_mem_allocator_init(void)
 CP32_IRAM_EXT PUBLIC phys_clicks cp32_mem_alloc(phys_clicks clicks, int owner)
 {
     int i, j;
-    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS) return 0;
+    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS ||
+        (uint64_t)clicks > 0x100000ULL) return 0;
     if (!cp32_mem_allocator_ready) cp32_mem_allocator_init();
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
         if (cp32_mem_blocks[i].used || cp32_mem_blocks[i].size < clicks) continue;
@@ -52,6 +51,7 @@ CP32_IRAM_EXT PUBLIC int cp32_mem_free(phys_clicks base, int owner)
 {
     int i, j;
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
+        if (base == 0) return EINVAL;
         if (cp32_mem_blocks[i].used && cp32_mem_blocks[i].base == base) {
             if (cp32_mem_blocks[i].owner != owner) return EACCES;
             cp32_mem_blocks[i].used = FALSE;
@@ -89,11 +89,12 @@ CP32_IRAM_EXT PUBLIC int cp32_mem_free(phys_clicks base, int owner)
 CP32_IRAM_EXT PUBLIC int cp32_mem_owned(phys_clicks base, phys_clicks clicks, int owner)
 {
     int i;
-    if (clicks == 0) return FALSE;
+    if (clicks == 0 || owner < -NR_TASKS || owner >= NR_PROCS) return FALSE;
     for (i = 0; i < CP32_MAX_MEM_BLOCKS; i++) {
         if (cp32_mem_blocks[i].used && cp32_mem_blocks[i].owner == owner &&
             base >= cp32_mem_blocks[i].base &&
             clicks <= cp32_mem_blocks[i].size &&
+            (uint64_t)base + clicks <= 0x100000000ULL &&
             base - cp32_mem_blocks[i].base <=
                 cp32_mem_blocks[i].size - clicks)
             return TRUE;
@@ -187,26 +188,37 @@ CP32_IRAM_EXT PUBLIC int cp32_mm_handle_request(message *m)
     return m->m_type;
 }
 
-/* Basic MM Task entry point */
+/* Removable trace after an actual MM receive resumes. */
+CP32_IRAM_EXT PRIVATE void cp32_trace_mm_receive(const message *m)
+{
+    static unsigned received;
+    int saved_ps;
+    extern struct proc *current_proc;
+    if (++received > 2 && received % 5000 != 0) return;
+    saved_ps = lock_save();
+    usbj_print("[MM V44 received="); usbj_print_u32(received);
+    usbj_print(" op="); usbj_print_u32((uint32_t)m->m_type);
+    usbj_print(" source="); usbj_print_u32((uint32_t)m->m_source);
+    usbj_print(" resumed=");
+    usbj_print_u32((uint32_t)(proc_ptr == proc_addr(MM_PROC_NR) &&
+        current_proc == proc_ptr && proc_ptr->p_flags == 0 &&
+        !proc_ptr->p_blocked_frame_valid && k_reenter == 0));
+    usbj_print("]\r\n");
+    restore_lock(saved_ps);
+}
+
+/* Minimal MM service: receive, handle, reply, then block again. */
 CP32_IRAM_EXT PUBLIC void mm_task()
 {
     message m;
-
     usbj_print("[MM_TASK]\r\n");
     for (;;) {
-        /* A real server must block here.  This makes MM ownership visible to
-         * the scheduler and exercises the normal IPC suspension/resumption
-         * path instead of consuming CPU in a private idle loop. */
-        receive(ANY, &m);
+        if (receive(ANY, &m) != OK)
+            panic("MM receive failed", NO_NUM);
+        cp32_trace_mm_receive(&m);
         if (!cp32_mm_source_valid(m.m_source)) continue;
-
-        /* A malformed IPC endpoint must never turn into a reply to ANY or a
-         * free slot.  This is especially important while the MM server is
-         * being brought up before FS/user processes exist. */
         cp32_mm_handle_request(&m);
-        if (send(m.m_source, &m) != OK) {
-            /* The requester may have exited while MM was servicing it. */
-            continue;
-        }
+        if (send(m.m_source, &m) != OK)
+            panic("MM reply failed", NO_NUM);
     }
 }

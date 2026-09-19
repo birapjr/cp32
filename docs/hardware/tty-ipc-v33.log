@@ -1,0 +1,107 @@
+ => CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x000F8406
+vector word 6: 0x000F2506
+checking call0 stack                    ...
+stack bottom:  0x3FCC5500
+stack pointer: 0x3FCCD4E0
+stack top:     0x3FCCD500
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+init TASKS                              ...
+systemer irq start                      ...
+[FEATURE TTY-IPC 33]1
+[KBD probe=1]
+[MM probe alloc=1 release=1 deny=1 zero=1 huge=1 adjacent=1 merge=1 owned=1 clear=1]
+[KBD init=1 stale=0 int=0 status=1 fifo=0]
+[RAMDISK capacity=65536]
+[LCD clear-done]
+[TTY user-ready nr=1 pc=0x403783F0 sp=0x3FCD7500 flags=0]
+[BOOT SYSTIMER V33 conf=0xC7000000 target=0x00000000 ena=0x00000001 raw=0x00000000]
+[TEST SCHEDULER 2]
+[CORE readyq=1]
+[CORE heldq=1]
+[CORE blockedowner=1]
+[CORE blockedframe=1]
+[CORE runtime=1]
+[CORE maps=1]
+[CORE flags=1]
+[CORE contexts=1]
+[CORE owners=1]
+[CORE ipcstate=1]
+[CORE ipcqueue=1]
+[CORE ipclinks=1]
+[CORE proctab=1]
+[CORE tasks=1]
+[CORE systask=1]
+[TEST TTY-IPC 33]
+
+STABLE idle-entry                       ...
+[SCHED return-state owner=4294967287 flags=0 selected=4294967287 fs=4294967295]
+[RFE publish target=4294967287 current=4294967287 seq=1]
+[RFE target=4294967287 current=4294967287 seq=1 pc=0x4037D674 ps=0x00000100]
+[SYSTIMER V33 n=1 before now=0x00000000:0x05C0992E target=0x00000000:0x05C09814 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V33 n=1 after now=0x00000000:0x05C09B33 target=0x00000000:0x05C4ABE8 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V33 return deadline=0x00000000:0x05C4ABE8 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x4037D674 sp=0x3FCCA500 psout=0x00000100 frame=1]
+[IRQ count=1 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0]
+[KBD poll=1]
+[IPC count=1 op=2 src=132]
+[IPC V33 op=2 n=1 owner=4294967287 blocked=1 next=0 frame=1]
+[MM_TASK]
+[SYSTIMER V33 n=2 before now=0x00000000:0x05C4ACFA target=0x00000000:0x05C4ABE8 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V33 n=2 after now=0x00000000:0x05C4AEFE target=0x00000000:0x05C8BFB3 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V33 return deadline=0x00000000:0x05C8BFB3 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x403780B8 sp=0x3FCD8500 psout=0x00000100 frame=1]
+[SCHED fs-selected pc=0x403783F0 sp=0x3FCD7500 nest=1]
+[SCHED fs-publish flags=0 pc=0x403783F0 sp=0x3FCD7500 owner=1]
+[IRQ return-frame=1 owner=1]
+[CTX V33 FS-RETURN n=1 tick=4 pc=0x403783F0 sp=0x3FCD7500 a0=0x00000000 a15=0x3FCD7500 sar=0x00000000 lcount=0x00000000 frame=1]
+[TTY user-entry]
+[CTX V33 FS-RETURN n=2 tick=10 pc=0x4037F7A5 sp=0x3FCD74A0 a0=0x4037FF10 a15=0x3FCD74C0 sar=0x00000015 lcount=0x00000000 frame=1]
+[CTX kernel-running ticks=84 heartbeat=1]
+[CTX kernel-running ticks=168 heartbeat=2]
+[TTY char=i]
+[TTY user-char=0x00000069]
+[CTX kernel-running ticks=252 heartbeat=3]
+[TTY char=p]
+[TTY user-char=0x00000070]
+[CTX kernel-running ticks=330 heartbeat=4]
+[TTY char=c]
+[TTY user-char=0x00000063]
+[CTX kernel-running ticks=414 heartbeat=5]
+[TTY char=0x0000000A]
+[TTY user-char=0x0000000A]
+[TTY line=ipc]
+[IPC blocked-resume=1 owner=4294967287 result=0]
+[IPC V33 op=3 n=1 owner=1 blocked=1 next=2 frame=1]
+[IPC V33 op=1 n=1 owner=4294967287 blocked=0 next=4294967287 frame=1]
+[TTY IPC V33 reply-result=[CTX kernel-running ticks=498 heartbeat=6]
+[RFE target=1 current=1 seq=503 pc=0x40372CDC ps=0x00000110]
+[SYSTIMER V33 n=500 before now=0x00000000:0x0DC4C04C target=0x00000000:0x0DC4BF2E conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V33 n=500 after now=0x00000000:0x0DC4C25D target=0x00000000:0x0DC8D305 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V33 return deadline=0x00000000:0x0DC8D305 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x40372CDC sp=0x3FCD7380 psout=0x00000100 frame=1]
+[IRQ count=500 nest=1 owner=4294967292 selected=1 handoff=1 gates=1 unknown=0]
+[CTX kernel-running ticks=577 heartbeat=7]
+[CTX kernel-running ticks=661 heartbeat=8]
+0]
+[CTX kernel-running ticks=744 heartbeat=9]
+[CTX kernel-running ticks=823 heartbeat=10]
+[CTX kernel-running ticks=906 heartbeat=11]
+[CTX kernel-running ticks=990 heartbeat=12]
+[RFE target=4294967290 current=4294967290 seq=1003 pc=0x40374213 ps=0x00000110]
+[SYSTIMER V33 n=1000 before now=0x00000000:0x15CB5D54 target=0x00000000:0x15CB5C36 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V33 n=1000 after now=0x00000000:0x15CB5F65 target=0x00000000:0x15CF700D conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V33 return deadline=0x00000000:0x15CF700D ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x40374213 sp=0x3FCCD4D0 psout=0x00000100 frame=1]
+[IRQ count=1000 nest=1 owner=2 selected=4294967290 handoff=1 gates=1 unknown=0]

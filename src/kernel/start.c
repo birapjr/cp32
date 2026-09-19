@@ -40,7 +40,6 @@ void start() {
     wdt_feed_all();
     print_diagnostics();
     status_line("\r\n => CP32 OS kernel booting", 2);
-
     status_line("\r\nstart()", 2);
     status_line("checking initialized memory", 0);
     usbj_print(".data sentinel: ");

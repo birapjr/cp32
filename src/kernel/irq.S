@@ -5,7 +5,7 @@
  *   1. Literals ARE allowed (.literal_position marks the pool location).
  *   2. Each handler must save/restore every register it touches.
  *   3. Exit with rfi N (interrupt) or rfe (exception) — never ret/retw.
- *   4. Never use call0/call4 — the ABI stack frame is not set up on entry.
+ *   4. Call C only after saving the context and establishing an ABI frame.
  *   5. Double exception handler must never rfi — it is a terminal state.
  *
  * Level-1 is the production dispatch path on ESP32-S3: mapped peripheral
@@ -14,11 +14,12 @@
  * Register ownership on interrupt entry (Xtensa LX7):
  *   a0..a15  — caller's registers, NOT saved by hardware
  *   EPC[N]   — saved PC for the interrupted context
- *   EPS[N]   — saved PS for the interrupted context
+ *   EPS[N]   — saved PS for high-priority interrupts (levels 2 and above)
+ *   PS       — interrupted status plus EXCM for level-1 exceptions
  *   EXCCAUSE — reason code for exceptions
  *   EXCVADDR — faulting address (for load/store exceptions)
- *   excsave1 — scratch register saved by hardware for level-1
- *   excsaveN — scratch for level N
+ *   excsave1 — software-owned scratch for level-1
+ *   excsaveN — software-owned scratch for level N
  *
  * Our C-visible process frame mirrors what the kernel can observe directly:
  * the saved a0 scratch plus the saved processor status bits.
@@ -30,9 +31,8 @@
 .section .text, "ax"
 
 /* ── Macro: save and restore a scratch register via excsaveN ──────────────
- * Xtensa saves one register per interrupt level automatically into excsaveN.
- * For a minimal handler that only reads cause/addr registers we use a0
- * as our scratch and swap it with excsaveN on entry/exit.
+ * Software saves a scratch register explicitly in excsaveN. For a minimal
+ * handler we preserve a0 there on entry and restore it before RFI.
  *
  * Usage:
  *   HANDLER_ENTRY 2    @ saves a0 into excsave2, frees a0 as scratch
@@ -140,33 +140,31 @@ irq_nmi:
 
 /* ── Kernel exception ─────────────────────────────────────────────────── */
 /*
- * Handles early kernel exceptions by reporting the saved exception state.
- * EXCVADDR holds the faulting address for load/store causes. The handler is
- * terminal during bring-up; it does not attempt to resume with rfe because
- * no process exception policy or complete saved register frame exists yet.
+ * Route level-1 IRQs and the enabled syscall probe without clobbering the
+ * interrupted registers. Other exceptions still report a terminal dump.
  */
 .align 4
 .global irq_kernel
 .type   irq_kernel, @function
 irq_kernel:
-    wsr     a0, excsave1        /* save a0; excsave1 is the level-1 scratch */
-    rsr     a6, exccause        /* keep user a2/a3 intact for the probe frame */
-    movi    a4, cp32_user_probe_mode
-    l32i    a4, a4, 0
-    beqz    a4, 0f
-    movi    a5, 0
-    beq     a6, a5, irq_user   /* probe syscall gate: software user ABI */
-0:
-    /* CPU interrupt line 2 is Xtensa level 1 on ESP32-S3.  Level-1
-     * interrupts share this kernel-exception vector. */
-    movi    a2, 0x04            /* EXCCAUSE_LEVEL1_INTERRUPT */
-    beq     a6, a2, irq_level1
-    rsr     a3, excvaddr        /* arg1: faulting address                   */
-    rsr     a4, epc1            /* arg2: saved program counter              */
-    rsr     a5, ps              /* arg3: current processor status             */
+    /* EXCSAVE1 is software scratch, not a hardware-saved a0. Classify with
+     * a0 alone so no interrupted argument/frame register is lost. */
+    wsr     a0, excsave1
+    rsr     a0, exccause
+    beqi    a0, 4, irq_level1
+    beqi    a0, 1, .Luser_saved_a0
+    bnez    a0, .Lkernel_fatal
+    movi    a0, cp32_user_probe_mode
+    l32i    a0, a0, 0
+    bnez    a0, .Luser_saved_a0
+.Lkernel_fatal:
+    rsr     a2, exccause
+    rsr     a3, excvaddr
+    rsr     a4, epc1
+    rsr     a5, ps
     movi    a1, _stack_top
     addi    a1, a1, -16
-    call0   exception_dump       /* terminal: does not return                */
+    call0   exception_dump       /* terminal: does not return */
 .size irq_kernel, .-irq_kernel
 
 /* ── Level-1 IRQ ──────────────────────────────────────────────────────── */
@@ -176,18 +174,11 @@ irq_kernel:
 .global irq_level1
 .type   irq_level1, @function
 irq_level1:
-    /* Save full context to current process p_reg */
-    /* a1 is currently our stack pointer for the frame */
-    mov     a3, a1
+    /* a0 is the only scratch used by either exception classifier, and its
+     * interrupted value is in EXCSAVE1. Save a2-a15 before using any of them.
+     * The existing 80-byte temporary frame keeps the C call aligned. */
     addi    a1, a1, -CP32_IRQ_FRAME_BYTES
-    s32i    a3, a1, 4
-
-    /* 1. Save all registers to the temporary stack frame first */
-    /* Swap a3 with excsave1 so both the interrupted a0 and a3 survive. */
-    xsr     a3, excsave1
-    s32i    a3, a1, 0
     s32i    a2, a1, 8
-    rsr     a3, excsave1
     s32i    a3, a1, 12
     s32i    a4, a1, 16
     s32i    a5, a1, 20
@@ -201,7 +192,21 @@ irq_level1:
     s32i    a13, a1, 52
     s32i    a14, a1, 56
     s32i    a15, a1, 60
-    
+    addi    a0, a1, CP32_IRQ_FRAME_BYTES
+    s32i    a0, a1, 4
+    rsr     a0, excsave1
+    s32i    a0, a1, 0
+
+    /* Capture integer special state before the C handler can clobber it. */
+    rsr     a0, sar
+    s32i    a0, a1, 64
+    rsr     a0, lbeg
+    s32i    a0, a1, 68
+    rsr     a0, lend
+    s32i    a0, a1, 72
+    rsr     a0, lcount
+    s32i    a0, a1, 76
+
     /* 2. Now load the base pointer to p_reg */
     movi    a2, proc_ptr
     l32i    a2, a2, 0          /* a2 = &proc[current].p_reg */
@@ -256,21 +261,23 @@ irq_level1:
     s32i    a3, a2, 72           /* p_reg.sp */
 
     
+    l32i    a3, a1, 64
+    s32i    a3, a2, CP32_REG_SAR_OFFSET
+    l32i    a3, a1, 68
+    s32i    a3, a2, CP32_REG_LBEG_OFFSET
+    l32i    a3, a1, 72
+    s32i    a3, a2, CP32_REG_LEND_OFFSET
+    l32i    a3, a1, 76
+    s32i    a3, a2, CP32_REG_LCOUNT_OFFSET
+
     /* Track interrupt nesting */
     movi    a2, k_reenter
     l32i    a3, a2, 0
     addi    a3, a3, 1
     s32i    a3, a2, 0
     
-    /* Acknowledge TARGET0 */
-    movi    a2, 0x6002306C
-    movi    a3, 1
-    s32i    a3, a2, 0
-    movi    a2, cp32_timer_irq_ticks
-    l32i    a3, a2, 0
-    addi    a3, a3, 1
-    s32i    a3, a2, 0
-    
+    /* Read the pending bitmap before any device acknowledge. Device
+     * handlers own their peripheral clear/rearm and source accounting. */
     /* Call the scheduler */
     mov     a2, a1
     /* Use current stack pointer as a base for a15 to avoid NULL dereference in printk */
@@ -286,75 +293,19 @@ irq_level1:
     addi    a3, a3, -1
     s32i    a3, a2, 0
     
-    /* Restore registers from p_reg */
-    /* Only a gated scheduler handoff may replace the interrupted owner. */
+    /* Select one authoritative frame for every register, including PS/PC.
+     * With handoff disabled, even a changed scheduler pointer must not alter
+     * the interrupted context. */
     movi    a3, cp32_context_handoff_gate
     l32i    a3, a3, 0
-    beqz    a3, 1f
-    /* C publishes the final selected frame after all clock/unhold work. */
+    beqz    a3, .Lirq_restore_owner
     movi    a15, cp32_irq_return_proc
-    j       2f
-1:
+    j       .Lirq_restore_selected
+.Lirq_restore_owner:
     movi    a15, cp32_irq_saved_owner
-2:
+.Lirq_restore_selected:
     l32i    a15, a15, 0
-    
-    /* Restore general registers first, using a15 as the frame base. */
-    l32i    a14, a15, 56
-    l32i    a13, a15, 52
-    l32i    a12, a15, 48
-    l32i    a11, a15, 44
-    l32i    a10, a15, 40
-    l32i    a9, a15, 36
-    l32i    a8, a15, 32
-    l32i    a7, a15, 28
-    l32i    a6, a15, 24
-    l32i    a5, a15, 20
-    l32i    a4, a15, 16
-    l32i    a3, a15, 12
-    l32i    a2, a15, 8
-    /* V15 gate: select the reduced live frame-pointer stage or fallback. */
-    movi    a3, cp32_context_restore_gate
-    l32i    a3, a3, 0
-    beqz    a3, 1f
-    j       2f
-1:
-    /* Fallback stage: retain the complete validated restore. */
-    l32i    a1, a15, 4
-    l32i    a15, a15, 60
-    j       3f
-2:
-    /* Live stage: a1 is reloaded from the dedicated SP field below. */
-    l32i    a15, a15, 60
-3:
-    
-    /* Restore a0 from p_reg using a temporary register to avoid destroying a15 if needed, 
-     * but since we already restored a15, we must reload proc_ptr. */
-    movi    a14, cp32_irq_return_proc
-    l32i    a14, a14, 0
-    l32i    a0, a14, 0
-    
-    /* Restore SP from p_reg */
-    l32i    a1, a14, 72
-
-    /* Safety: a call0 frame must have a non-null frame pointer. */
-    movi    a3, 0
-    beq     a15, a3, 1f
-    j       2f
-1:  mov     a15, a1
-2:
-    /* Restore PC and PS for rfi */
-    l32i    a14, a14, 64
-    wsr     a14, epc1
-    movi    a3, proc_ptr
-    l32i    a3, a3, 0
-    l32i    a14, a3, 68
-    /* Xtensa EPS1 (SR 192) is consumed by rfi/rfe. */
-    wsr     a14, 192
-
-    rsync
-    rfi 1
-
+    j       .Lrestore_process_frame
 
 .size irq_level1, .-irq_level1
 
@@ -364,14 +315,19 @@ irq_level1:
 .type   irq_user, @function
 irq_user:
     wsr     a0, excsave1
+.Luser_saved_a0:
+    /* A user-mode level-1 IRQ must reach the same untouched-register save
+     * path as a kernel-mode IRQ, before building a syscall frame. */
+    rsr     a0, exccause
+    beqi    a0, 4, irq_level1
     /* Build the frame before reading exception CSRs.  In particular, the
      * original user a2 is the syscall number and must not be replaced by
      * EXCCAUSE.  a0 is used as the temporary frame base; original a0 is
      * recovered from EXCSAVE1 after original a1 has been saved.  Save every
      * general register before using one as the exception-cause scratch; this
      * preserves the interrupted user a5 as well as the other call0 state. */
-    movi    a0, _stack_top
-    addi    a0, a0, -128
+    /* Each task owns its exception stack; never overwrite the boot stack. */
+    addi    a0, a1, -128
     s32i    a1, a0, 4
     s32i    a2, a0, 8
     s32i    a3, a0, 12
@@ -397,13 +353,14 @@ irq_user:
     l32i    a1, a0, 4
     s32i    a1, a0, 72
 
-    /* A level-1 interrupt can arrive through either exception vector. */
-    rsr     a5, exccause
-    movi    a6, 0x04             /* EXCCAUSE_LEVEL1_INTERRUPT */
-    bne     a5, a6, 2f
-    rsr     a0, excsave1
-    j       irq_level1
-2:
+    rsr     a1, sar
+    s32i    a1, a0, CP32_REG_SAR_OFFSET
+    rsr     a1, lbeg
+    s32i    a1, a0, CP32_REG_LBEG_OFFSET
+    rsr     a1, lend
+    s32i    a1, a0, CP32_REG_LEND_OFFSET
+    rsr     a1, lcount
+    s32i    a1, a0, CP32_REG_LCOUNT_OFFSET
 
     movi    a2, proc_ptr
     l32i    a2, a2, 0
@@ -411,6 +368,7 @@ irq_user:
     rsr     a4, exccause
     mov     a1, a3
     mov     a15, a1
+    beqi    a4, 1, .Ltask_ipc
     call0   cp32_user_trap_dispatch
     mov     a1, a15
 
@@ -446,29 +404,13 @@ irq_user:
      * the stale trap frame loses that progress after the first read. */
     movi    a15, cp32_irq_return_proc
     l32i    a15, a15, 0
-    l32i    a0, a15, 0
-    l32i    a1, a15, 72
-    l32i    a2, a15, 8
-    l32i    a3, a15, 12
-    l32i    a4, a15, 16
-    l32i    a5, a15, 20
-    l32i    a6, a15, 24
-    l32i    a7, a15, 28
-    l32i    a8, a15, 32
-    l32i    a9, a15, 36
-    l32i    a10, a15, 40
-    l32i    a11, a15, 44
-    l32i    a12, a15, 48
-    l32i    a13, a15, 52
-    l32i    a14, a15, 64
+    /* Record return diagnostics before restoring any live register. */
+    l32i    a2, a15, 64
     movi    a3, cp32_user_rfe_epc
-    s32i    a14, a3, 0
-    wsr     a14, epc1
-    l32i    a3, a15, 68
-    movi    a2, cp32_user_rfe_ps
-    s32i    a3, a2, 0
-    /* Xtensa LX7 assembler does not name EPS1; SR 192 is EPS1. */
-    wsr     a3, 192
+    s32i    a2, a3, 0
+    l32i    a2, a15, 68
+    movi    a3, cp32_user_rfe_ps
+    s32i    a2, a3, 0
     l32i    a2, a15, 72
     movi    a3, cp32_user_rfe_sp
     s32i    a2, a3, 0
@@ -476,10 +418,12 @@ irq_user:
     l32i    a2, a3, 0
     addi    a2, a2, 1
     s32i    a2, a3, 0
-    l32i    a14, a15, 56
-    l32i    a15, a15, 60
-    rsync
-    rfe
+    j       .Lrestore_process_frame
+
+.Ltask_ipc:
+    call0   cp32_task_ipc_dispatch
+    bnez    a2, 4f
+    j       2b
 
 4:
 
@@ -492,33 +436,71 @@ irq_user:
     call0   exception_dump
 .size irq_user, .-irq_user
 
+/* call0 arguments a2=function, a3=endpoint, a4=message. The exception
+ * advances EPC1 past this three-byte instruction; a0 remains the caller's
+ * return address, including after a blocked request resumes. */
+.align 4
+.global cp32_ipc_trap
+.type cp32_ipc_trap, @function
+cp32_ipc_trap:
+    syscall
+    ret
+.size cp32_ipc_trap, .-cp32_ipc_trap
+
 .align 4
 .global cp32_enter_initial_user
 .type   cp32_enter_initial_user, @function
 cp32_enter_initial_user:
-    mov     a3, a2
-    l32i    a0, a3, 0
-    l32i    a1, a3, 4
-    l32i    a4, a3, 16
-    l32i    a5, a3, 20
-    l32i    a6, a3, 24
-    l32i    a7, a3, 28
-    l32i    a8, a3, 32
-    l32i    a9, a3, 36
-    l32i    a10, a3, 40
-    l32i    a11, a3, 44
-    l32i    a12, a3, 48
-    l32i    a13, a3, 52
-    l32i    a14, a3, 56
-    l32i    a2, a3, 64
-    mov     a4, a2
-    l32i    a2, a3, 68
-    wsr     a2, ps
-    l32i    a1, a3, 72
-    l32i    a15, a3, 60
-    rsync
-    jx      a4
+    mov     a15, a2
+    j       .Lrestore_process_frame
 .size cp32_enter_initial_user, .-cp32_enter_initial_user
+
+/* MINIX restart restores one complete selected process frame. Xtensa level-1
+ * exceptions use live PS and EPC1, unlike higher levels' EPSn/RFI n pair.
+ * Cadence Xtensa ISA Summary sections 7.4.9 and 8.3.258-259: SR192 is DEPC;
+ * RFI 0/1 is undefined. Espressif xtensa_vectors.S likewise writes PS + RFE.
+ *
+ * Keep EXCM set until RFE, including for a newly created task whose saved PS
+ * has no EXCM bit, so level-1 cannot interrupt this partial restore. Never
+ * borrow a general register again after restoring its final value.
+ *
+ * Integer SAR/loop state belongs to the selected process too. Floating-point,
+ * MAC and other optional extension state still require a separate policy.
+ */
+.align 4
+.Lrestore_process_frame:
+    l32i    a2, a15, CP32_REG_PC_OFFSET
+    wsr     a2, epc1
+    l32i    a2, a15, CP32_REG_PSW_OFFSET
+    movi    a3, 0x10             /* PS.EXCM */
+    or      a2, a2, a3
+    wsr     a2, ps
+    l32i    a2, a15, CP32_REG_SAR_OFFSET
+    wsr     a2, sar
+    l32i    a2, a15, CP32_REG_LBEG_OFFSET
+    wsr     a2, lbeg
+    l32i    a2, a15, CP32_REG_LEND_OFFSET
+    wsr     a2, lend
+    l32i    a2, a15, CP32_REG_LCOUNT_OFFSET
+    wsr     a2, lcount
+    l32i    a0, a15, 0
+    l32i    a1, a15, CP32_REG_SP_OFFSET
+    l32i    a2, a15, 8
+    l32i    a3, a15, 12
+    l32i    a4, a15, 16
+    l32i    a5, a15, 20
+    l32i    a6, a15, 24
+    l32i    a7, a15, 28
+    l32i    a8, a15, 32
+    l32i    a9, a15, 36
+    l32i    a10, a15, 40
+    l32i    a11, a15, 44
+    l32i    a12, a15, 48
+    l32i    a13, a15, 52
+    l32i    a14, a15, 56
+    l32i    a15, a15, 60
+    rsync
+    rfe
 
 /* ── Double exception ─────────────────────────────────────────────────── */
 /*

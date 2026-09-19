@@ -1,596 +1,753 @@
 # CP32 implementation plan
 
-This plan tracks the CP32 port feature-by-feature against `minix-2.0.0`.
-MINIX is the behavioral reference; ESP32-S3 replacements are valid when they
-preserve the MINIX invariant.
+This plan is validated against the current CP32 tree and `minix-2.0.0`.
+“Implemented” means present in source; it does not imply a successful
+hardware run. The MINIX reference supplies behavior, while Xtensa and
+ESP32-S3 replacements are valid when they preserve that behavior.
 
 ## Current boundary
 
-CP32 currently boots through `start()` → `main()` → diagnostics → the
-ESP32-S3 SYSTIMER probe → an idle loop. The repository is kernel-focused and
-does not contain MM, FS, user processes, a shell, or applications.
+CP32 is a bare-metal, kernel-only port. `src/Makefile` builds 18 C sources
+plus four Xtensa assembly units. The tree has no `src/mm/`, `src/fs/`, user
+image, libc/syscall ABI, or application tree. `main()` initializes descriptors
+and enters diagnostic/idle behavior; production context transfer remains
+gated and must be hardware-validated.
 
-Preserve these invariants: bare-metal Xtensa `call0`; the 64-byte saved-frame
-contract; direct ESP32-S3 register access; MINIX process-number, queue, and
-message-copy semantics; and removable, versioned validation probes.
+## Validated status and remaining work
 
-## Feature status and remaining work
+### 1. Reset, image, and boot — Partially implemented
 
-### 1. Reset, boot, and kernel image — Partially implemented
-
-Reference: `minix-2.0.0/src/kernel/start.c`, `main.c`, `mpx386.s`, `table.c`.
+Reference: `minix-2.0.0/src/kernel/start.c`, `main.c`, `table.c`, `mpx386.s`.
 CP32: `src/kernel/start.c`, `mpx32.S`, `vectors.S`, `main.c`, `esp32s3.ld`.
 
-Present: Xtensa reset entry, BSS/stack setup, linker image, watchdog handling,
-process-table initialization, task metadata, and clean image builds.
-Missing: descriptor-driven production startup for all active tasks, a real boot
-task table, user-image loading, and entry into a scheduled task set.
-ESP32-S3 replaces BIOS/protected-mode setup and PIC/PIT startup with loader
-segments, Xtensa vectors, and SYSTIMER registers.
+Present: Xtensa entry, BSS/stack setup, boot parameters, watchdog handling,
+descriptor initialization for CLOCK/SYS/TTY/MM, linker image, and initial
+ready-queue setup. Task entry points are present, but there is no user-image
+loader or proven transition from boot diagnostics to task-owned execution.
+ESP32-S3 replaces BIOS, protected mode, PIC, and PIT with loader segments,
+Xtensa vectors, direct registers, and SYSTIMER.
 
-Next: enable production task startup one task at a time and validate frame
-restore and stack ownership on hardware.
+Next: enable one descriptor task at a time and validate restored PC/SP/PS and
+stack ownership on hardware.
+
+Bring-up step: `[FEATURE TASK-DESC 1]` validates the CLOCK descriptor's
+entry point, aligned SP/a1, call0 frame pointer, PSW, and reserved stack
+window immediately before IRQ startup. Host tests and the Xtensa ELF/image
+build pass. Hardware validation passed: the marker reported `1`, CLOCK and
+FS frames were restored, `TTY user-entry` was reached, and IRQs continued
+through count 500 without an exception.
+
+Next bring-up image: `[FEATURE IRQ-HANDOFF 2]` adds a runtime check that the
+frame selected by the IRQ dispatcher is runnable, self-consistent, and owned
+by both scheduler pointers before assembly restoration. Host tests and the
+Xtensa ELF/image build pass. Hardware validation passed: the marker reported
+`1`, the selected FS frame reported `return-frame=1`, and execution reached
+`TTY user-entry`.
+
+Next bring-up image: `[FEATURE IPC-BLOCKED 3]` adds a one-time runtime report
+when a blocked SEND/RECEIVE frame is completed, its result is restored into
+`a2`, and the owner is made runnable again. Host tests and the ELF/image build
+pass; hardware validation is pending.
 
 ### 2. Interrupt and exception dispatch — Partially implemented
 
 Reference: `minix-2.0.0/src/kernel/mpx386.s`, `i8259.c`, `exception.c`,
-`proc.c:interrupt()`.
-CP32: `src/kernel/vectors.S`, `irq.S`, `irq_frame.h`, `irq_const.h`, `proc.c`.
+`proc.c:interrupt()`; CP32: `vectors.S`, `irq.S`, `irq_frame.h`, `proc.c`.
 
-Present: frame checks, exception diagnostics, masking, deferred/coalesced
-hardware notifications, and SYSTIMER entry. Missing: the real dispatch path
-(`src/kernel/irq.S` contains `TODO: dispatch`), complete cause/vector routing,
-and production return into the selected process frame.
-ESP32-S3 uses Xtensa causes and `rfe`, not an Intel frame or PIC acknowledgement.
+Present: Xtensa vector/exception entry, an 80-byte temporary IRQ frame,
+registered device dispatch, SYSTIMER setup, pending/coalesced notification
+accounting, and gated selected-frame return. Image 30 repairs level-1 PS/RFE
+and general-register preservation, with host register-flow tests.
+Missing: hardware proof for that repair, special-register context storage,
+and nested IRQ/fatal exception validation.
 
-Next: implement one complete IRQ-to-task return path, then test nested IRQs and
-fatal panic behavior.
+Next: complete one IRQ-to-task return path, then test nested IRQs and panic.
 
-### 3. Process creation, scheduling, and context switching — Missing for production
+### 3. Scheduling and context switching — Partially implemented
 
 Reference: `minix-2.0.0/src/kernel/proc.c`, `main.c`, `table.c`.
-CP32: `src/kernel/proc.c`, `proc.h`, `mpx32.S`, `klib32.S`, `main.c`.
+CP32: `proc.c`, `proc.h`, `mpx32.S`, `klib32.S`, `main.c`.
 
-Present: descriptors, ready queues, ready/unready/schedule helpers, billing,
-and frame-shape probes. Missing: a complete pick/dispatch boundary, real
-suspension/resumption, correct task/process classification, quantum switching,
-and production ownership of `proc_ptr`/`bill_ptr`.
+Present: descriptors, ready/unready queues, class-aware selection, billing,
+blocked-frame bookkeeping, and contract tests. Missing: ungated production
+handoff, full suspension/resumption under real execution, quantum switching,
+and proven `proc_ptr`/`bill_ptr` ownership. `schedule()` is explicitly a
+minimal bring-up entry, not the MINIX boot scheduler.
 
-Next: prove one task-owned handoff and blocked-caller resume, then enable
-clock-driven scheduling.
+Next: prove task-owned handoff and blocked-caller wake/resume, then enable
+clock preemption.
 
 ### 4. Kernel IPC — Partially implemented
 
-Reference: `minix-2.0.0/src/kernel/proc.c` (`sys_call`, `mini_send`,
-`mini_rec`, `interrupt`, `unhold`, `cp_mess`).
-CP32: `src/kernel/proc.c`, `port.c`, `mm.c`.
+Reference: `minix-2.0.0/src/kernel/proc.c` (`sys_call`, `mini_send`, `mini_rec`,
+`interrupt`, `unhold`, `cp_mess`). CP32: `proc.c`, `port.c`, `mm.c`.
 
-Present: SEND/RECEIVE/BOTH validation, deadlock checks, queues, interrupt
-notification replay, translated copies, and buffer/endpoint rejection.
-Missing: suspended wrapper execution and wake/resume through a real context
-switch; concurrent task-owned exchanges remain unproven.
+Present: SEND/RECEIVE/BOTH validation, deadlock checks, sender queues,
+interrupt notifications, translated copies, endpoint/pointer rejection, and
+host-side blocked-contract tests. Missing: real context-switch handoff for
+blocked calls and concurrent task/server exchanges proven on hardware.
 
-Next: implement the handoff contract and test both blocking directions, BOTH,
-deadlock, and nested IRQ cases.
+Next: exercise both blocking directions, BOTH, deadlock, invalid endpoints,
+and deferred IRQ notification after handoff is live.
+
+Bring-up image `[FEATURE TTY-IPC 4]` adds reply validation to the TTY
+`_sendrec()` adapter: completed exchanges must return `TASK_REPLY` with a
+non-negative status, otherwise `EIO` is returned. Host tests and the
+Xtensa ELF/image build pass; hardware validation and a dedicated IPC probe
+remain pending. The direct interactive console path remains the production
+path until that probe succeeds.
+
+Image `[FEATURE TTY-IPC-PROBE 5]` currently exposes an `ipc` shell command
+that reports `probe deferred`; the earlier synchronous request was removed
+because it could suspend the interactive FS owner before TTY task handoff.
+Hardware output confirms the console remains stable through IRQ 1500 and
+`ls` continues to work. The asynchronous task-owned probe is still pending;
+the marker is not considered hardware validation of TTY IPC.
+
+Next image `[FEATURE TTY-IPC-ASYNC 6]` adds a kernel-owned asynchronous
+probe slot: the shell queues `ipc`, `tty_task()` completes the task-owned
+request, and FS observes the result without blocking. Host tests and the
+ELF/image build pass; hardware validation is pending. This is the staging
+boundary for replacing the slot result with a real IPC reply message.
+
+Next image `[FEATURE TTY-IPC-ASYNC 10]` keeps the selected TTY task in a
+cooperative nonblocking loop during bring-up. This avoids entering the
+blocking `receive()` path before task-context suspension can return safely to
+the scheduler. Host tests and the ELF/image build pass; hardware validation
+is pending.
+
+Next image `[FEATURE TTY-IPC-ASYNC 7]` extends quantum-expiry scheduling to
+consider runnable task and server queues, not only users. This is required for
+TTY to receive CPU time and complete the queued probe. Host tests and the
+ELF/image build pass; hardware validation is pending.
 
 ### 5. Clock, alarms, and time — Partially implemented
 
-Reference: `minix-2.0.0/src/kernel/clock.c`; CP32: `src/kernel/clock.c`,
+Reference: `minix-2.0.0/src/kernel/clock.c`; CP32: `clock.c`,
 `include/esp32s3/systimer.h`.
 
-Present: SYSTIMER setup, 60 Hz accounting, uptime/time/alarm logic, watchdog
-and synchronous-alarm structures, and dispatch helpers. Missing: production
-`clock_task()` execution, confirmed alarm delivery, `syn_alrm_task()`,
-`clock_stop`, and validated quantum switching.
-ESP32-S3 uses the 64-bit SYSTIMER and TARGET0 clear rather than PIT latching.
+Present: 60-Hz SYSTIMER setup, tick accounting, uptime/time/alarm logic,
+watchdog and synchronous-alarm structures, `clock_task()`, `syn_alrm_task()`,
+and dispatch helpers. Missing: task-context execution through live IPC,
+confirmed alarm delivery, `clock_stop` behavior, and quantum switching.
+`clock.c` retains an architecture TODO.
 
-Next: start CLOCK from descriptors, route HARD_INT through IPC, validate alarms
-and `milli_delay`, then connect scheduling.
+Next: run CLOCK as a scheduled task, route HARD_INT through IPC, validate
+alarms and `milli_delay`, then connect preemption.
 
 ### 6. Memory mapping and copy — Partially implemented
 
-Reference: `minix-2.0.0/src/kernel/system.c` (`umap`, `do_copy`, `do_vcopy`,
-`alloc_segments`) and `memory.c`.
-CP32: `src/kernel/mm.c`, `system.c`, `proc.h`.
+Reference: `minix-2.0.0/src/kernel/system.c` (`umap`, `numap`, `do_copy`,
+`do_vcopy`, `alloc_segments`) and `memory.c`; CP32: `mm.c`, `system.c`,
+`proc.h`.
 
-Present: maps, wide range checks, `numap`, `umap`, physical copy, and basic
-system handlers. Missing: a memory inventory/resource allocator, MM task loop,
-fork/exec memory setup, user image placement, and complete isolation.
-ESP32-S3 needs a flat DRAM/IRAM model instead of x86 segmentation.
+Present: flat-address checks, `umap`/`numap`, physical copy, bounded memory
+block allocation/free, and system handlers. Missing: complete inventory and
+ownership model, MM integration, fork/exec image setup, user placement, and
+isolation proof. ESP32-S3 has no x86 segmentation.
 
-Next: define the physical-memory model, implement allocator/map ownership,
-and test every map/copy operation.
+Next: define allocator regions and ownership, then test every map/copy case.
 
 ### 7. System task and signals — Partially implemented
 
-Reference: `minix-2.0.0/src/kernel/system.c`; CP32: `src/kernel/system.c`.
+Reference: `minix-2.0.0/src/kernel/system.c`; CP32: `system.c`.
 
-Present: dispatcher and MINIX-shaped fork, map, exec, exit, time, copy,
-signal, tracing, and reboot handlers. Missing: active `sys_task()` execution,
-MM/FS integration, complete fork/exec/exit semantics, user signal frames, and
-hardware reset (`system_reset()` is a placeholder).
+Present: `sys_task()` loop and MINIX-shaped fork/map/exec/exit, time/copy,
+signal/tracing/reboot handlers. Missing: live SYS_TASK execution, MM/FS
+integration, complete user lifecycle and signal frames, and real reset;
+`system_reset()` is an intentional infinite-loop placeholder.
 
-Next: run SYS_TASK after IPC handoff, implement user address-space lifecycle,
-then validate signals and reset policy.
+Next: run SYS_TASK through IPC, define user lifecycle, implement documented
+reset registers, then validate signals.
 
-### 8. TTY and console — Partially implemented
+### 8. TTY and Cardputer console — Partially implemented
 
 Reference: `minix-2.0.0/src/kernel/tty.c`, `console.c`, `keyboard.c`,
-`rs232.c`, `pty.c`, `keymaps/`.
-CP32: `src/kernel/tty.c`, `tty.h`, `serial.c`, `serial.h`.
+`rs232.c`, `pty.c`, `keymaps/`; CP32: `tty.c`, `serial.c`, `cardputer.c`,
+`display.c`.
 
-Present: line discipline, termios/ioctl structures, queues, and USB
-Serial/JTAG diagnostics. Missing: active `tty_task()`, Cardputer keyboard/
-display driver, UART/RS232 device implementation, TTY IRQs, ptys, and user
-read/write syscalls. USB Serial/JTAG and Cardputer peripherals replace VGA,
-PC keyboard, UART, and BIOS services.
+Present: MINIX line discipline, termios/ioctl support, Cardputer I2C keyboard
+polling/decode, ST7789 display output, and USB diagnostics. Missing:
+device-backed `tty_task()` I/O, keyboard/display IRQ integration, UART/RS232,
+ptys, and user read/write syscalls. `scr_init()` and `rs_init()` install
+`tty_devnop`.
 
-Next: 
-1. Add code to access M5Stack Cardputer Adv display and keyboard.
-2. connect one console device, start TTY as a task, and validate canonical
-and raw I/O.
-3. TTY and console is fully usable via M5StackCardputer hardware.
+Next: connect one Cardputer console device, start TTY as a task, and validate
+canonical/raw input and display output on hardware.
 
-### 9. Storage, RAM disk, and filesystem — Missing
+### 9. RAM disk and filesystem — RAM disk partial; filesystem missing
 
-Reference: `minix-2.0.0/src/fs/` plus kernel `driver.c`, `memory.c`, and disk
-drivers. CP32 has no `fs/` tree, block driver, RAM disk, VFS, or disk-image
-loader.
+Reference: `minix-2.0.0/src/fs/`, kernel `driver.c`, `memory.c`, and disk
+drivers. CP32: `ramdisk.c/.h`.
 
-Missing: FS server, inode/cache/path/file-descriptor operations, block I/O,
-root filesystem, and boot-time filesystem population. Add `src/fs/` and a
-documented CP32 storage-driver layer. Filesystem logic is portable; flash
-partitioning, cache, and wear policy are hardware-specific.
+Present: bounded sector read/write, format/reset, checksum, and host tests.
+Missing: `src/fs/`, inode/cache/path/file-descriptor operations, block-driver
+protocol, root filesystem, image loader, and boot population.
+
+Next: define the block-device message ABI, then add the smallest FS server
+over the tested RAM disk.
 
 ### 10. MM server and user process environment — Missing
 
-Reference: `minix-2.0.0/src/mm/`; CP32 has only kernel-side `mm.c`.
-Missing: fork/exec/wait/exit, brk/sbrk, server-level signals, permissions,
-and boot-time service initialization. Start after scheduling, IPC, maps, and
-an executable format work.
+Reference: `minix-2.0.0/src/mm/`; CP32 has kernel-side `mm.c` and `mm_task()`
+but no MM server implementation. Missing: fork/exec/wait/exit server logic,
+brk/sbrk, permissions, user signal delivery, executable format, and service
+initialization.
 
-### 11. Networking and optional device drivers — Not applicable to first milestone
+### 11. Networking and optional PC drivers — Not applicable to first milestone
 
-Reference: `minix-2.0.0/src/inet/` and network/audio/printer/CD/disk drivers.
-CP32 configuration disables these PC-oriented services. Add only after the
-Cardputer peripheral target and user ABI are defined.
+Reference: `minix-2.0.0/src/inet/` and optional network/audio/printer/CD/disk
+drivers. These are not first-milestone blockers; revisit after user ABI and
+storage exist.
 
 ### 12. C library, shell, commands, and applications — Missing
 
-Reference: `minix-2.0.0/src/lib/`, `commands/`, `test/`, and `boot/`.
-CP32 has only `printk.c`, `klib.c`, and compatibility headers. Missing:
-syscall stubs, libc, runtime/start files, shell, commands, tests, and image
-integration. Define the user ABI after one user process can run.
+Reference: `minix-2.0.0/src/lib/`, `commands/`, `test/`, `boot/`. CP32 has
+freestanding helpers and `cp32-shell.c`, but that is a kernel diagnostic loop,
+not a user shell. Missing: user ABI/syscall stubs, libc, crt/start files,
+real shell, commands, user tests, and image integration.
 
-## Explicitly incomplete code
+## Verification record
 
-- `src/kernel/irq.S`: dispatch TODO and bring-up handler stubs.
-- `src/kernel/proc.c` and `port.c`: diagnostics and blocked flags exist, but
-  no production suspension/resume boundary.
-- `src/kernel/mm.c`: `mm_task()` is an initialization message plus idle loop.
-- `src/kernel/tty.c`: ESP32-S3 device stubs are disconnected.
-- `src/kernel/system.c`: `system_reset()` is a placeholder.
-- `src/kernel/main.c`: `panic()` spins without required panic diagnostics.
-- The existing libgcc `call0` ABI warning remains unresolved.
+Hardware evidence is recorded per image below; it does not validate later
+images. See `issues.md` for the current SYSTIMER investigation and the exact
+hardware acceptance criteria. Host tests and ELF layout checks are separate
+from that acceptance gate.
 
-## Priority order
+## Historical handoff status — image 29, 2026-09-17
 
-- [x] 1. Complete IRQ dispatch and one real context-switch/handoff path.
-- [ ] 2. Make IPC suspension/resumption task-owned; validate queues, billing, and quantum.
-  Basic CLOCK receive blocking is running; blocked SEND/RECEIVE resume coverage is still pending.
-- [x] 3. Start CLOCK, SYS, and TTY through production descriptors.
-  MM descriptor startup is also enabled; the MM message protocol remains incomplete.
-- [x] 4a. Define the CP32 physical-click memory model and allocator ownership
-  boundary; the MM server protocol remains in progress.
-4. Define the CP32 memory model and implement the MM server.
-5. Implement Cardputer console I/O.
-- [x] 5a. Connect the Cardputer TCA8418 keyboard to the TTY input queue and
-  decode matrix events into console characters.
-- [x] 5b. Add a bounded user-read handoff probe and boot-time FS descriptor
-  validation for the TTY read path.
-- [x] 5c. Add scheduler selection tracing for the first runnable FS/user-read
-  frame to isolate the remaining restore boundary.
-- [x] 5d. Normalize the initial Xtensa saved PSW used by descriptor-based
-  task/server returns.
-- [x] 5e. Trace the selected process frame immediately before the Xtensa
-  exception-return boundary.
-- [x] 5f. Trace both scheduler owner pointers at the IRQ return boundary.
-- [x] 5g. Keep scheduler selection and active return ownership synchronized.
-- [x] 5h. Perform a final non-nested scheduler selection before IRQ return.
-- [x] 5i. Preserve a runnable FS selection across the legacy clock/unhold path.
-- [x] 5j. Publish and consume one final IRQ return-frame pointer across C and
-  Xtensa assembly restoration.
-- [x] 5k. Trace final return-pointer publication before assembly restoration.
-- [x] 5l. Publish the IRQ return frame at process selection and preserve it
-  through the timer wrapper.
-- [x] 5m. Correlate scheduler selection and IRQ return with a shared sequence.
-- [x] 5n. Report and consume the dedicated published return pointer rather
-  than the later idle fallback pointer.
-- [x] 5o. Trace return-pointer replacement and the FS state causing it.
-- [x] 5p. Correlate FS selection with interrupt nesting to separate scheduler
-  passes.
-- [x] 5q. Gate return-frame publication on explicit IRQ-dispatch ownership.
-- [x] 5r. Reconcile the final runnable selection inside the IRQ dispatch pass.
-- [ ] 5s. Rotate scheduler queue priority to prevent task starvation (blocked
-  by task-frame initialization fault).
-- [x] 5t. Harden `numap()` against invalid or inconsistent process descriptors.
-- [x] 5u. Isolate IPC blocked-frame capture for suspension/resumption.
-- [x] 5v. Rate-limit repetitive CLOCK task execution diagnostics.
-- [x] 5w. Initialize explicit flat task descriptor mappings for MM/IPC buffers.
-- [x] 5x. Isolate MM IPC request validation before allocator/release handling.
-- [x] 5y. Add an automatic MM allocator allocate/release smoke path.
-- [x] 5z. Verify allocator ownership enforcement during automatic boot smoke.
-- [x] 5aa. Validate allocator zero-size and oversized request rejection.
-- [x] 5ab. Validate adjacent allocator blocks and reverse-order coalescing.
-- [x] 5ac. Validate allocator ownership while allocated and after release.
-- [x] 5ad. Add frame-safe MM requester validation at the receive boundary.
-- [x] 5ae. Centralize MM allocation/release request handling for IPC replies.
-- [ ] 5af. Connect the scheduled FS client to the MM allocation/release IPC path (deferred: the first activation caused an image-integrity regression; requires an isolated frame-safe client path).
-- [x] 5ah. Make blocked IPC completion task-owned: wake result, blocked flags,
-  stale return-owner cleanup, and ready-queue insertion now share one resume
-  boundary for SEND and RECEIVE wakeups.
-- [x] 5ai. Guard ready-queue insertion against duplicate runnable links during
-  repeated IPC wakeups and interrupt replay using the existing queue scan.
-- [ ] 5aj. Bound IPC caller-queue append and receive traversal (deferred after
-  image-integrity regression; requires an assembly/layout-safe implementation).
-- [x] 5ak. Reject duplicate SEND attempts from an already blocked sender so
-  each suspended process retains one owned caller-queue link and wakeup frame.
-- [ ] 5al. Reject duplicate RECEIVE attempts from an already blocked receiver
-  (deferred after early image-integrity regression; requires an
-  assembly/layout-safe implementation).
-- [x] 5am. Confirm marker 89 hardware checkpoint: valid `.data`/`.bss`, stable
-  IRQ handoff, CLOCK task execution, and continued RFE returns.
-- [x] 5an. Confirm marker 90 hardware checkpoint: stable IRQ dispatch and
-  repeated task handoffs after IPC queue hardening rollbacks.
-- [x] 5ao. Confirm marker 91 hardware checkpoint: clean image sentinel and
-  stable repeated RFE/IPC/CLOCK handoffs with marker-only rebuild.
-- [x] 5ap. Add a host-side blocked-RECEIVE ownership contract test while the
-  hardware frame-boundary implementation remains deferred.
-- [x] 5aq. Extend the host-side IPC ownership contract coverage to blocked
-  SEND completion and mixed SEND/RECEIVE flag cleanup.
-- [x] 5ar. Add host-side bounded caller-queue traversal coverage for valid
-  chains and cycle/limit rejection.
-- [x] 5as. Add host-side IPC endpoint validation coverage for accepted and
-  rejected source/destination ranges.
-- [x] 6a. Add a link-isolated CP32 RAM-disk sector core with bounds-checked
-  read/write/reset operations and host-side tests.
-- [x] 6b. Confirm marker 97 hardware checkpoint: RAM-disk code addition leaves
-  the boot sentinel, IRQ dispatch, IPC, CLOCK, and RFE handoffs stable.
-- [x] 6c. Reserve RAM-disk storage inside DRAM before the heap, expose linker
-  bounds, start allocation after it, and activate reset without an ELF data
-  segment or static C storage.
-- [ ] 6e. Expand the contiguous RAM-disk reservation to the full 128 KiB
-  reserved DRAM window (deferred: expanded layout corrupts `.data`).
-- [x] 6g. Implement the RAM-disk as a permanent ordinary kernel `.bss` array
-  in the proven SRAM1 model, accessed through sector interfaces and reset once
-  at boot.
-- [x] 6f. Remove the accidental remaining RAM-disk boot write and restore a
-  marker-only baseline after marker 110 still corrupted `.data`.
-- [ ] 5ag. Rotate ready-queue selection across task, server, and user classes
-  (reverted after the FS handoff fault; requires a frame-safe scheduler
-  handoff redesign).
-- [x] 5ah. Synchronize the kernel IPC wrapper owner from `current_proc` before
-  user/task `_send`, `_receive`, and `_sendrec` calls.
-6. Add storage/RAM disk, FS, executable loading, libc, shell, and commands.
-7. Add optional networking and peripherals only when in scope.
+Latest hardware image: `[FEATURE TTY-IPC-ASYNC 29]1`.
 
-## Validation policy
+Confirmed on hardware:
 
-For each feature, compare MINIX behavior, document the ESP32-S3 substitution
-and CP32 invariant, add a focused `tests/` test when feasible, run
-`make clean && make` from `src/`, inspect ELF sections/segments for low-level
-changes, and record hardware results in `issues.md`. Build success alone never
-marks hardware behavior complete.
-- [x] 6h. Reduce the active RAM-disk probe to one 10-byte sector and use a
-  byte-wise reset to isolate storage-size and alignment effects.
-- [x] 6i. Disable boot-time RAM-disk activation after the 10-byte probe still
-  corrupted the `.data` sentinel; retain the isolated interface for later use.
-- [x] 6j. Expand the dormant ordinary-memory RAM-disk probe to 1 KiB while
-  keeping boot-time activation disabled, isolating static-size image effects.
-- [x] 6k. Expand the dormant ordinary-memory RAM-disk probe to 64 KiB while
-  keeping boot-time activation disabled, isolating the larger `.bss` footprint.
-- [x] 6l. Add non-mutating RAM-disk geometry accessors for sector size and
-  sector count, with host-side contract coverage.
-- [x] 6m. Add a non-mutating total-capacity accessor to complete the minimal
-  RAM-disk block-device geometry contract.
-- [x] 6n. Add bounded byte-range RAM-disk access for filesystem metadata and
-  records, with zero-length and out-of-range contract tests.
-- [x] 6o. Add deterministic bounded RAM-disk checksums for metadata integrity
-  checks, with host-side validation.
-- [x] 6p. Add an explicit RAM-disk format signature and validation operation,
-  leaving formatting dormant during boot for filesystem integration.
-- [x] 6q. Add version and checksum validation to the dormant RAM-disk format
-  header, preventing stale or partially corrupted metadata from being used.
-- [x] 8a. Change the CP32 TTY bring-up client to request bounded canonical
-  lines and report completed line data, preserving the existing TTY task path.
-- [x] 8b. Revert the line-buffered TTY bring-up client after it changed the
-  boot image sentinel; restore the proven one-byte diagnostic read path.
-- [x] 8c. Add phased startup diagnostics for `.data`/`.bss` bounds and the
-  data sentinel to localize loader versus startup corruption.
-- [x] 8d. Revert phased startup diagnostics after they changed the image
-  layout and reproduced sentinel corruption; restore the compact startup path.
-- [x] 8e. Add one retained main-stage data-layout diagnostic reporting the
-  sentinel and linker section bounds before marker 131.
-- [x] 8f. Remove the oversized diagnostic and enforce the discovered 32 KiB
-  CP32 loader IRAM window with a link-time assertion before marker 132.
-- [x] 8g. Add a minimal post-entry stability trace after the kernel reaches
-  `kernel_idle_loop()`, preserving the enforced 32 KiB image limit.
-- [x] 8h. Encode the stability trace in the existing idle-entry status line
-  after the additional print exceeded the hard 32 KiB loader window.
-- [x] 8i. Split IRAM into a 32 KiB bootstrap window and a second contiguous
-  internal-IRAM window so kernel text can grow beyond the loader bootstrap limit.
-- [x] 8j. Keep the complete pre-boot C dependency set in the bootstrap IRAM
-  segment while placing the remaining kernel text in extended IRAM.
-- [x] 8k. Revert the multi-segment IRAM experiment after it produced no USB
-  output; restore the validated single-segment 32 KiB loader model.
-- [x] 8l. Compile out repetitive IRQ, RFE, CLOCK, and keyboard polling traces
-  by default, preserving functional input and the compact validated image.
-- [x] 8m. Add an ESP-IDF-style D/IRAM linker window with its DRAM alias
-  reservation, and place the isolated RAM-disk code in the extended window.
-- [x] 8n. Move the D/IRAM DRAM-alias reservation before `.data` placement so
-  initialized data cannot overlap extended executable SRAM.
-- [x] 8o. Execute the RAM-disk capacity accessor from extended D/IRAM during
-  boot, providing a minimal hardware validation of the new code window.
-- [x] 8p. Re-enable the retained verbose diagnostics after confirming that
-  extended D/IRAM code executes correctly on hardware.
-- [x] 8q. Relocate timer IRQ dispatch and its diagnostic helper into D/IRAM
-  after verbose diagnostics exceeded the bootstrap window by 44 bytes.
-- [x] 8r. Relocate the runtime `clock_task()` implementation into D/IRAM,
-  keeping reset and startup dependencies in the bootstrap IRAM window.
-- [x] 8s. Relocate the runtime `tty_task()` implementation into D/IRAM,
-  preserving the keyboard and TTY execution path while reducing low-IRAM use.
-- [x] 8t. Relocate the runtime `sys_task()` implementation into D/IRAM,
-  preserving the assembly interrupt entry and reset path in low IRAM.
-- [x] 8u. Relocate the runtime `mm_task()` memory server into D/IRAM while
-  keeping reset/startup and interrupt-entry code in low IRAM.
-- [x] 8v. Relocate runtime keyboard event translation into D/IRAM while
-  retaining boot-time keyboard probing, initialization, and I²C access below.
-- [x] 8w. Relocate runtime keyboard event reads and interrupt-state checks
-  into D/IRAM while retaining boot-time probe/configuration code in low IRAM.
-- [x] 8x. Relocate non-boot keyboard status/configuration and diagnostic
-  accessors into D/IRAM, retaining the boot probe/init path in low IRAM.
-- [x] 8y. Relocate the post-start `kernel_idle_loop()` into D/IRAM while
-  retaining all reset and boot diagnostics in low IRAM.
-- [x] 8z. Relocate the runtime TTY client loop into D/IRAM while preserving
-  the boot-time process setup and diagnostic path.
-- [x] 8aa. Relocate the runtime scheduler implementation into D/IRAM while
-  preserving low-IRAM reset, startup, and interrupt-entry dependencies.
-- [x] 8ab. Relocate runtime `lock_sched()` into D/IRAM while preserving the
-  low-IRAM reset and startup path.
-- [x] 8ac. Relocate the runtime millisecond delay helper into D/IRAM while
-  retaining low-level timer interrupt and startup setup in low IRAM.
-- [x] 8ad. Relocate the runtime `get_uptime()` helper into D/IRAM while
-  retaining timer initialization and interrupt entry in low IRAM.
-- [x] 8ae. Relocate runtime clock time/uptime service handlers into D/IRAM
-  while retaining timer initialization and interrupt entry in low IRAM.
-- [x] 8af. Relocate runtime alarm service handlers into D/IRAM while retaining
-  timer initialization and interrupt entry in low IRAM.
-- [x] 8ag. Relocate clock-task dispatch, tick, synchronous-alarm, and alarm
-  delivery helpers into D/IRAM while retaining the timer ISR path in low IRAM.
-- [x] 8ah. Relocate runtime clock timing helpers into D/IRAM while retaining
-  timer initialization and interrupt entry in low IRAM.
-- [x] 8ai. Relocate the C-side IRQ registration and dispatch layer into
-  D/IRAM while retaining assembly interrupt entry in low IRAM.
-- [x] 8aj. Relocate the runtime TTY ioctl handler into D/IRAM while retaining
-  boot-time keyboard and TTY initialization in low IRAM.
-- [x] 8ak. Relocate the compatibility TTY ioctl handler into D/IRAM while
-  retaining boot-time keyboard and TTY initialization in low IRAM.
-- [x] 8al. Relocate runtime process unready helpers into D/IRAM while
-  retaining reset and startup process-table initialization in low IRAM.
-- [x] 8am. Relocate ready-queue validation and insertion helpers into D/IRAM
-  while retaining the public lock wrapper and scheduler entry contracts.
-- [x] 8an. Relocate the runtime `switch_to()` process handoff helper into
-  D/IRAM while retaining scheduler and startup handoff behavior.
-- [x] 8ao. Relocate the locked ready-queue wrapper into D/IRAM while
-  preserving its interrupt-lock protocol.
-- [x] 8ap. Relocate the locked process-selection wrapper into D/IRAM while
-  preserving its interrupt-lock protocol.
-- [x] 8aq. Relocate held-interrupt replay (`unhold`) into D/IRAM while
-  preserving lock ordering and interrupt delivery semantics.
-- [x] 8ar. Relocate the locked mini-send wrapper into D/IRAM while preserving
-  its lock-save/send/restore sequence.
-- [x] 8as. Relocate blocked-frame snapshot capture into D/IRAM while
-  preserving the process-frame validity contract.
-- [x] 8at. Relocate IPC message-copy and blocked-message delivery helpers into
-  D/IRAM while preserving sender validation and wakeup ordering.
-- [x] 8au. Relocate the IRQ message-buffer copy helper into D/IRAM while
-  retaining the interrupt entry and notification state machine in place.
-- [x] 8av. Relocate the optional IPC trace helper into D/IRAM without
-  changing IPC state transitions.
-- [x] 8aw. Relocate blocked-frame completion and wake/resume bookkeeping into
-  D/IRAM while preserving result publication and ready-queue insertion.
-- [x] 8ax. Relocate the C-level hardware notification handler into D/IRAM
-  while retaining assembly IRQ entry and frame handling in low IRAM.
-- [x] 8ay. Relocate the runtime mini-receive IPC implementation into D/IRAM
-  while preserving receive matching and blocked-wakeup semantics.
-- [x] 8az. Relocate the runtime mini-send IPC implementation into D/IRAM
-  while preserving destination validation and blocked-sender semantics.
-- [x] 8ba. Relocate the C-level `sys_call()` dispatcher into D/IRAM while
-  retaining the assembly trap entry and IPC contracts.
-- [x] 8bb. Relocate the user blocked-handoff dispatcher into D/IRAM while
-  retaining exception-vector entry and saved-frame validation.
-- [x] 8bc. Relocate five RAM-disk sector/byte I/O and checksum functions into
-  D/IRAM as one runtime storage-helper group.
-- [x] 8bd. Relocate five runtime TTY input/output, event, reply, and signal
-  helpers into D/IRAM while retaining boot-time TTY initialization in IRAM.
-- [x] 8be. Relocate five runtime TTY read/write/open/close/cancel handlers into
-  D/IRAM while retaining boot-time TTY initialization in IRAM.
-- [x] 8bf. Relocate five runtime TTY transfer/ioctl/attribute/cancel/wakeup
-  helpers into D/IRAM while retaining boot-time TTY initialization in IRAM.
-- [x] 8bg. Relocate five runtime TTY editing/output/no-op helpers into D/IRAM
-  while retaining boot-time TTY initialization in IRAM.
-- [x] 8bh. Relocate five runtime TTY timer, compatibility, and trace helpers
-  into D/IRAM while retaining serial/console initialization in IRAM.
-- [x] 8bi. Relocate five runtime keyboard/TTY compatibility helpers into
-  D/IRAM while retaining serial and console initialization in IRAM.
-- [x] 8bj. Relocate ten system-task runtime handlers into D/IRAM while
-  retaining system-task entry and startup plumbing in low IRAM.
-- [x] 8bk. Relocate the remaining ten system-task signal, memory, boot, and
-  tracing handlers into D/IRAM while retaining system-task entry in IRAM.
-- [x] 8bl. Relocate ten runtime memory-management allocator, mapping, copy,
-  ownership, and validation functions into D/IRAM.
-- [x] 8bm. Relocate ten Cardputer I2C GPIO and transaction helpers into D/IRAM
-  as one hardware-access group.
-- [x] 8bn. Relocate ten remaining TTY/Cardputer/clock/memory runtime and
-  setup helpers into D/IRAM while retaining vector and assembly entry points.
-- [x] 8bo. Relocate ten remaining runtime system, library, and memory helpers
-  into D/IRAM while retaining loader and vector-critical code in IRAM.
-- [x] 8bp. Relocate five remaining diagnostic/environment/serial-output helpers
-  into D/IRAM while retaining panic and vector/timer-critical entry routines.
-- [x] 8bq. Reject duplicate RECEIVE requests from an already-blocked receiver
-  without overwriting its saved source selector or message buffer.
-- [ ] 5aj. Validate frame-gated ready-queue rotation for the FS/TTY user task
-  (experimental; hardware validation pending).
-- [x] 5ak. Remove duplicate timer-IRQ scheduling so an FS/TTY selection is
-  preserved for the single frame publication and return path.
-- [x] 5al. Publish the preserved runnable FS selection through the IRQ return
-  owner before `rfe`, preventing the legacy idle frame from overwriting it.
-- [ ] 5am. Diagnose post-publication FS return-owner invalidation with a
-  one-shot flags/PC/SP trace before changing the handoff contract.
-- [ ] 5an. Publish FS directly from `pick_proc()` when IRQ dispatch ownership
-  is active, then validate user entry and TTY character completion.
-- [ ] 5ao. Arm IRQ dispatch ownership before the timer's first scheduler pass
-  so the selected FS frame can become the IRQ return frame.
-- [ ] 5ap. Capture the direct `sched()` result as the IRQ return owner before
-  later clock bookkeeping can overwrite the selected FS frame.
-- [ ] 5aq. Publish runnable FS selection before IRQ dispatch activation so the
-  assembly return path can use the clock-task selection.
-- [ ] 5ar. Trace IRQ return-owner, selected process, and preserved FS state at
-  dispatch finalization to identify the remaining owner overwrite.
-- [ ] 5as. Publish FS as the IRQ return owner when TTY wakeup requeues it from
-  task context, before the next gated interrupt return.
-- [ ] 5at. Enter the saved FS call0 frame from the idle loop when the clock
-  task selects FS outside IRQ context.
-- [ ] 5au. Trigger the idle-loop FS handoff from the preserved scheduler
-  selection rather than the transient live process pointer.
-- [ ] 5av. Transfer directly from `switch_to()` while the non-IRQ FS frame is
-  still runnable, before the clock task blocks it again.
-- [ ] 5aw. Map the FS SRAM stack window as flat D memory so TTY read buffers
-  pass `numap()` validation.
-- [ ] 5ax. Rate-limit repeated TTY user-read error diagnostics to once per
-  1000 failed attempts.
-- [ ] 5ay. Rebind FS ownership before user-client IPC so requests are not
-  emitted with the interrupted IDLE process as their source.
-- [ ] 5az. Fix TTY input transfer to translate absolute flat SRAM addresses
-  once instead of adding the FS segment base a second time.
-- [ ] 5ba. Remove the artificial successful-BOTH blocked probe and restore FS
-  ownership on successful user syscall return.
-- [ ] 5bb. Permit repeated FS saved-frame entry after syscall return so the
-  TTY client can issue one read request per keyboard character.
-- [ ] 5bc. Restore the IDLE return frame to `kernel_idle_loop()` so C-level
-  FS wakeup handoff remains reachable after user syscalls.
-- [ ] 5bd. Publish FS on every successful user syscall before transient BOTH
-  receive flags are normalized by the IPC path.
-- [ ] 5be. Allow successful user syscalls to bypass transient receive flags
-  and return directly to the FS client frame.
-- [ ] 5bf. Restore the updated FS process frame in the user exception assembly
-  path instead of the stale pre-syscall trap frame.
-- [ ] 5bg. Use nonblocking TTY reads in the bring-up user client to avoid the
-  incomplete blocked-receive return handoff while validating keyboard input.
-- [ ] 5bh. Make successful user exception returns consume the explicit
-  `cp32_irq_return_proc` publication instead of mutable `proc_ptr`.
-- [ ] 5bi. Use the actual TTY `O_NONBLOCK` flag for the user read client;
-  `NO_BLOCK` is unrelated and evaluates to zero.
-- [ ] 5bj. Validate TTY reply status and clear the user byte before printing,
-  preventing stale stack data from appearing as a typed character.
-- [ ] 5bk. Write CP32 flat-SRAM TTY input bytes directly to the validated user
-  destination, bypassing the legacy segmented copy path.
-- [ ] 5bl. Report the first user TTY IPC return code and reply status to
-  distinguish empty input from a malformed `BOTH` transaction.
-- [ ] 5bm. Move the diagnostic TTY byte buffer from the transient FS stack to
-  persistent kernel SRAM to isolate user-stack return corruption.
-- [ ] 5bn. Trace the first TTY transfer destination and input character at
-  `in_transfer()` to locate loss between keyboard queue and user buffer.
-- [ ] 5bo. Remove the ineffective CHIP preprocessor guard so CP32 flat-SRAM
-  TTY transfer code is included in the actual build.
-- [x] 5bp. Allow the CP32 one-byte FS TTY client to receive canonical input
-  immediately, without waiting for an EOL; preserve canonical gating for other
-  terminal consumers.
-- [x] 5bq. Guard TTY transfer against draining an empty input queue, which was
-  producing false zero-valued user characters.
-- [x] 5br. Make the CP32 TTY client report the byte read back from the exact
-  transfer destination, eliminating a misleading stale-buffer diagnostic.
-- [x] 5bs. Suppress zero-byte TTY replies in the bring-up client so stale or
-  empty replies cannot be reported as keyboard input.
-- [x] 5bt. Preserve the TTY destination pointer across `_sendrec()`; reply
-  messages may overwrite the request's `ADDRESS` field.
-- [x] 5bu. Keep the diagnostic TTY destination in persistent kernel SRAM so
-  reconnect/context-switch paths cannot invalidate a stack-local pointer.
-- [x] 5bv. Remove unsafe post-IPC user-pointer readback; publish the delivered
-  byte from the kernel TTY transfer into persistent diagnostic SRAM.
-- [x] 5bw. Pin synthetic TTY `_sendrec()` calls to the FS process descriptor so
-  scheduler publication cannot replace the IPC caller between SEND and RECEIVE.
-- [x] 5bx. Poll/service the TTY input queue before synthetic user IPC, avoiding
-  the unsafe empty-read blocking return path.
-- [x] 5by. Stop invoking the kernel `handle_events()` directly from user
-  context; let the TTY task own queue servicing and prevent a null `tty_t`
-  handoff argument.
-- [x] 5bz. Drain the controller FIFO during keyboard initialization and tag
-  keyboard events with the firmware session marker to prevent stale replay
-  after USB-UART reconnects.
-- [x] 5ca. Add a cooperative empty-queue keyboard poll for the synthetic FS
-  client so its wait loop cannot starve the normal TTY polling task.
-- [x] 5cb. Prevent synthetic TTY retries while FS is already blocked, avoiding
-  repeated `SENDING|RECEIVING` state overwrites and lost user reads.
-- [x] 5cc. Add a direct atomic CP32 TTY queue read for the bring-up client,
-  bypassing the unstable synthetic blocked-IPC path while preserving normal
-  TTY IPC for later user processes.
-- [x] 5cd. Add a bounded diagnostic line buffer with backspace and Enter
-  submission handling on top of the stable per-character TTY path.
-- [x] 5ce. Add minimal RAM-disk shell dispatch for `ls` and `ramdisk`, plus a
-  bounded unknown-command diagnostic.
-- [x] 5cf. Diagnose individual keyboard initialization register failures and
-  correct duplicate `0x` formatting in TTY non-printable character logs.
-- [x] 5cg. Reduce periodic scheduler/IPC diagnostics and add compact keyboard
-  interrupt, controller-status, and FIFO-depth boot diagnostics.
+- Boot, memory/vector checks, process-table checks, scheduler checks, and
+  initial FS handoff succeed.
+- Cardputer keyboard input and shell display output work; `ls` executes and
+  prints RAM-disk contents.
+- The asynchronous `ipc` command queues and reports
+  `[TTY IPC probe task-result=0]` without blocking the shell.
+- SYSTIMER startup reports `conf=0xC7000000`, TARGET0 `ena=0x00000001`, and
+  `raw=0x00000000` after setup.
 
-## Core-kernel phase after console bring-up
+Known unresolved issue:
 
-- [x] 5ch. Bound IPC caller-queue append and receive traversal, reject cyclic
-  or malformed sender links, and preserve the existing blocked-message wakeup
-  contract.
-- [x] 8cl. Complete the stable Cardputer TTY milestone: immediate per-character
-  delivery and bounded `ls`/`ramdisk` dispatch are validated on hardware.
-- [ ] 8cm. Keep `cat` and additional shell commands deferred until the kernel
-  phase has a production filesystem/message path.
-- [ ] 8cn. Implement the next core-kernel feature with host coverage before
-  expanding the command surface.
-- [x] 8co. Guard bit-banged keyboard I²C transactions against concurrent
-  scheduler/IRQ poll re-entry; marker 2 boots and reaches the stable FS/TTY
-  loop without the prior exception.
-- [x] 8cp. Bound ready-queue integrity scans and stale-entry removal so a
-  cyclic or malformed ready link cannot hang scheduler maintenance; marker 3.
-- [x] 8cq. Fail closed when keyboard register initialization is incomplete;
-  runtime I²C polling is disabled until the controller is fully ready; marker 4.
-- [x] 8cr. Reconcile stale ready-queue tails before runnable insertion and fail
-  closed on a cyclic queue; marker 5.
-- [x] 8cs. Make the TTY task the sole runtime keyboard-I²C poll owner; remove
-  competing FS-client hardware polling and advance the core marker to 6.
+- USB IRQ diagnostics stop after `[IRQ count=1 ...]`. The shell can continue
+  processing input, but subsequent timer IRQ heartbeats are not observed.
+- The real TTY task-owned IPC reply is not implemented yet; the probe result
+  is currently a scheduler/FS-side bring-up completion fallback.
+- MM, CLOCK, and TTY task entry loops remain cooperative bring-up paths and
+  do not yet use their final blocking `receive()`/resume contract.
 
-## TTY/user handoff diagnostic tree — marker 219
+## Continue here
 
-- [x] Boot image remains structurally valid: `.data` and `.bss` sentinels pass,
-  vectors are present, and the 64 KiB SRAM RAM disk initializes.
-- [x] Keyboard hardware path works: `[KBD probe=1]`, `[KBD init=1]`, keyboard
-  events, and kernel-side `[TTY char=...]` output are observed.
-- [x] Scheduler reaches the FS client: `[SCHED fs-selected ... nest=0]` and
-  `[TTY user-entry]` appear.
-- [x] The first user TTY transaction completes and copies data correctly:
-  `[TTY user-char=k]` confirms the earlier double-address translation bug is
-  fixed.
-- [ ] User client resumes for subsequent reads. After the first character the
-  return path reports `RFE target=0 current=0` and resumes at an internal idle
-  address (`0x40372C0B`), so the FS client loop is not re-entered.
-- [ ] Next investigation: trace `irq_user` labels 2/3/4 and the exact value of
-  `cp32_user_dispatch_blocked`, `proc_ptr`, and `cp32_irq_return_proc` after
-  `cp32_user_trap_dispatch()` returns successfully.
-- [ ] Verify whether `cp32_enter_initial_user()` must establish a dedicated
-  user-return context rather than relying on the generic `rfe` path.
-- [ ] Keep the current nonblocking `NO_BLOCK` experiment isolated until the
-  user-return ownership problem is resolved; do not expand diagnostics before
-  capturing the first post-syscall assembly state.
+User confirms image-43 punctuation is correct; `docs/hardware/lcd-punct-v43.log`
+records '-' as 0x2D, '_' as 0x5F and CLOCK progress to IRQ 5000. Image 44
+connects TTY DEV_WRITE to the LCD and adds shell write for a real byte-count
+reply. All 18 host scripts and the clean build pass. Next: manually flash,
+run write repeatedly and expect result=18 expected=18 plus LCD text, then
+sys/mm/ipc/ls with continued CLOCK progress. Device-backed DEV_READ and
+full shell routing through TTY remain later work.
 
-## Core-kernel phase after console bring-up
+## SYSTIMER continuation — image 30, 2026-09-17
 
-- [x] 8cu. Reject FS-side keyboard I²C polling while `k_reenter` is nonzero,
-  preventing transactions from starting at interrupt level; marker 8.
+Image identity: `[FEATURE SYSTIMER-IRQ 30]1` and, immediately before idle
+entry, `[TEST SYSTIMER-IRQ 30]`.
+
+Source investigation found three concrete defects before task activation:
+
+- Level-1 assembly acknowledged TARGET0 before reading the CPU pending
+  bitmap, so the level source could disappear before its rearm handler ran.
+  Device acknowledgement now belongs to the registered timer handler; its
+  counter counts actual timer dispatches.
+- Level-1 return wrote status to SR192 (DEPC) and used undefined `rfi 1`.
+  IRQ and syscall return now restore one selected frame through named PS
+  and `rfe`, keeping EXCM set until the final return. Entry/exit also preserve
+  the general registers previously overwritten during classification and
+  frame restoration.
+- UNIT0 snapshot polling could accept the preceding VALUE_VALID indication.
+  The counter helper clears that W1C bit with UPDATE and retries split reads
+  if another context relatches UNIT0. Boot, CLOCK init, and ISR rearm share
+  one disable/clear/fresh-counter/load/enable sequence.
+
+Diagnostics `[SYSTIMER V30 ...]` capture the UNIT0 counter and actual target,
+CONF, RAW/ST before and after rearm, then report the programmed deadline,
+peripheral enable, CPU INTENABLE/pending/PS and selected return PC/SP/PS.
+Samples are limited to the first two timer dispatches and every 500th.
+
+Ordered next steps:
+
+[x] 1. All 11 host test scripts pass, including the new SYSTIMER register
+   model and assembly register-flow tests. A clean ELF/image build and image
+   layout check pass. Inspected sections/segments: `_iram_end=0x40374264`,
+   `_iram_ext_end=0x4037FF14`, `_stack_top=0x3FCCCD50`, all within linker
+   limits. These checks cannot certify silicon interrupt delivery.
+
+2. Validate image 30 on hardware: observe timer counts 2, 500 and 1000,
+   compare before/after target and counter values, confirm enabled CPU line 2
+   and a return PS that permits level-1 interrupts, then exercise the shell.
+3. Only after step 2, complete the missing special-register context storage
+   needed for arbitrary instruction preemption, then replace all
+   shell/scheduler probe completion fallbacks with a real TTY-owned IPC
+   request/reply and verify blocked caller resume.
+4. Then activate CLOCK's HARD_INT receive/resume path and MM's blocking
+   receive path separately, checking each task's ownership and continued
+   timer/shell operation.
+
+The task scheduler and cooperative CLOCK/MM/TTY gates are unchanged by this
+step. The 76-byte process-frame ABI still omits SAR and other special state;
+the register-flow tests cover general registers, PC, PS and SP, not a complete
+Xtensa task-context or nested-interrupt proof.
+
+## Current handoff status — image 31, 2026-09-18
+
+The preceding image-30 hardware logs show TARGET0
+rearmed correctly at IRQs 1 and 2, RAW/ST clearing, CPU interrupt 2 enabled,
+and FS entry reached. They then halt with these two outcomes:
+
+- `EXCCAUSE=0x00000002`, `EPC1=EXCVADDR=0x3FCD6D40` (FS entry SP minus 16).
+- `EXCCAUSE=0x00000014`, `EPC1=0x00000001`, `EXCVADDR=0`.
+
+The source contains a reproducible ownership bug: LOW_USER runs
+`kernel_idle_loop()`, which replayed `cp32_last_selected_fs` without updating
+the running owner or saving the outgoing context. This allows the next IRQ
+to save FS execution into LOW_USER's descriptor and later replay stale FS
+call state. C `switch_to()` had a second direct restore that could abandon
+an unfinished scheduler/IPC call. Image 31 removes both bypasses; actual
+frame restoration remains at IRQ/syscall return. The subsequent image-31
+hardware run below no longer reproduces the crash through IRQ 1500.
+
+[x] Regression tests execute the production idle/switch C bodies against
+fresh and suspended FS selections. The original code fails with a restore
+under the wrong owner; the corrected code passes all five cases.
+
+[x] All 12 host test scripts pass. Clean Xtensa ELF/bin build, image layout,
+section/segment inspection, and `git diff --check` pass without compiler
+warnings. `_iram_end=0x40374268`, `_iram_ext_end=0x4037FFAC`, and
+`_stack_top=0x3FCCCE20` remain within linker limits.
+
+Validated hardware image: `[FEATURE SYSTIMER-IRQ 31]1` and
+`[TEST SYSTIMER-IRQ 31]`. Two `[CTX V31 FS-RETURN ...]` lines report the first
+FS selections, including PC/SP/a0/a15 and frame ownership checks. The user
+flashed manually; no automatic flash was performed.
+
+[x] Supplied hardware log reaches IRQ counts 500, 1000 and 1500 without an
+exception. All sampled rearms clear RAW/ST, enable CPU interrupt 2 and report
+`frame=1`. FS first enters at tick 5 and resumes at tick 11 with a saved code
+return address (`a0=0x4037D241`) and `frame=1`.
+
+[x] Keyboard input and shell command dispatch work during continued IRQs:
+the log captures `ipc`, its queued marker and fallback result `0`. A heartbeat
+interleaves with that result line; this is not an exception or IPC proof.
+
+Evidence: `docs/hardware/systimer-v31.log`. This capture does not show `ls`,
+long-duration stress, or real TTY message delivery. Special-register context
+preservation, real TTY request/reply, CLOCK/MM receive activation, and
+arbitrary task-context scheduling remain pending.
+
+## Integer special-register context — image 32
+
+[x] Save and restore SAR, LBEG, LEND and LCOUNT for level-1 interrupts,
+syscall frames and selected-task return. The process/syscall frame is now
+92 bytes; existing GPR/PC/PS/SP offsets stay unchanged. IRQ temporary frames
+remain 80 bytes by using their former padding. Fresh descriptors initialize
+the four registers to zero, and syscall/blocked-handoff copies include them.
+
+[x] All 12 host scripts pass, including assembly tests that clobber the four
+registers in the C-handler mock and verify interrupted versus selected
+context restoration. Compile-time checks cover the extended frame offsets.
+A clean Xtensa build and image-layout/section checks pass.
+
+[x] Hardware regression passed in `docs/hardware/context-special-v32.log`:
+`[FEATURE CONTEXT-SPECIAL 32]1` and `[TEST CONTEXT-SPECIAL 32]` identify the
+image. IRQs reach 500/1000/1500 without an exception; sampled returns report
+`frame=1`, RAW/ST clear after rearm, and CPU interrupt 2 remains enabled.
+FS resumes at tick 11 with saved `SAR=0x15`, `LCOUNT=0`, and `frame=1`.
+Keyboard input and `ipc` command dispatch work; the result remains fallback
+`0`, interleaved with heartbeat output. No automatic flash was performed.
+
+This is a successful hardware regression, not an exhaustive register test:
+the log shows no active nonzero hardware-loop count, no `ls`, and no real
+TTY IPC exchange. Assembly host tests cover distinct nonzero loop state.
+
+This covers integer shift/loop state, not floating-point, MAC or other
+optional extension state. Full task-context IPC suspension and real TTY
+request/reply are next; CLOCK/MM blocking receive paths remain gated.
+
+
+## Real TTY request/reply — image 33, 2026-09-18
+
+Identity: `[FEATURE TTY-IPC 33]1`, `[TEST TTY-IPC 33]`.
+
+MINIX reference: `minix-2.0.0/src/kernel/proc.c` mini_rec clears only
+SENDING when a queued request is accepted. A BOTH caller remains RECEIVING
+until the server replies. CP32 previously cleared both bits and returned
+from ordinary C wrappers even when their caller had blocked.
+
+The wrappers now execute Xtensa SYSCALL (EXCCAUSE 1, confirmed by the local
+ESP32-S3 Xtensa corebits definitions). Assembly saves the full 92-byte context
+in a 128-byte aligned frame on the caller's stack. The dispatcher records the
+post-SYSCALL PC, performs IPC under EXCM, selects a runnable process if blocked,
+and returns through the shared RFE epilogue. Owner pointers and restored frame
+must agree. No wrapper fabricates the FS owner. Completing SEND for a BOTH
+caller leaves its receive buffer and saved continuation intact until reply.
+Completed frame metadata is cleared consistently with the runtime invariants.
+
+TTY now runs its real receive/dispatch/reply loop. Shell `ipc` sends DEV_IOCTL
+TCGETS with a local message and termios buffer, and validates TASK_REPLY,
+source TTY_PROC_NR and REP_PROC_NR before reporting status. All four shared-slot
+completion fallbacks are removed. CLOCK and SYS descriptors are stopped until
+separate activation; MM retains its cooperative loop. Keyboard polling still
+belongs to the FS bring-up client; this is not a full FS server or DEV_READ path.
+
+Removable `[IPC V33 op=... n=... owner=... blocked=... next=... frame=...]`
+reports the first call of each operation and every 5000th. Expect RECEIVE
+(op=2) to block TTY; BOTH (op=3) to block FS; SEND (op=1) to complete the
+reply without changing the currently executing TTY owner. A resumed shell
+prints `[TTY IPC V33 reply-result=0]` for each successful exchange.
+
+[x] Host verification: all 13 test scripts pass. New tests execute production
+IPC, dispatcher and scheduler functions for 100 exchanges in both arrival
+orders, SEND-only wake, invalid endpoint/buffer/opcode, self-send and deadlock.
+They check message provenance, blocked BOTH state, saved PC/SP/special registers,
+ready queues and selection of the resumed caller. Assembly tests cover both
+exception vectors with immediate and blocked SYSCALL returns and private
+stack frame placement. These are host models, not silicon execution.
+
+[x] Clean build, ELF sections/segments and image layout pass without warnings.
+Disassembly confirms the three-byte SYSCALL followed by RET at PC+3.
+`_iram_end=0x4037432C`, `_iram_ext_end=0x40380390`,
+`_stack_top=0x3FCCD500`.
+
+Hardware follow-up: the user has manually flashed image 33; the first exchange
+is confirmed below. Repeated `ipc`, then `ls` and keyboard input after the
+reply, plus IRQ 1500 remain pending. Do not activate CLOCK/MM blocking
+receives until these checks are confirmed. Nested interrupts and optional
+floating-point/MAC context remain outside this image's validation.
+
+
+[x] Image-33 first hardware exchange: `docs/hardware/tty-ipc-v33.log`
+identifies TTY-IPC 33 and shows all boot CORE checks passing. TTY (-9,
+unsigned 4294967287) blocks on RECEIVE; FS (1) blocks on BOTH; TTY resumes
+and sends its reply while retaining current ownership. Each sampled IPC
+return reports `frame=1`. The shell resumes and prints reply-result 0,
+with heartbeats interleaved between the prefix and `0]`. IRQ 500 and 1000
+continue with RAW/ST cleared after rearm, INTENABLE 0x4 and `frame=1`.
+No exception appears in this capture.
+
+This log contains one `ipc` command, no `ls`, and ends at IRQ 1000. Repeated
+exchanges, post-reply keyboard/shell use and IRQ 1500 remain unverified;
+the full image-33 hardware regression is not yet marked complete.
+
+
+## CLOCK activation and scheduler fairness — images 34/35, 2026-09-19
+
+MINIX reference: interrupt() delivers HARDWARE/HARD_INT to a waiting task;
+clock_task receives, accounts pending ticks, handles timer work, and receives
+again. MINIX pick_proc selects a queue head. Xtensa task-context C cannot
+change the selected owner without first capturing the outgoing register frame.
+
+Image 34 (`[FEATURE CLOCK-IPC 34]1`, `[TEST CLOCK-IPC 34]`) enabled CLOCK's
+real receive loop and HARD_INT dispatch. Interrupt delivery now completes the
+saved RECEIVE frame with the same result/metadata cleanup as ordinary IPC.
+Boot owns SYSTIMER initialization once: CLOCK no longer resets live uptime,
+rearms an existing deadline, or enables the legacy PC IRQ 0. clock_stop masks
+the actual CPU line 2. CLOCK quantum handling preserves task ownership;
+timer IRQ scheduling already rotates contexts using captured frames. Pending
+tick accounting and get_uptime preserve the caller's interrupt-mask state.
+
+Hardware evidence: `docs/hardware/clock-ipc-v34.log` identifies image 34,
+passes boot checks, enters CLOCK, and reports a blocked CLOCK wake. However,
+no CLOCK receive-return marker follows, and clock-msgs stays zero at IRQ 500
+and 1000. TTY still completes a real exchange with result 0; no exception
+appears. This is a failed CLOCK activation check, not a successful dispatch.
+
+Image 35 (`[FEATURE CLOCK-FAIR 35]1`, `[TEST CLOCK-FAIR 35]`) removes the
+fixed nine-rotation TTY preference from pick_proc. With TTY asleep and five
+runnable tasks, that workaround repeatedly selected the same tail rather
+than progressing through the queue. FIFO selection within each class now
+preserves the existing rotation between task/server/user classes.
+
+[x] A production-code fairness regression reproduced starvation of task -3
+before the fix and passes afterward. All 14 host test scripts pass, including
+100 TTY BOTH exchanges; HARD_INT delivery while blocked, before RECEIVE,
+with source filtering, and held/coalesced/replayed notifications; saved frame
+cleanup and unchanged interrupted ownership; CLOCK receive/dispatch/reply,
+retained uptime, interrupt-mask preservation, quantum ownership and alarms.
+The deferred-notification model is not a hardware nested-interrupt proof.
+
+[x] Clean image-35 build, sections/segments and image-layout checks pass
+without compiler warnings. `_iram_end=0x403741C0`,
+`_iram_ext_end=0x4038056C`, `_stack_top=0x3FCCD770`.
+
+Hardware pending: `[CLOCK V35 received=... type=2 source=4294967295 ...
+owner=4294967293 resumed=1]` appears on the first two receives and every
+5000th. Periodic IRQ diagnostics include clock-msgs, which must increase.
+Confirm IRQ 500/1000/1500, repeated `[TTY IPC V35 reply-result=0]`, and `ls`
+after the exchanges. Then proceed to MM receive activation as a separate
+image. No automatic flashing was performed.
+
+
+[x] Image-35 CLOCK progress hardware check: `docs/hardware/clock-fair-v35.log`
+identifies CLOCK-FAIR 35 and reports CLOCK receiving HARDWARE/HARD_INT at
+ticks 15 and 32 with owner -3 (unsigned 4294967293) and resumed=1.
+clock-msgs advances from 57 at IRQ 500 to 115 at IRQ 1000, confirming repeated
+service progress after the scheduler fix. All boot CORE checks pass, sampled
+return frames report frame=1, timer RAW/ST clear after rearm and CPU line 2
+remains enabled. The real TTY exchange returns 0, with heartbeats interleaved
+inside the result line. Heartbeats continue through tick 1106; no exception
+appears. The capture contains one ipc command, no ls, and no IRQ 1500 sample.
+CLOCK progress is confirmed; the longer shell regression remains outstanding.
+
+
+## MM receive/request/reply — image 36, 2026-09-19
+
+Identity: `[FEATURE MM-IPC 36]1`, `[TEST MM-IPC 36]`.
+MINIX reference: `minix-2.0.0/src/mm/main.c` get_work receives ANY, dispatches
+by request type, and replies with status in m_type. CP32 uses that server
+loop with its existing small allocate/release protocol, not full MINIX MM
+process management. Xtensa suspension uses the proven task-owned SYSCALL/RFE
+path; MM is endpoint 0 and runs in SERVER_Q rather than the kernel-task queue.
+
+MM's cooperative delay/continue is replaced by receive, validated-source
+dispatch and reply. Failed receive/send reports a panic rather than silently
+continuing with stale state. Its nonnegative descriptor cannot use numap's
+negative-task shortcut: boot now gives MM the same flat SRAM D map as the
+bring-up FS client, allowing messages on MM's own stack. This is a bring-up
+mapping, not process memory isolation.
+
+The shared `minix/cp32_mm.h` describes existing allocate/release request codes
+and click-based fields. The new shell `mm` command allocates one click via
+SENDREC and releases its returned base through a second SENDREC. It checks
+MM reply provenance and both statuses and does not directly call the allocator
+or dereference allocated memory. MM assigns ownership using IPC m_source.
+
+Removable `[MM V36 received=... op=... source=... resumed=1]` reports the first
+two requests and every 5000th. Successful shell completion prints one USB line
+`[MM IPC V36 alloc-release-result=0]` with interrupt state preserved and a
+short LCD status. Existing TTY/CLOCK/timer diagnostics identify V36.
+
+[x] All 15 host scripts pass. New MM tests execute the production server loop,
+allocator, protocol handler and numap: 200 allocate/release cycles, full-region
+reuse, ownership rejection, duplicate release, zero/negative allocation,
+unknown operation, invalid source and MM stack-buffer translation. Production
+IPC/scheduler tests now cover both arrival orders for MM's server endpoint as
+well as TTY, in addition to CLOCK interrupt wakeup and queue fairness checks.
+
+[x] Clean build without warnings, ELF sections/segments and image layout pass.
+`_iram_end=0x403741C4`, `_iram_ext_end=0x403807E0`, `_stack_top=0x3FCCDA90`.
+
+Hardware pending: repeat `mm`, check resumed=1 and alloc-release-result=0,
+then exercise `ipc` and `ls` with increasing clock-msgs at IRQ 500/1000/1500.
+MM initially blocking must not stop timer or shell operation. SYS stays stopped.
+No automatic flashing was performed. This does not establish full MINIX MM,
+user isolation, allocated-memory access, or nested-interrupt correctness.
+
+
+[x] Image-36 hardware validation: `docs/hardware/mm-ipc-v36.log` identifies
+MM-IPC 36, shows both MM requests with resumed=1, and four
+alloc-release-result=0 completions. The ls command reports capacity 65536
+and formatted=0; a later real TTY IPC reply returns 0. CLOCK messages reach
+1175 at IRQ 10000, with heartbeats through tick 10193 and no exception.
+Shell output is slow and interleaved with diagnostics; successful completion
+does not establish acceptable console latency.
+
+## Quieter heartbeat — image 37, 2026-09-19
+
+User requested less frequent heartbeat output. `[FEATURE QUIET-HEARTBEAT 37]1`
+and `[TEST QUIET-HEARTBEAT 37]` identify the image. The shared idle-loop
+heartbeat now reports once per 400 iterations instead of 20: a 20-fold
+reduction, approximately every 30 seconds at the image-36 observed rate.
+This is an iteration limit, not a guaranteed wall-clock interval. Timer and
+IPC sampling intervals are unchanged; versioned diagnostics now say V37.
+Clean build, all 15 existing test scripts and image-layout verification pass.
+Manual flashing and observation of the quieter cadence remain pending.
+
+
+[x] Image-37 hardware result: `docs/hardware/quiet-heartbeat-v37.log` shows
+heartbeat 1 at tick 1698 and heartbeat 2 at tick 3368. MM allocate/release and
+TTY IPC both return 0, CLOCK reports resumed=1 and reaches 411 messages at
+IRQ 3500. No exception appears in the supplied capture.
+
+## Quieter SYSTIMER diagnostics — image 38, 2026-09-19
+
+At the user's request, recurring timer diagnostics now share
+CP32_TIMER_TRACE_INTERVAL=5000 rather than 500 (10 times less frequent).
+The first two SYSTIMER before/after/return samples and initial IRQ/RFE reports
+remain visible. Recurring SYSTIMER and IRQ status report every 5000 ticks;
+RFE sampling uses the same interval on its existing return-trace counter.
+At nominal 60 Hz this is about 83 seconds, not a wall-clock guarantee.
+Heartbeat remains every 400 idle-loop iterations; IPC sampling is unchanged.
+Identity: `[FEATURE QUIET-SYSTIMER 38]1`, `[TEST QUIET-SYSTIMER 38]`.
+Versioned diagnostics now say V38. All 15 existing test scripts, clean build
+and ELF/image-layout checks pass; hardware cadence validation is pending.
+
+
+[x] Image-38 hardware result: `docs/hardware/quiet-systimer-v38.log` confirms
+two MM successes, TTY result 0, complete ls output, and CLOCK dispatch count
+587 at IRQ 5000. Initial timer samples and the next sample at tick 5000
+confirm the reduced cadence. Heartbeats reach tick 5063; no exception appears.
+
+## SYS task activation — image 39, 2026-09-19
+
+Identity: `[FEATURE SYS-IPC 39]1`, `[TEST SYS-IPC 39]`.
+MINIX reference: `minix-2.0.0/src/kernel/system.c` sys_task receives ANY,
+dispatches the requested service and replies with status in m_type. CP32 now
+makes the existing SYS descriptor runnable and uses that production loop
+through the same Xtensa SYSCALL/RFE suspension contract as TTY/CLOCK/MM.
+Receive/reply errors now panic rather than silently continuing with stale data.
+
+Shell `sys` sends SYS_GETSP for its own FS descriptor, validates the reply
+source/status and nonzero aligned stack pointer, then requests SYS_TIMES and
+reports uptime. These are read-only requests. Both handlers now reject unused
+process slots; SYS_TIMES preserves the interrupt-mask state while sampling
+accounting counters. Other existing SYS services are not validated by this
+image: fork/exec/exit, signals, trace, memory mutation and reset remain work.
+
+Removable `[SYS V39 received=... op=... source=... resumed=1]` records the
+first two receives and every 5000th. `[SYS IPC V39 result=0 uptime=...]`
+reports successful command completion. Existing reduced heartbeat/timer
+intervals are retained; other versioned markers now say V39.
+
+[x] All 16 host test scripts pass. New SYS tests execute the production
+receive/dispatch/reply loop for 250 valid/invalid requests, actual GETSP/TIMES
+handlers and shell query helper; they check saved SP, accounting, uptime,
+free/out-of-range targets, unknown requests and interrupt-mask preservation.
+Other SYS handlers are stubbed in this bounded host test. Production IPC tests
+now include SYS endpoint -2 with both arrival orders, alongside MM and TTY.
+
+[x] Clean build without warnings, ELF sections/segments and image layout pass:
+`_iram_end=0x403741B4`, `_iram_ext_end=0x40380AC8`, `_stack_top=0x3FCCDE30`.
+Hardware pending: repeat sys and confirm result=0, increasing uptime and SYS
+resumed=1, then exercise mm/ipc/ls with continued CLOCK progress to tick 5000.
+Manual flashing only. Full SYS service correctness and CPU accounting accuracy
+are not established by these read-only bring-up queries.
+
+
+[x] Image-39 SYS hardware result: `docs/hardware/sys-ipc-v39.log` records
+SYS resumed=1 and four result=0 queries at uptimes 255, 614, 966 and 1495.
+TTY and MM return 0, ls completes, CLOCK reaches 1175 dispatches at IRQ
+10000, and heartbeats continue through tick 11732 without an exception.
+The long gaps between ls lines show console latency remains a real issue.
+
+## Console scroll batching — image 40, 2026-09-19
+
+Identity: `[FEATURE CONSOLE-BATCH 40]1`, `[TEST CONSOLE-BATCH 40]`.
+MINIX console.c buffers output and flushes it after processing a write.
+CP32's ST7789 uses software SPI and a text shadow buffer, not PC video RAM.
+The existing batch API never set redraw_pending on scroll and was unused by
+shell commands. Every newline at the bottom cleared/repainted the whole LCD.
+
+Nested display writes now share the outer shell-command batch, including
+its newline and prompt. A scroll updates the text buffer and marks one repaint
+pending; later scrolls coalesce until the outer batch ends. Repainting preserves
+the logical cursor. Glyph rendering no longer advances or clamps that cursor:
+putc owns wrapping, so long bottom-row lines scroll the buffer correctly.
+Spaces now paint background pixels, allowing them to erase previous glyphs.
+Interrupts remain enabled during rendering; no SPI register/timing change is
+made. Reduced heartbeat and timer diagnostic intervals are preserved.
+
+[x] All 17 host test scripts pass. A new pixel-addressed LCD model runs the
+production renderer and compares batched and unbatched output: a representative
+command produces identical final pixels/text/cursor with 7 full scroll redraws
+reduced to 1. It covers nested batches, bottom-row wrap, exact-width newline,
+space erasure and faulted-display behavior. Existing SYS/MM/TTY/CLOCK tests pass.
+
+[x] Clean build without warnings and ELF/image checks pass:
+`_iram_end=0x40374224`, `_iram_ext_end=0x40380AD0`, `_stack_top=0x3FCCDE50`.
+Hardware pending: repeat ls on a full display; verify complete lines, correct
+scrolling and prompt position, and compare responsiveness with image 39.
+Then run sys/mm/ipc and capture continued CLOCK progress. Fewer modeled redraws
+do not prove a specific on-device speedup. A single full redraw still uses
+software SPI; further transport work may be needed after this validation.
+
+
+[x] Image-40 hardware: user confirms batching produces one scroll pass.
+`docs/hardware/console-batch-v40.log` records three ls commands, MM result 0,
+SYS result 0 at uptime 5143, TTY result 0, and CLOCK 587 messages at IRQ 5000.
+No exception appears. The remaining slow black pass is a user-observed LCD
+issue, not something a serial log alone can validate.
+
+## Changed-cell LCD updates — image 41, 2026-09-19
+
+Identity: `[FEATURE LCD-CELLS 41]1`, `[TEST LCD-CELLS 41]`.
+Keep a 192-byte shadow of characters actually painted on the LCD. Scrolls
+modify textbuf; the outer batch compares final text with the painted shadow
+and redraws only differing opaque 15x10 cells, including spaces. Glyphs
+already paint foreground and background, so no full-screen black pass is
+needed. Unchanged cells and inter-row black gaps remain untouched. Explicit
+clear resets both shadows; the one-time boot clear still initializes pixels.
+This extends the existing MINIX-style buffered-output approach using CP32's
+text grid; SPI timing/commands are unchanged.
+
+[x] All 17 host scripts pass. The pixel model confirms zero full-screen scroll
+clears, equality to clean-screen rasterization, correct space erasure/wrapping,
+cursor preservation and clear/shadow reset. The representative sequence uses
+161 cell writes batched versus 430 unbatched (including initial text setup).
+These counts are not a measured hardware speedup.
+[x] Clean build without warnings and ELF/image layout pass:
+`_iram_end=0x40374264`, `_iram_ext_end=0x40380AD0`, `_stack_top=0x3FCCDF00`.
+Hardware pending: repeat ls with a full LCD and check absence of the black
+cleanup pass, correct blank cells and prompt placement; then sys/mm/ipc.
+Software SPI can still limit the speed of the changed cells themselves.
+
+
+## Punctuation follow-up — images 42/43, 2026-09-19
+
+Image 42 (`LCD-HYPHEN 42`) added a horizontal hyphen glyph with a pixel test.
+User reports that it still looks incorrect. The pasted log confirms the image
+identity, SYS result 0/uptime 401, MM result 0, TTY result 0 and ls completion;
+it contains no typed hyphen event. Root cause of the visual mismatch remains
+unconfirmed. Image-41 scrolling was explicitly accepted by the user; its log
+is saved as `docs/hardware/lcd-cells-v41.log`.
+
+Image 43: `[FEATURE LCD-PUNCT 43]1`, `[TEST LCD-PUNCT 43]`. Hyphen is centered
+within the text cell; underscore, slash and colon now have explicit glyphs
+instead of generated placeholder patterns. Slash appears in the existing
+MM alloc/release status. This is a plausible distinct source of a bad symbol,
+not an established explanation for the user's hyphen report.
+Shell font prints labelled hyphen, underscore, slash and equals samples through
+the same normal display path. It provides a reproducible check independent of
+keyboard punctuation input. Keyboard table storage now includes string
+terminators (15 bytes for 14 key columns); mapping and column bounds are unchanged.
+
+[x] All 17 tests pass, including pixel-exact hyphen/underscore/slash checks and
+production keyboard decoding for minus, shifted underscore and release events.
+Clean build and image layout pass: `_iram_end=0x403742F8`,
+`_iram_ext_end=0x40380B18`, `_stack_top=0x3FCCDF90`.
+Hardware pending: run font and compare the labelled samples with typed '-' and
+Shift+'-'. If either differs, capture its LCD appearance and USB character code.
+Existing scrolling and quiet diagnostic intervals are preserved.
+
+
+[x] Image-43 punctuation hardware confirmation: user states characters now
+look correct. `docs/hardware/lcd-punct-v43.log` includes minus (0x2D), underscore
+(0x5F), lower/uppercase input and CLOCK count 587 at IRQ 5000 with no exception.
+
+## Real TTY device output — image 44, 2026-09-19
+
+Identity: `[FEATURE TTY-WRITE 44]1`, `[TEST TTY-WRITE 44]`.
+MINIX reference: kernel/console.c cons_write copies bounded chunks, updates
+write counts, flushes console output and replies with consumed bytes. CP32
+scr_init now connects tty_devwrite to a real Cardputer LCD backend instead
+of tty_devnop. numap validates each source chunk, at most 64 bytes are copied
+at a time, and existing out_process applies termios newline/tab processing.
+LCD writes preserve command batching and changed-cell updates. Completion
+resets counts and replies once with input bytes consumed; mapping/display
+errors return EFAULT/EIO. Existing inhibited-output behavior remains intact.
+
+Shell write sends DEV_WRITE containing "TTY write via IPC\n" from its own
+stack and validates reply provenance. Expect `[TTY WRITE V44 result=18
+expected=18]` and the text on LCD. The count is input bytes, independent of
+newline expansion. A surrounding shell batch may defer physical LCD flush
+until the command/prompt is complete. This does not yet route every shell
+output through TTY or implement device-backed reads/escape sequences.
+
+[x] All 18 host scripts pass. New tests execute production do_write,
+cp32_console_write and out_process with modeled memory/LCD/reply boundaries:
+150-byte multi-chunk write, newline/tab expansion, byte counts, zero/negative
+counts, bad mapping, busy output, LCD fault and inhibited output paths.
+Existing IPC, scheduler and LCD pixel tests also pass.
+[x] Clean build without warnings and ELF/image layout pass:
+`_iram_end=0x40374310`, `_iram_ext_end=0x40380DD0`, `_stack_top=0x3FCCE280`.
+Hardware pending: repeat write, verify the LCD text and matching byte counts,
+then regress sys/mm/ipc/ls and CLOCK progress. Manual flashing only.

@@ -135,6 +135,25 @@ FORWARD _PROTOTYPE( int do_getmap, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_fresh, (message *m_ptr) );
 #endif
 
+/* Removable first-two/per-5000 proof of task-owned SYS receive resumption. */
+CP32_IRAM_EXT PRIVATE void cp32_trace_sys_receive(void)
+{
+  static unsigned received;
+  int saved_ps;
+  extern struct proc *current_proc;
+  if (++received > 2 && received % 5000 != 0) return;
+  saved_ps = lock_save();
+  usbj_print("[SYS V44 received="); usbj_print_u32(received);
+  usbj_print(" op="); usbj_print_u32((uint32_t)m.m_type);
+  usbj_print(" source="); usbj_print_u32((uint32_t)m.m_source);
+  usbj_print(" resumed=");
+  usbj_print_u32((uint32_t)(proc_ptr == proc_addr(SYSTASK) &&
+      current_proc == proc_ptr && proc_ptr->p_flags == 0 &&
+      !proc_ptr->p_blocked_frame_valid && k_reenter == 0));
+  usbj_print("]\r\n");
+  restore_lock(saved_ps);
+}
+
 /*===========================================================================*
  *				sys_task				     *
  *===========================================================================*/
@@ -145,7 +164,8 @@ CP32_IRAM_EXT PUBLIC void sys_task()
   register int r;
 
   while (TRUE) {
-	receive(ANY, &m);
+	if (receive(ANY, &m) != OK) panic("SYS receive failed", NO_NUM);
+	cp32_trace_sys_receive();
 
 	switch (m.m_type) {	/* which system call */
 	    case SYS_FORK:	r = do_fork(&m);	break;
@@ -173,7 +193,7 @@ CP32_IRAM_EXT PUBLIC void sys_task()
 	}
 
 	m.m_type = r;		/* 'r' reports status of call */
-	send(m.m_source, &m);	/* send reply to caller */
+	if (send(m.m_source, &m) != OK) panic("SYS reply failed", NO_NUM);
   }
 }
 
@@ -429,8 +449,7 @@ message *m_ptr;			/* pointer to request message */
 /*===========================================================================*
  *				do_getsp				     *
  *===========================================================================*/
-CP32_IRAM_EXT PRIVATE int do_getsp(m_ptr)
-register message *m_ptr;	/* pointer to request message */
+CP32_IRAM_EXT PRIVATE int do_getsp(message *m_ptr)
 {
 /* Handle sys_getsp().  MM wants to know what sp is. */
 
@@ -438,6 +457,7 @@ register message *m_ptr;	/* pointer to request message */
 
   if (!isoksusern(m_ptr->PROC1)) return(E_BAD_PROC);
   rp = proc_addr(m_ptr->PROC1);
+  if (rp->p_flags & P_SLOT_FREE) return E_BAD_PROC;
   m_ptr->STACK_PTR = (char *) rp->p_reg.sp;	/* return sp here (bad type) */
   return(OK);
 }
@@ -446,8 +466,7 @@ register message *m_ptr;	/* pointer to request message */
 /*===========================================================================*
  *				do_times				     *
  *===========================================================================*/
-CP32_IRAM_EXT PRIVATE int do_times(m_ptr)
-register message *m_ptr;	/* pointer to request message */
+CP32_IRAM_EXT PRIVATE int do_times(message *m_ptr)
 {
 /* Handle sys_times().  Retrieve the accounting information. */
 
@@ -455,12 +474,13 @@ register message *m_ptr;	/* pointer to request message */
 
   if (!isoksusern(m_ptr->PROC1)) return E_BAD_PROC;
   rp = proc_addr(m_ptr->PROC1);
+  if (rp->p_flags & P_SLOT_FREE) return E_BAD_PROC;
 
   /* Insert the times needed by the TIMES system call in the message. */
-  lock();			/* halt the volatile time counters in rp */
+  int saved_ps = lock_save(); /* preserve the caller's interrupt mask */
   m_ptr->USER_TIME   = rp->user_time;
   m_ptr->SYSTEM_TIME = rp->sys_time;
-  unlock();
+  restore_lock(saved_ps);
   m_ptr->CHILD_UTIME = rp->child_utime;
   m_ptr->CHILD_STIME = rp->child_stime;
   m_ptr->BOOT_TICKS  = get_uptime();

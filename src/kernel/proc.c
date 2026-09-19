@@ -17,6 +17,9 @@
  
 #include "kernel.h"
 #include <minix/callnr.h>
+
+extern struct proc *held_head;
+extern struct proc *held_tail;
 #include <minix/com.h>
 #include "proc.h"
 #include "irq_frame.h"
@@ -27,7 +30,6 @@
 #define CP32_VERBOSE_HANDOFF_DIAGNOSTICS 0
 
 extern volatile int cp32_context_restore_gate;
-extern void cp32_enter_initial_user(struct proc *rp);
 extern volatile int cp32_context_handoff_gate;
 extern struct proc *current_proc;
 CP32_IRAM_EXT PRIVATE int copy_message(struct proc *sender, message *src,
@@ -255,6 +257,10 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   owner->p_reg.pc = (reg_t)frame->pc;
   owner->p_reg.psw = (reg_t)frame->psw;
   owner->p_reg.sp = (reg_t)frame->sp;
+  owner->p_reg.sar = (reg_t)frame->sar;
+  owner->p_reg.lbeg = (reg_t)frame->lbeg;
+  owner->p_reg.lend = (reg_t)frame->lend;
+  owner->p_reg.lcount = (reg_t)frame->lcount;
 
   /* Save the post-trap PC before sys_call can snapshot a blocked frame. */
   owner->p_reg.pc = (reg_t)frame->pc;
@@ -307,7 +313,10 @@ CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   unready(owner);
   current_proc = owner;
 #if defined(CP32_ENABLE_BLOCKED_PROBE) || defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-  next = proc_addr(2);
+  /* Probe the blocked return path with the runnable FS/TTY client.  The
+   * previous fixed proc_addr(2) target selected MM and starved keyboard
+   * service, which made the probe observe the wrong subsystem. */
+  next = proc_addr(FS_PROC_NR);
 #else
   sched();
   next = proc_ptr;
@@ -344,6 +353,10 @@ CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
   frame->pc = (uint32_t)next->p_reg.pc;
   frame->psw = (uint32_t)next->p_reg.psw;
   frame->sp = (uint32_t)next->p_reg.sp;
+  frame->sar = (uint32_t)next->p_reg.sar;
+  frame->lbeg = (uint32_t)next->p_reg.lbeg;
+  frame->lend = (uint32_t)next->p_reg.lend;
+  frame->lcount = (uint32_t)next->p_reg.lcount;
   if (cp32_user_probe_mode && CP32_VERBOSE_HANDOFF_DIAGNOSTICS) {
     int frame_copy_ok = frame->pc == (uint32_t)next->p_reg.pc &&
         frame->psw == (uint32_t)next->p_reg.psw &&
@@ -525,6 +538,7 @@ CP32_IRAM_EXT PUBLIC int cp32_user_blocked_handoff(struct proc *owner,
 
 CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int result)
 {
+  static unsigned blocked_resume_reported;
   if (rp == NIL_PROC) return;
   if (rp->p_blocked_frame_valid &&
       (rp->p_blocked_frame_pc != rp->p_reg.pc ||
@@ -544,8 +558,17 @@ CP32_IRAM_EXT PRIVATE void cp32_complete_blocked_frame(struct proc *rp, int resu
   rp->p_flags &= ~(SENDING | RECEIVING);
   cp32_blocked_frame_wake_count++;
   cp32_blocked_resume_count++;
+  if (!blocked_resume_reported) {
+    blocked_resume_reported = 1;
+    usbj_print("[IPC blocked-resume=1 owner=");
+    usbj_print_u32((uint32_t)rp->p_nr);
+    usbj_print(" result=");
+    usbj_print_u32((uint32_t)result);
+    usbj_print("]\r\n");
+  }
   rp->p_blocked_frame_result = result;
   rp->p_blocked_frame_valid = FALSE;
+  rp->p_blocked_frame_pc = rp->p_blocked_frame_psw = rp->p_blocked_frame_sp = 0;
   if (cp32_blocked_return_proc == rp)
     cp32_blocked_return_proc = NIL_PROC;
   if (rp->p_flags == 0) ready(rp);
@@ -664,6 +687,289 @@ CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
   return FALSE;
 }
 
+CP32_IRAM_EXT PUBLIC int cp32_ready_queue_check(void)
+{
+  int q;
+  for (q = 0; q < NQ; q++) {
+    struct proc *rp = rdy_head[q], *last = NIL_PROC;
+    int hops = 0;
+    while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+      if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+          (rp->p_flags & (P_SLOT_FREE | SENDING | RECEIVING))) return FALSE;
+      if (rp->p_nr < -NR_TASKS || rp->p_nr >= NR_PROCS ||
+          pproc_addr[rp->p_nr + NR_TASKS] != rp) return FALSE;
+      last = rp;
+      rp = rp->p_nextready;
+    }
+    if (rp != NIL_PROC || last != rdy_tail[q]) return FALSE;
+    if (rdy_head[q] == NIL_PROC && rdy_tail[q] != NIL_PROC) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_held_queue_check(void)
+{
+  struct proc *rp = held_head, *last = NIL_PROC;
+  int hops = 0;
+  while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+    if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+        (rp->p_flags & P_SLOT_FREE) || !rp->p_int_held ||
+        proc_is_ready_queued(rp) || rp->p_nr < -NR_TASKS ||
+        rp->p_nr >= NR_PROCS ||
+        pproc_addr[rp->p_nr + NR_TASKS] != rp) return FALSE;
+    last = rp;
+    rp = rp->p_nextheld;
+  }
+  if (rp != NIL_PROC || last != held_tail) return FALSE;
+  if (held_head == NIL_PROC && held_tail != NIL_PROC) return FALSE;
+  if (held_tail != NIL_PROC && held_tail->p_nextheld != NIL_PROC) return FALSE;
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_process_table_check(void)
+{
+  int i, j;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    if (pproc_addr[i] == NIL_PROC ||
+        pproc_addr[i] < BEG_PROC_ADDR || pproc_addr[i] >= END_PROC_ADDR ||
+        pproc_addr[i]->p_nr != i - NR_TASKS ||
+        pproc_addr[pproc_addr[i]->p_nr + NR_TASKS] != pproc_addr[i])
+      return FALSE;
+    for (j = 0; j < i; j++)
+      if (pproc_addr[j] == pproc_addr[i]) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_task_table_check(void)
+{
+  int n;
+  for (n = -NR_TASKS; n < 0; n++) {
+    struct proc *rp = proc_addr(n);
+    if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE) ||
+        rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+        (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp ||
+        rp->p_map[T].mem_len == 0 || rp->p_map[D].mem_len == 0 ||
+        rp->p_map[S].mem_len == 0) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_system_task_check(void)
+{
+  struct proc *rp = proc_addr(SYSTASK);
+  extern void sys_task(void);
+  if (rp == NIL_PROC || (rp->p_flags & P_SLOT_FREE) ||
+      rp->p_reg.pc != (reg_t)sys_task || rp->p_reg.sp == 0 ||
+      (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp)
+    return FALSE;
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_ipc_link_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    struct proc *links[2];
+    int j;
+    links[0] = rp->p_callerq;
+    links[1] = rp->p_sendlink;
+    for (j = 0; j < 2; j++) {
+      if (links[j] != NIL_PROC &&
+          (links[j] < BEG_PROC_ADDR || links[j] >= END_PROC_ADDR ||
+           links[j]->p_nr < -NR_TASKS || links[j]->p_nr >= NR_PROCS ||
+           pproc_addr[links[j]->p_nr + NR_TASKS] != links[j] ||
+           (links[j]->p_flags & P_SLOT_FREE)))
+        return FALSE;
+    }
+    if (rp->p_nextheld != NIL_PROC &&
+        (rp->p_nextheld < BEG_PROC_ADDR || rp->p_nextheld >= END_PROC_ADDR ||
+         (rp->p_nextheld->p_flags & P_SLOT_FREE))) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_ipc_queue_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *owner = pproc_addr[i];
+    struct proc *rp = owner->p_callerq;
+    int hops = 0;
+    while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
+      if (!(rp->p_flags & SENDING) || rp->p_sendto != owner->p_nr ||
+          rp->p_messbuf == (message *)0) return FALSE;
+      rp = rp->p_sendlink;
+    }
+    if (rp != NIL_PROC) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_ipc_state_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (rp->p_flags & P_SLOT_FREE) {
+      if (rp->p_callerq != NIL_PROC || rp->p_sendlink != NIL_PROC)
+        return FALSE;
+      if (rp->p_messbuf != (message *)0) return FALSE;
+      if (rp->p_getfrom != 0 || rp->p_sendto != 0) return FALSE;
+      continue;
+    }
+    if (rp->p_callerq == rp || rp->p_sendlink == rp) return FALSE;
+    if ((rp->p_flags & SENDING) && !isokprocn(rp->p_sendto)) return FALSE;
+    if ((rp->p_flags & (SENDING | RECEIVING)) &&
+        rp->p_messbuf == (message *)0) return FALSE;
+    if ((rp->p_flags & (SENDING | RECEIVING)) == (SENDING | RECEIVING) &&
+        rp->p_sendto == rp->p_nr) return FALSE;
+    if ((rp->p_flags & RECEIVING) && !isoksrc_dest(rp->p_getfrom))
+      return FALSE;
+    if ((rp->p_flags & SENDING) && rp->p_sendlink == rp) return FALSE;
+    if ((rp->p_flags & RECEIVING) && rp->p_callerq == rp) return FALSE;
+    if (rp->p_blocked_frame_valid &&
+        (rp->p_blocked_frame_pc == 0 || rp->p_blocked_frame_sp == 0))
+      return FALSE;
+    if (!rp->p_blocked_frame_valid &&
+        (rp->p_blocked_frame_pc != 0 || rp->p_blocked_frame_sp != 0))
+      return FALSE;
+    if (!(rp->p_flags & SENDING) && rp->p_sendlink != NIL_PROC) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_scheduler_owner_check(void)
+{
+  struct proc *owners[3];
+  int i;
+  owners[0] = proc_ptr;
+  owners[1] = current_proc;
+  owners[2] = bill_ptr;
+  for (i = 0; i < 3; i++) {
+    if (owners[i] == NIL_PROC || owners[i] < BEG_PROC_ADDR ||
+        owners[i] >= END_PROC_ADDR)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+/* The assembly IRQ epilogue must restore the frame selected by C, not merely
+ * the frame that was interrupted.  Keep this check small enough for the
+ * timer path: ownership, runnable state, and the call0 frame invariants are
+ * the properties that make the handoff safe. */
+CP32_IRAM_EXT PUBLIC int cp32_irq_return_frame_check(void)
+{
+  struct proc *rp = (struct proc *)cp32_irq_return_proc;
+
+  if (rp == NIL_PROC || rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+      rp->p_flags != 0 || rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+      (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp ||
+      rp->p_reg.a[15] == 0)
+    return FALSE;
+  if (current_proc != rp || proc_ptr != rp)
+    return FALSE;
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_saved_context_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (rp->p_flags != P_SLOT_FREE &&
+        (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
+         (rp->p_reg.pc & 0x03) != 0 || (rp->p_reg.sp & 0x0F) != 0 ||
+         rp->p_reg.a[1] != rp->p_reg.sp || rp->p_reg.a[15] == 0 ||
+         rp->p_reg.psw == 0 || rp->p_nr != i - NR_TASKS ||
+         pproc_addr[rp->p_nr + NR_TASKS] != rp ||
+         (rp->p_blocked_frame_valid &&
+          (rp->p_blocked_frame_pc != rp->p_reg.pc ||
+           rp->p_blocked_frame_sp != rp->p_reg.sp)))) return FALSE;
+    if (rp->p_flags == P_SLOT_FREE &&
+        (rp->p_reg.pc != 0 || rp->p_reg.sp != 0 || rp->p_blocked_frame_valid))
+      return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_process_flags_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    if ((pproc_addr[i]->p_flags & ~0177) != 0 ||
+        ((pproc_addr[i]->p_flags & P_SLOT_FREE) &&
+         (pproc_addr[i]->p_flags & (SENDING | RECEIVING)))) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_map_state_check(void)
+{
+  int i, s;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (rp->p_flags == P_SLOT_FREE) continue;
+    for (s = T; s <= S; s++) {
+      /* Idle and the diagnostic user descriptor intentionally have no text
+       * map; all active descriptors must still have a valid stack map. */
+      if (s == T && rp->p_nr != FS_PROC_NR && rp->p_nr >= 0) continue;
+      if (s == T && rp->p_nr == FS_PROC_NR) continue;
+      if (s == D && rp->p_nr >= 0 && rp->p_nr != FS_PROC_NR) continue;
+      if (rp->p_map[s].mem_len == 0 ||
+          rp->p_map[s].mem_len > 0x1000 ||
+          (rp->p_map[s].mem_vir & (CLICK_SIZE - 1)) != 0)
+        return FALSE;
+    }
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_runtime_owner_check(void)
+{
+  struct proc *owners[3] = { proc_ptr, current_proc, bill_ptr };
+  int i;
+  for (i = 0; i < 3; i++) {
+    struct proc *rp = owners[i];
+    if (rp == NIL_PROC || rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+        rp->p_nr < -NR_TASKS || rp->p_nr >= NR_PROCS ||
+        pproc_addr[rp->p_nr + NR_TASKS] != rp ||
+        (rp->p_flags & P_SLOT_FREE) != 0)
+      return FALSE;
+    if (rp == proc_ptr && current_proc != rp && !switching) return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_blocked_frame_check(void)
+{
+  int i;
+  for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
+    struct proc *rp = pproc_addr[i];
+    if (!rp->p_blocked_frame_valid) continue;
+    if (!(rp->p_flags & (SENDING | RECEIVING)) ||
+        rp->p_blocked_frame_pc != rp->p_reg.pc ||
+        rp->p_blocked_frame_psw != rp->p_reg.psw ||
+        rp->p_blocked_frame_sp != rp->p_reg.sp ||
+        rp->p_blocked_frame_pc == 0 || rp->p_blocked_frame_sp == 0 ||
+        (rp->p_blocked_frame_sp & 0x0F) != 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+CP32_IRAM_EXT PUBLIC int cp32_blocked_owner_check(void)
+{
+  struct proc *rp = (struct proc *)cp32_blocked_return_proc;
+  if (rp == NIL_PROC) return TRUE;
+  if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
+      (rp->p_flags & (SENDING | RECEIVING)) == 0 ||
+      !rp->p_blocked_frame_valid)
+    return FALSE;
+  return TRUE;
+}
+
 /* Process table storage for the CP32 port. */
 struct proc proc[NR_TASKS + NR_PROCS];
 struct proc *pproc_addr[NR_TASKS + NR_PROCS];
@@ -723,9 +1029,9 @@ CP32_IRAM_EXT PUBLIC void interrupt(int task)
   }
   cp32_irq_notify_delivered++;
   rp->p_int_blocked = FALSE;
-  rp->p_flags &= ~RECEIVING;
-  if (cp32_blocked_return_proc == rp) cp32_blocked_return_proc = NIL_PROC;
-  if (rp->p_flags == 0) ready(rp);
+  /* HARD_INT completes the same saved RECEIVE as a normal message.
+   * Clear its snapshot and result slot before publishing runnable state. */
+  cp32_complete_blocked_frame(rp, OK);
   /* IRQ return selects a frame after this notification; do not change the
    * owner of the interrupted frame here. */
 }
@@ -786,20 +1092,53 @@ report:
       cp32_blocked_return_proc = rp;
       current_proc = rp;
     }
-    /* Deliberately disabled until the syscall return frame is proven safe. */
-    if (blocked_handoff_eligible(rp)
-#if !defined(CP32_ENABLE_BLOCKED_PROBE) && !defined(CP32_ENABLE_BLOCKED_SEND_PROBE)
-        )
-      sched();
-#else
-        ) { }
-#endif
+    /* The exception dispatcher selects the return frame after IPC finishes. */
   } else if (cp32_blocked_return_proc == rp) {
     cp32_blocked_return_proc = NIL_PROC;
   }
   return result;
 }
  
+/* Removable first-use/per-5000 IPC return diagnostics, one counter per op. */
+CP32_IRAM_EXT PRIVATE void cp32_trace_task_ipc(struct proc *owner, int operation)
+{
+  static unsigned counts[4];
+  unsigned n;
+  if (operation < SEND || operation > BOTH) return;
+  n = ++counts[operation];
+  if (n != 1 && n % 5000 != 0) return;
+  usbj_print("[IPC V44 op="); usbj_print_u32((uint32_t)operation);
+  usbj_print(" n="); usbj_print_u32(n);
+  usbj_print(" owner="); usbj_print_u32((uint32_t)owner->p_nr);
+  usbj_print(" blocked="); usbj_print_u32((uint32_t)!!(owner->p_flags & (SENDING | RECEIVING)));
+  usbj_print(" next="); usbj_print_u32((uint32_t)proc_ptr->p_nr);
+  usbj_print(" frame="); usbj_print_u32((uint32_t)cp32_irq_return_frame_check());
+  usbj_print("]\r\n");
+}
+
+/* Production SYSCALL entry: EXCM excludes level-1 IRQs until assembly RFE.
+ * MINIX mpx saves the caller before sys_call and restarts the selected process.
+ * Here the complete call0 frame supplies that same suspension contract. */
+CP32_IRAM_EXT PUBLIC int cp32_task_ipc_dispatch(struct proc *owner,
+                                               cp32_user_frame_t *frame,
+                                               unsigned cause)
+{
+  int result;
+  if (cause != 1 || owner == NIL_PROC || owner != proc_ptr ||
+      owner != current_proc || owner->p_flags != 0 || k_reenter != 0 ||
+      !cp32_user_frame_contract_valid(frame)) return EINVAL;
+  memcpy(&owner->p_reg, frame, sizeof(*frame));
+  owner->p_reg.pc += 3; /* SYSCALL is a three-byte instruction. */
+  result = sys_call((int)frame->a[2], (int)frame->a[3],
+                    (message *)frame->a[4]);
+  owner->p_reg.a[2] = (reg_t)result;
+  if (owner->p_flags & (SENDING | RECEIVING)) sched();
+  else proc_ptr = current_proc = owner;
+  cp32_irq_return_proc = proc_ptr;
+  cp32_trace_task_ipc(owner, (int)frame->a[2]);
+  return cp32_irq_return_frame_check() ? OK : EINVAL;
+}
+
 /*===========================================================================*
  *				mini_send				     * 
  *===========================================================================*/
@@ -873,9 +1212,14 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
       while (next_ptr->p_sendlink != NIL_PROC &&
              hops++ < NR_TASKS + NR_PROCS) {
         if (next_ptr->p_sendlink == caller_ptr) return ELOCKED;
+        if (!(next_ptr->p_flags & SENDING) ||
+            next_ptr->p_sendto != dest ||
+            next_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
         next_ptr = next_ptr->p_sendlink;
         if (next_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
       }
+      if (!(next_ptr->p_flags & SENDING) || next_ptr->p_sendto != dest ||
+          next_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
       if (next_ptr->p_sendlink != NIL_PROC) return ELOCKED;
     }
     caller_ptr->p_messbuf = m_ptr;
@@ -913,7 +1257,12 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
   /* A blocked receiver owns its receive buffer and source selector until a
    * matching sender or hardware notification completes the call.  Do not
    * overwrite that state with a second RECEIVE request. */
-  if (caller_ptr->p_flags & RECEIVING) return ELOCKED;
+  if (caller_ptr->p_flags & RECEIVING) {
+    /* A blocked receiver owns this state until completion; reject retries and
+     * refuse to preserve a corrupted null receive buffer. */
+    if (caller_ptr->p_messbuf == (message *)0) return EFAULT;
+    return ELOCKED;
+  }
 
   if (!(caller_ptr->p_flags & SENDING)) {
     hops = 0;
@@ -921,6 +1270,9 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
       if (hops++ >= NR_TASKS + NR_PROCS) return ELOCKED;
       if (sender_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+      if (!(sender_ptr->p_flags & SENDING) ||
+          sender_ptr->p_sendto != caller_ptr->p_nr ||
+          sender_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
       if (src == ANY || src == sender_ptr->p_nr) {
         
         if (copy_message(sender_ptr, sender_ptr->p_messbuf,
@@ -933,7 +1285,11 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
           previous_ptr->p_sendlink = sender_ptr->p_sendlink;
 
         sender_ptr->p_sendlink = NIL_PROC;
-        cp32_complete_blocked_frame(sender_ptr, OK);
+        /* MINIX sendrec: accepting the request completes only SEND.
+         * RECEIVE and its saved continuation remain pending until the reply. */
+        sender_ptr->p_flags &= ~SENDING;
+        if (!(sender_ptr->p_flags & RECEIVING))
+          cp32_complete_blocked_frame(sender_ptr, OK);
         return OK;
       }
     }
@@ -976,6 +1332,9 @@ PRIVATE void pick_proc()
       rp->p_nextready = NIL_PROC;
       cp32_ready_blocked_skip_count++;
     }
+    /* MINIX selects the queue head. A fixed rotation to prefer a sleeping
+     * TTY repeatedly selects the same tail when five tasks are runnable,
+     * starving CLOCK after HARD_INT wakes it. Preserve FIFO within a class. */
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
       if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
@@ -988,6 +1347,9 @@ PRIVATE void pick_proc()
         rdy_tail[q] = NIL_PROC;
       }
       rp->p_nextready = NIL_PROC;
+      /* Advance the starting class so a busy task class cannot starve
+       * servers/users whose frames are now initialized and runnable. */
+      next_queue = (q + 1) % NQ;
       break;
     }
     rp = NIL_PROC;
@@ -996,6 +1358,7 @@ PRIVATE void pick_proc()
     if (rp == NIL_PROC) {
       /* No ready task/server/user: run the MINIX idle process and bill it. */
       proc_ptr = proc_addr(IDLE);
+      current_proc = proc_ptr;
       bill_ptr = proc_ptr;
       return;
     }
@@ -1097,14 +1460,9 @@ CP32_IRAM_EXT PRIVATE void switch_to(struct proc *next)
 {
     if (next != NIL_PROC) {
       current_proc = next;
-      /* switch_to() is the first point where a non-IRQ scheduler selection is
-       * authoritative. Transfer directly while FS is still runnable; waiting
-       * for the idle loop lets the clock task block it again. */
-      if (cp32_context_restore_gate && k_reenter == 0 &&
-          next->p_nr == FS_PROC_NR && next->p_flags == 0 &&
-          next->p_reg.pc != 0 && next->p_reg.sp != 0) {
-        cp32_enter_initial_user(next);
-      }
+      /* Publish selection only. An ordinary C call has not captured its
+       * outgoing context and cannot jump into a suspended FS call chain.
+       * The IRQ/syscall epilogue owns the actual register/stack restore. */
     }
 }
 
