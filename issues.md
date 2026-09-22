@@ -692,3 +692,88 @@ transitions, release order and Fn independence. ELF sections/segments checked:
 `_iram_end=0x403743b0`, `_iram_ext_end=0x40382414`, `_stack_top=0x3fcd1fd0`.
 Markers: `[FEATURE KBD-SHIFT 54]1`, `[TEST KBD-SHIFT 54]`. Hardware validation
 pending; no flashing performed. References and procedure: docs/keyboard-shift.md.
+## Image 55 — uppercase A duplicated C
+
+The active glyph_scaled uppercase table used identical rows for A and C.
+This confirms the reported LCD defect independently of keyboard input.
+Image 55 gives A an apex, stems and crossbar and adds case: Aa Cc to font.
+Pixel tests assert independent bitmaps for all four characters while retaining
+cell geometry, lowercase forms, cursor and scrolling behavior.
+
+All 23 host scripts and warning-free clean build pass. ELF size/segments/
+sections checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x40382420`,
+`_stack_top=0x3fcd1fe0`. Markers: `[FEATURE LCD-A 55]1`, `[TEST LCD-A 55]`.
+Hardware pending; no flash performed. Check font and README in ls on LCD.
+
+The supplied image-54 log is preserved in docs/hardware/kbd-shift-v54.log;
+it contains interleaved build text. Visible serial results include cat boot
+and cat dot directory errors, disk success, MM/SYS, IRQ 5000 with unknown=0,
+and heartbeat 6288. This is not explicit validation of repeated Aa/Fn cycles.
+## Image 56 — subdirectory paths after LCD acceptance
+
+The user explicitly accepts image 55's LCD and reports all known issues fixed.
+docs/hardware/lcd-a-v55.log preserves the supplied capture: README reads,
+disk/MM/SYS/IPC/TTY success, IRQ 5000 unknown=0 and heartbeat 5165. This closes
+the reported visual/modifier issues within the user's acceptance, without
+claiming exhaustive terminal-mode or lost-key-event validation.
+
+Image 56 adds validated directory-inode opening and iterative pathname
+traversal for cat and ls. Relative paths start at root; dot/dot-dot, repeated
+slashes and directory-only trailing slashes are supported. Every intermediate
+inode must be a directory; names are limited to 14 bytes and paths to 255
+(the shell line remains 63 bytes). Invalid paths never publish a partial handle.
+The demo adds boot/README as a hard link to the existing README inode, updating
+its link count. Scratch space and storage size are unchanged.
+
+All 23 host scripts and warning-free clean build pass. Tests cover both byte
+orders, bounds, missing/non-directory components, corrupt intermediate metadata,
+every short/error read, fixture links and unchanged disk checksums through
+nested cat/list/disk integration. ELF checked: `_iram_end=0x403743b0`,
+`_iram_ext_end=0x40382690`, `_stack_top=0x3fcd2270`. Runtime helpers use extended
+IRAM. Markers: `[FEATURE MINIX-PATH 56]1`, `[TEST MINIX-PATH 56]`.
+Hardware pending; no flash performed. Procedure: docs/minix-paths.md.
+Indirect zones, symlinks, permissions, cwd and FS descriptors remain unimplemented.
+## Image 57 — MINIX reference source layout
+
+Image-56 capture confirms ls boot and nested/root README reads through tick
+2872; excerpts are in docs/hardware/minix-path-v56.log. At the user's request
+for following the MINIX 2 book, portable FS code is moved from combined kernel
+helpers into src/fs/super.c, inode.c, path.c, open.c, read.c and utility.c,
+with reference-matching header names. The former combined sources/headers are
+removed. docs/minix-source-layout.md maps CP32 entry points to MINIX functions.
+
+This is a source-organization change, not a complete MINIX FS server. Existing
+helper APIs, on-disk ABI, bounded read-only behavior, fixture and command syntax
+are preserved. The inode decode portion of file-open is now in inode.c; open.c
+orchestrates lookup/open. Byte conversion is shared in utility.c. Kernel RAM
+devices, fixture loader and temporary shell stay in their appropriate existing
+locations. Tests now live in tests/fs; MEM integration remains in tests/kernel.
+
+All 23 host scripts and warning-free clean build pass. The Makefile puts FS
+objects in build/fs and tracks FS headers. ELF size/sections/segments checked:
+`_iram_end=0x403743b0`, `_iram_ext_end=0x4038266c`, `_stack_top=0x3fcd2240`.
+FS routines remain in extended IRAM. Markers: `[FEATURE FS-LAYOUT 57]1`,
+`[TEST FS-LAYOUT 57]`. Hardware pending; no flash performed. Recheck nested
+listing/cat and disk because addresses changed despite preserved behavior.
+## Image 58 — reference-aligned memory manager
+
+The image-57 capture confirms root and boot listing plus the expected error 8
+for ls /boot/README (a regular file), with heartbeat 3087. Evidence:
+docs/hardware/fs-layout-v57.log. It contains no MM request or IRQ-5000 result.
+
+At the user's request, MM now follows MINIX directory/file names: src/mm/main.c
+holds the service loop/dispatch, alloc.c holds allocation/free/coalescing and
+ownership, with mm.h/proto.h. The old kernel/mm.c is removed. numap/mem_copy
+move into kernel/system.c to match MINIX's address-translation boundary;
+kernel/memory.c remains the separate RAM-device driver. Semantics and ABI are
+preserved; CP32 is still kernel-linked and does not yet implement full MM
+fork/exec/signals. See docs/minix-source-layout.md for the book mapping.
+
+The Makefile builds build/mm objects separately and tracks MM headers. Tests
+move to tests/mm/test_main.py, retaining allocation/ownership/coalescing,
+200 receive/reply cycles and mapping checks against kernel/system.c. All 23
+host scripts and warning-free clean build pass. ELF size/sections/segments
+checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x4038267c`,
+`_stack_top=0x3fcd2250`. MM and mapping/copy routines remain in extended IRAM.
+Markers: `[FEATURE MM-LAYOUT 58]1`, `[TEST MM-LAYOUT 58]`. Hardware pending;
+no flashing performed. Validate repeated mm and nested cat/list/disk/services.

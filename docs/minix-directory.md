@@ -1,5 +1,9 @@
 # MINIX V2 demo and root directory — image 51
 
+Source layout update (image 57): portable code now resides in src/fs/ using
+MINIX reference filenames. See minix-source-layout.md; older names below are
+the original image-51 locations. CP32's boot fixture loader stays in kernel.
+
 The boot RAM disk now contains a deterministic MINIX V2 filesystem. It is
 volatile and recreated before service tasks start on every boot. No hardware
 storage or flash filesystem is modified. `tools/make_minix_demo.py` creates
@@ -35,6 +39,7 @@ directories return an error instead of silently truncating the listing. These
 checks are not a filesystem consistency checker; target inode contents and
 parent/dot relationships are not fully verified by the listing operation.
 Image 53 subsequently adds root-name regular-file reads; see minix-file-read.md.
+Image 56 adds subdirectory paths and a boot/README hard link; see minix-paths.md.
 
 ## Hardware check
 

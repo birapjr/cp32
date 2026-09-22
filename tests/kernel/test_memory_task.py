@@ -13,7 +13,7 @@ from test_idle_handoff import extract_function
 bodies = [extract_function(ROOT / 'src/kernel/memory.c', name)
           for name in ('cp32_mem_request', 'mem_task')]
 bodies += [extract_function(ROOT / 'src/kernel/cp32-shell.c', name)
-           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_cat')]
+           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_cat', 'cp32_shell_ls')]
 prelude = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -22,8 +22,7 @@ prelude = r'''
 #include <setjmp.h>
 #include <limits.h>
 #include "ramdisk.h"
-#include "minix-super.h"
-#include "minix-dir.h"
+#include "fs.h"
 #define PRIVATE static
 #define PUBLIC
 #define NO_NUM 0
@@ -207,6 +206,10 @@ int main(void) {
   for(int cycle=0;cycle<10;cycle++) {
     console[0]=0; cp32_shell_cat("README");
     assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
+    console[0]=0; cp32_shell_cat("/boot/README");
+    assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
+    console[0]=0; cp32_shell_ls("boot");
+    assert(!strcmp(console,".\r\n..\r\nREADME\r\n"));
     assert(cp32_minix_root_open(cp32_shell_disk_read,capacity,&dir)==0);
     for(unsigned entry=0;entry<4;entry++) {
       assert(cp32_minix_root_next(&dir,&number,name)==1);
@@ -218,6 +221,7 @@ int main(void) {
   }
   console[0]=0; cp32_shell_cat("missing"); assert(!strcmp(console,"File not found\r\n"));
   console[0]=0; cp32_shell_cat("boot"); assert(!strcmp(console,"Is a directory\r\n"));
+  console[0]=0; cp32_shell_cat("README/.."); assert(!strcmp(console,"Not a directory\r\n"));
   puts("MEM: mapped chunked I/O, EOF/bounds, reply aliases, IPC errors, 100 preserved-sector cycles and restoration failures passed");
 }
 '''
@@ -228,9 +232,9 @@ with tempfile.TemporaryDirectory(prefix='cp32-memory-task-') as folder:
                     '--header', str(p / 'minix-demo.h')], check=True)
     (p / 'test.c').write_text(prelude + '\n'.join(bodies) + tests)
     subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-Werror',
-                    '-I' + str(ROOT / 'src/kernel'), '-I' + str(p), str(p / 'test.c'),
+                    '-I' + str(ROOT / 'src/kernel'), '-I' + str(ROOT / 'src/fs'), '-I' + str(p), str(p / 'test.c'),
                     str(ROOT / 'src/kernel/ramdisk.c'),
-                    str(ROOT / 'src/kernel/minix-super.c'),
-                    str(ROOT / 'src/kernel/minix-dir.c'),
+                    *[str(ROOT / 'src/fs' / name) for name in
+                      ('super.c','utility.c','inode.c','path.c','open.c','read.c')],
                     str(ROOT / 'src/kernel/minix-demo.c'), '-o', str(p / 'test')], check=True)
     subprocess.run([str(p / 'test')], check=True)

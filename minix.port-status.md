@@ -1,4 +1,4 @@
-# MINIX port status — image 54
+# MINIX port status — image 58
 
 ## Summary
 
@@ -18,7 +18,18 @@ MM/SYS/IPC through heartbeat 3530, but not the visual LCD result. Image 53 adds
 root-name lookup and read-only cat. The user's image-53 capture confirms README
 content, missing-file handling and IRQ 5000, but exposes reversed keyboard
 press/release semantics. Image 54 fixes TCA8418 event polarity; host/build
-checks pass and keyboard hardware acceptance is pending.
+checks pass. The image-54 capture continues through IRQ 5000 and confirms
+directory-target errors, but the user reports A rendered as C. Image 55 fixes
+the duplicated glyph; its visual check and explicit Shift-cycle confirmation
+were subsequently accepted by the user with image 55 (LCD good, all known
+issues fixed). Its log confirms README/services/disk and IRQ 5000. Image 56
+adds read-only subdirectory paths; the user's image-56 capture confirms ls boot
+and cat boot/README. Image 57 reorganizes portable FS code into reference-matching
+src/fs files for following the MINIX 2 book. Host/build checks pass; the rebuilt
+image's root/boot listing regression passes in the user's image-57 capture.
+Image 58 similarly aligns MM into src/mm/main.c and alloc.c, while address
+translation moves to kernel/system.c. Host/build checks pass; the MM layout's
+hardware regression is pending. See docs/minix-source-layout.md.
 This report supersedes historical status prose in the chronological plan.
 
 ## Implemented
@@ -44,24 +55,24 @@ These are bounded features, not claims of complete subsystem equivalence.
 | Scheduling: `src/kernel/proc.c:pick_proc/ready/unready`, `irq.S` | `minix-2.0.0/src/kernel/proc.c`: ready queues and message blocking | Xtensa call0 frames replace x86 save/restore. Task execution works; nested interrupts, complete architectural state and process lifecycle need validation. Preserve frame owner, saved SP and runnable-state invariants. |
 | Clock: `src/kernel/clock.c:clock_task/do_clocktick` | `minix-2.0.0/src/kernel/clock.c`: accounting, alarms and tick delivery | SYSTIMER replaces PIT. Supplied logs show clock receipts; full alarm behavior and extended soak coverage remain. |
 | SYS: `src/kernel/system.c:sys_task/do_fork/do_exec` | `minix-2.0.0/src/kernel/system.c`: kernel services for MM/FS | Dispatch and selected calls work. Lifecycle handlers retain assumptions needing Xtensa frame audit; presence of handlers does not prove usable fork/exec. |
-| MM: `src/kernel/mm.c:mm_task/cp32_mm_handle_request` | `minix-2.0.0/src/mm/alloc.c`, `forkexit.c`, `exec.c`, `signal.c`: allocation plus process management | Internal-SRAM allocation and ownership checks exist. No full MM server implementing executable loading, process lifecycle and signal policy. |
+| MM: `src/mm/main.c:mm_task/cp32_mm_handle_request`, `src/mm/alloc.c:cp32_mem_alloc/cp32_mem_free/cp32_mem_owned` | `minix-2.0.0/src/mm/main.c`, `alloc.c`: service loop and physical memory allocation; `forkexit.c`, `exec.c`, `signal.c`: lifecycle | Internal-SRAM allocation and ownership checks exist; image 58 aligns filenames. numap/mem_copy reside in kernel/system.c. No full MM server implementing executable loading, process lifecycle and signal policy. |
 | TTY: `src/kernel/tty.c:tty_task/in_process/in_transfer`, `display.c:cardputer_display_end_batch` | `minix-2.0.0/src/kernel/tty.c`: line discipline, device replies and terminal control | Cardputer keyboard/LCD replace PC console. Canonical path accepted; raw/timed input, cancellation and signal behavior need hardware validation. Deferred newline waits for subsequent visible output. |
 | MEM: `src/kernel/memory.c:mem_task/cp32_mem_request` | `minix-2.0.0/src/kernel/driver.c:driver_task/do_rdwt`, `memory.c:m_schedule`: mapped device requests and short transfers | FS-only READ/WRITE/OPEN/CLOSE for RAM_DEV, full-buffer mapping and byte-count replies. No scattered I/O or raw memory devices. Host tests pass; one disk diagnostic and blank-superblock read pass on image-50 hardware. |
-| Superblock: `src/kernel/minix-super.c:cp32_minix_super_read` | `minix-2.0.0/src/fs/super.c:read_super`, `super.h`, `type.h`: disk geometry and version conversion | Explicit byte decoding avoids compiler layout/alignment assumptions. V2 magic 0x2468 in either byte order; validates capacity, metadata and bitmap sizes before publishing. Read-only recognition only; no mount, inode or allocation-map integrity check. |
-| Root directory and files: `src/kernel/minix-dir.c:cp32_minix_root_open/cp32_minix_root_next/cp32_minix_file_open/cp32_minix_file_read` | `minix-2.0.0/src/fs/inode.c:new_icopy`, `read.c:read_map/rw_chunk`, `path.c:search_dir`: decode inodes, locate data, search names and read bytes | Root listing is hardware-confirmed. Image 53 adds root-name lookup and regular-file reads with EOF and sparse holes, seven direct zones and both byte orders. Indirect zones, non-ASCII names, subdirectory lookup, descriptors and permissions remain unsupported; cat hardware pending. |
+| Superblock: `src/fs/super.c:cp32_minix_super_read` | `minix-2.0.0/src/fs/super.c:read_super`, `super.h`, `type.h`: disk geometry and version conversion | Explicit byte decoding avoids compiler layout/alignment assumptions. V2 magic 0x2468 in either byte order; validates capacity, metadata and bitmap sizes before publishing. Read-only recognition only; no mount or complete consistency check. |
+| Directories and files: `src/fs/inode.c:cp32_fs_open_directory/cp32_fs_file_inode`, `path.c:cp32_fs_resolve_path/cp32_minix_root_next`, `open.c:cp32_minix_file_open/cp32_minix_dir_open`, `read.c:cp32_minix_file_read` | Same filenames under `minix-2.0.0/src/fs/`: inode decoding, path traversal, open orchestration and reads | Image 56 confirms nested listings/reads; image 57 preserves behavior in split translation units. Seven direct zones and both byte orders are supported. Indirect zones, non-ASCII names, cwd, symlinks, descriptors and permissions remain unsupported. |
 | Shell: `src/kernel/cp32-shell.c:cp32_shell_command` | `minix-2.0.0/src/commands`: user programs over FS/MM interfaces | Kernel-linked command loop occupying FS endpoint, not a user shell. `ls` now reads disk entries. A real FS endpoint must replace this temporary arrangement. |
 
 ## Missing
 
-- Filesystem cache, general inode/path lookup, directory mutation, file
-  descriptors, writable file I/O and mount lifecycle. Root listing and bounded
-  regular-file reads are now implemented.
+- Filesystem cache, symlinks/mount-aware path lookup, directory mutation, file
+  descriptors, permissions, cwd, writable I/O and mount lifecycle. Bounded
+  subdirectory traversal and regular-file reads are now implemented.
   References: `minix-2.0.0/src/fs/cache.c:get_block`,
   `inode.c:get_inode`, `path.c:advance`, `open.c:do_open`,
-  `read.c:read_write`, `mount.c:do_mount`. Suggested location: future `src/fs/`.
+  `read.c:read_write`, `mount.c:do_mount`. Extend the corresponding `src/fs/` files.
   Mostly architecture-independent, but all storage must use the device IPC ABI.
 - Complete MM lifecycle and executable loader: reference
-  `minix-2.0.0/src/mm/forkexit.c`, `exec.c`, `signal.c`; future `src/mm/`.
+  `minix-2.0.0/src/mm/forkexit.c`, `exec.c`, `signal.c`; add matching files to `src/mm/`.
   Policy is mostly portable; executable format, relocation, stack setup and
   protection depend on the Xtensa/internal-SRAM design.
 - User binaries, libc syscall entry and init/shell startup. Reference
@@ -77,24 +88,30 @@ requirements: CP32 uses ESP image loading, Xtensa vectors and SYSTIMER instead.
 
 ## Requires Hardware Validation
 
+- `src/mm/main.c` / `alloc.c` and `kernel/system.c:numap/mem_copy`: image 58
+  must regress repeated mm calls and FS/device traffic after the source split.
+  Host tests retain 200 allocator service cycles and address-map checks.
+
 - `memory.c:mem_task` / `cp32-shell.c:cp32_shell_disk_check`: image 50 confirms
   one successful diagnostic with five 512-byte transfers and result=0.
   Repeated cycles and extended operation remain to be captured.
-- `minix-super.c:cp32_minix_super_read` through `cp32_shell_fsinfo`: image 50
+- `src/fs/super.c:cp32_minix_super_read` through `cp32_shell_fsinfo`: image 50
   reads 24 bytes via MEM and reports no filesystem on the blank disk in the
   supplied image-50 capture. Image 51 confirms the generated fixture's
   inodes=32 zones=63 result and root entries ., .., boot, README from real reads.
-- `display.c:glyph_scaled`: image 52 fixes the missing period glyph. Host
-  pixel tests pass; verify ls/font periods, erasure and scrolling on the LCD.
-- `minix-dir.c:cp32_minix_file_open/cp32_minix_file_read` and shell cat:
-  image 53 confirms README text and a missing-file error. Directory errors and
-  repeated reads after disk remain to be captured. Host tests include exact
+- `display.c:glyph_scaled`: the user accepts image 55's LCD and reports the
+  known issues fixed. Keep display regressions while extending filesystem work.
+- `src/fs/open.c:cp32_minix_file_open`, `read.c:cp32_minix_file_read` and shell cat:
+  image 53 confirms README text and missing-file errors; image 54 confirms
+  directory errors. Image 56 confirms nested cat/list. Repeat these after the
+  image-57 layout change, including reads after disk. Host tests include exact
   bytes and preservation on failure.
 - `tty.c:cp32_cardputer_key`: image 54 fixes reversed TCA8418 event polarity.
-  Confirm held Aa, lowercase after release and Fn independence on hardware.
+  The user reports known issues fixed on image 55. Exhaustive rollover and
+  lost-event recovery remain outside that bounded acceptance.
 - `clock.c`, `proc.c` and TTY: retain command/scrolling regressions and capture
-  CLOCK/IRQ progress through 5000 and beyond. Current image-49 capture ends
-  after a bounded run; it does not establish long-duration stability.
+  CLOCK/IRQ progress through 5000 and beyond. Images 53–55 reach IRQ 5000;
+  image 55 has unknown=0 and heartbeat 5165. This is not indefinite soak proof.
 
 ## Suspicious or Incomplete Code
 
@@ -118,18 +135,20 @@ requirements: CP32 uses ESP image loading, Xtensa vectors and SYSTIMER instead.
 
 1. Basic MEM and blank-disk probe checks passed on image 50. Retain these and
    the display/service regressions while extending disk-cycle and soak coverage.
-2. Validate image 54's keyboard fix, then extend root-name lookup to
-   subdirectory paths and support indirect reads. README reads are confirmed.
+2. Validate the image-57 layout regression, then add indirect reads in
+   src/fs/read.c and inode support in src/fs/inode.c. Follow reference filenames
+   for later features, as requested for studying alongside the book.
 3. Separate the real FS server from the current diagnostic command loop, then
    implement file descriptors and read operations before writable allocation.
 4. Audit SYS fork/exec frame semantics before attempting full MM/user startup.
 5. Expand terminal-mode and long-duration context tests; defer legacy-device
    compatibility that does not serve Cardputer hardware.
 
-Validation: clean Xtensa build and all 23 host test scripts pass for image 54.
-ELF symbols: `_iram_end=0x403743b0`, `_iram_ext_end=0x40382414`,
-`_stack_top=0x3fcd1fd0`; filesystem runtime code is in extended IRAM. Generated
+Validation: clean Xtensa build and all 23 host test scripts pass for image 58.
+ELF symbols: `_iram_end=0x403743b0`, `_iram_ext_end=0x4038267c`,
+`_stack_top=0x3fcd2250`; MM/FS and mapping code is in extended IRAM. Generated
 initialized prefix: 8253 bytes of rodata. Real backend/MEM adapter tests cover
-ten cat/directory/disk cycles with unchanged full-disk checksums.
+ten nested-cat/directory/disk cycles with unchanged full-disk checksums.
 No flashing was performed by the agent. Hardware evidence currently stops at
-the user's image-53 capture; image 54's keyboard correction remains hardware-unverified.
+the user's image-57 capture, with prior LCD/known-issues acceptance.
+Image 58's rebuilt MM layout remains hardware-unverified.

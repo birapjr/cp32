@@ -1,5 +1,8 @@
 # Read-only MINIX superblock recognition
 
+Source layout update (image 57): minix-super.c/h became src/fs/super.c/h;
+endian helpers are in src/fs/utility.c. See minix-source-layout.md.
+
 Image 50 adds `fsinfo`, reading 24 bytes at byte offset 1024 through the same
 MEM DEV_READ request path as disk I/O. It never writes or formats the disk.
 The blank boot RAM disk should print `No MINIX filesystem`; its normal MEM

@@ -1,5 +1,11 @@
 # Root file reads — image 53
 
+Source layout update (image 57): code now resides in src/fs/{inode,path,open,read}.c;
+see minix-source-layout.md. Names below describe the original image-53 locations.
+
+Historical image-53 milestone: image 56 extends these calls to subdirectory
+paths and adds ls path. See minix-paths.md for current pathname behavior.
+
 `cat README` now resolves the directory entry and reads the file's actual
 contents through MEM IPC. `cat /README` is equivalent. Expected output:
 

@@ -2,8 +2,7 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include "ramdisk.h"
-#include "minix-super.h"
-#include "minix-dir.h"
+#include "../fs/fs.h"
 #include "tty.h"
 #include <string.h>
 #include <minix/com.h>
@@ -97,13 +96,13 @@ CP32_IRAM_EXT static void cp32_shell_fsinfo(void)
   }
 }
 
-CP32_IRAM_EXT static void cp32_shell_ls(void)
+CP32_IRAM_EXT static void cp32_shell_ls(const char *path)
 {
   struct cp32_minix_dir dir;
   unsigned inode;
   char name[15];
-  int result = cp32_minix_root_open(cp32_shell_disk_read,
-                                   cp32_ramdisk_capacity(), &dir);
+  int result = cp32_minix_dir_open(cp32_shell_disk_read,
+                                  cp32_ramdisk_capacity(), path, &dir);
   if (result == 0) {
     while ((result = cp32_minix_root_next(&dir, &inode, name)) > 0) {
       cp32_shell_print(name);
@@ -169,7 +168,8 @@ CP32_IRAM_EXT static void cp32_shell_cat(const char *name)
   if (result < 0) {
     if (result == -CP32_FILE_NOT_FOUND) cp32_shell_print("File not found\r\n");
     else if (result == -CP32_FILE_IS_DIR) cp32_shell_print("Is a directory\r\n");
-    else if (result == -CP32_FILE_NAME) cp32_shell_print("Use a root filename\r\n");
+    else if (result == -CP32_FILE_NAME) cp32_shell_print("Invalid path\r\n");
+    else if (result == -CP32_FILE_NOT_DIR) cp32_shell_print("Not a directory\r\n");
     else {
       cp32_shell_print("File read failed: ");
       cp32_shell_print_u32((unsigned)-result);
@@ -279,8 +279,11 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     cp32_shell_print("slash:  /\r\n");
     cp32_shell_print("equals: =\r\n");
     cp32_shell_print("dots: . ..\r\n");
+    cp32_shell_print("case: Aa Cc\r\n");
   } else if (strcmp(line, "ls") == 0) {
-    cp32_shell_ls();
+    cp32_shell_ls("/");
+  } else if (line[0] == 'l' && line[1] == 's' && line[2] == ' ') {
+    cp32_shell_ls(line + 3);
   } else if (line[0] == 'c' && line[1] == 'a' && line[2] == 't' && line[3] == ' ') {
     cp32_shell_cat(line + 4);
   } else if (strcmp(line, "cat") == 0) {

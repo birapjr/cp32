@@ -139,6 +139,21 @@ int main(void) {
   for(unsigned i=0;i<240*135;i++) assert(!pixels[i]);
   /* Hyphen is one horizontal stroke, with no fallback-pattern pixels. */
   /* Period is one 2x2 baseline dot, including in real directory output. */
+  reset(); cardputer_display_write("AaCc");
+  {
+    const char *rows[4][5]={
+      {"01110","10001","11111","10001","10001"},
+      {"00000","01110","00001","01111","01111"},
+      {"01110","10001","10000","10001","01110"},
+      {"00000","01110","10000","10000","01110"}
+    };
+    assert(x==60 && y==0 && cells==4);
+    for(unsigned k=0;k<4;k++) for(unsigned py=0;py<10;py++)
+      for(unsigned px=0;px<15;px++) {
+        unsigned lit=px>=4 && px<14 && rows[k][py/2][(px-4)/2]=='1';
+        assert(pixels[py*240+k*15+px]==(lit ? 0xFFFF : 0));
+      }
+  }
   reset(); cardputer_display_write(".\n..");
   assert(x==30 && y==11 && cells==3);
   for(unsigned py=0;py<135;py++) for(unsigned px=0;px<240;px++) {

@@ -7,8 +7,9 @@ ESP32-S3 replacements are valid when they preserve that behavior.
 
 ## Current boundary
 
-CP32 is a bare-metal, kernel-focused port. `src/Makefile` builds 22 C sources
-plus four Xtensa assembly units. The tree has no `src/mm/`, `src/fs/`, user
+CP32 is a bare-metal, kernel-focused port. `src/Makefile` builds 27 C sources
+plus four Xtensa assembly units. Portable filesystem code now follows the
+MINIX filenames in `src/fs/` and MM code in `src/mm/`. The tree has no user
 image, libc/syscall ABI, or application tree. Kernel-linked service tasks and
 the diagnostic shell run through IPC. See `minix.port-status.md` for the current
 assessment; the sections below retain the chronological bring-up history.
@@ -242,13 +243,12 @@ Known unresolved issue:
 
 ## Continue here
 
-Image 53 hardware confirms cat README, missing-file handling and IRQ 5000,
-but exposed reversed keyboard press/release semantics. Image 54 corrects
-TCA8418 bit-7 polarity so Aa is held Shift and releasing it restores lowercase.
-All 23 tests and clean build pass. Hardware pending: repeated a/A/a, Fn without
-case changes, shifted punctuation and cat README followed by lowercase ls.
-See docs/keyboard-shift.md. Next filesystem work remains subdirectory paths
-and indirect reads, followed by a real FS server/file descriptors.
+Image 57 hardware confirms root/boot listing and rejection of ls on a regular
+file, with heartbeat 3087. Image 58 aligns MM with the book: src/mm/main.c and
+alloc.c, plus mm.h/proto.h. numap/mem_copy now reside in kernel/system.c,
+matching the reference kernel boundary. All 23 tests and clean build pass.
+Hardware pending: repeat mm, then cat boot/README, ls boot, disk and services.
+See docs/minix-source-layout.md. Next porting work: indirect zones and FS APIs.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -1149,3 +1149,115 @@ All 23 scripts and warning-free clean build pass. ELF sections/segments checked:
 
 Identity: `[FEATURE KBD-SHIFT 54]1`, `[TEST KBD-SHIFT 54]` immediately before
 idle. Hardware pending; no flash performed. Follow docs/keyboard-shift.md.
+
+## Uppercase A glyph — image 55
+
+[x] Record supplied image-54 capture in docs/hardware/kbd-shift-v54.log.
+It includes interleaved compiler output, so do not treat it as an uninterrupted
+serial session. Visible results include disk success, cat boot and cat dot
+directory errors, listings, MM/SYS, IRQ 5000 and heartbeat 6288. The user
+reports uppercase A displayed as C; repeated Shift cycles were not documented.
+
+[x] Correct display.c:glyph_scaled: uppercase A had exactly the C bitmap.
+Use an apex, two stems and crossbar. MINIX console.c relies on adapter glyphs;
+CP32 supplies LCD bitmaps. Preserve the character byte, keyboard behavior,
+opaque cell geometry, cursor and batch scrolling. Add independent raster
+expectations for A/a/C/c and a case sample to the existing font command.
+
+[x] All 23 host scripts and warning-free clean build pass. ELF size/segments/
+sections checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x40382420`,
+`_stack_top=0x3fcd1fe0`. Identity: `[FEATURE LCD-A 55]1`, `[TEST LCD-A 55]`
+immediately before idle. Hardware visual check pending; no flash performed.
+
+## Subdirectory paths — image 56
+
+[x] Record image-55 hardware evidence and explicit user acceptance: LCD good
+and all known issues fixed. Full supplied capture: docs/hardware/lcd-a-v55.log.
+It confirms README, disk/MM/SYS/IPC/TTY, IRQ 5000 unknown=0 and heartbeat 5165.
+This is bounded acceptance, not exhaustive keyboard/terminal-mode testing.
+
+[x] Generalize directory-inode opening and add iterative path resolution.
+Reference: MINIX path.c:last_dir/advance/search_dir. Xtensa retains explicit
+endian disk decoding; every component uses MEM reads and validated directory
+zones. Preserve bounded stack use, no recursion, no writes and unchanged
+output handles on failure. Support repeated slashes and actual dot/dot-dot
+entries; relative paths start at root. Enforce 14-byte components, 255-byte
+paths and directory-only intermediate/trailing-slash targets.
+
+[x] Add ls path and nested cat paths. The demo adds boot/README as a hard link
+to inode 3 and updates its link count, without extra zones or prefix growth.
+The final physical block remains outside filesystem geometry for disk.
+
+[x] All 23 host scripts and warning-free clean build pass. Tests include both
+byte orders, path boundaries/errors, corrupted intermediate directories,
+short/error reads throughout traversal and ten checksum-preserving production
+nested-cat/list/disk cycles through the real backend and modeled MEM IPC.
+ELF size/sections/segments checked: `_iram_end=0x403743b0`,
+`_iram_ext_end=0x40382690`, `_stack_top=0x3fcd2270`. New path helpers use
+extended IRAM. No additional dynamic or static filesystem buffers are added.
+
+Identity: `[FEATURE MINIX-PATH 56]1`, `[TEST MINIX-PATH 56]` immediately
+before idle. Hardware pending; no flash performed. See docs/minix-paths.md.
+Indirect zones, permissions, symlinks, cwd and a true FS server remain future.
+
+## Reference-aligned filesystem layout — image 57
+
+[x] Record image-56 hardware evidence in docs/hardware/minix-path-v56.log:
+root and boot directory listing, nested/root README reads and heartbeat 2872.
+No dot-dot/error-path or IRQ-5000 result appears in this capture.
+
+[x] Match MINIX source responsibilities and filenames in src/fs: super.c
+(geometry/bitmaps), inode.c (decode/validate inode state), path.c (directory
+scan/traversal), open.c (open orchestration), read.c (data/EOF/sparse holes),
+utility.c (disk endian conversion). Add matching fs.h/const.h/type.h/super.h/
+inode.h/file.h/proto.h. Remove old kernel/minix-dir and minix-super files.
+CP32-prefixed functions preserve their subset contract rather than pretending
+to expose full MINIX server/syscall APIs. Device and boot-image glue stay in
+kernel; explicit byte decoding and extended-IRAM placement remain invariants.
+
+[x] Build FS objects under build/fs, with header dependencies. Move FS tests
+to tests/fs and update the kernel MEM integration links. The source-layout
+test verifies matching reference names. Add a book/source map and README guide;
+historical notes retain image-era filenames with a pointer to the new map.
+
+[x] All 23 host scripts and warning-free clean Xtensa build pass. ELF size,
+sections and segments checked: `_iram_end=0x403743b0`,
+`_iram_ext_end=0x4038266c`, `_stack_top=0x3fcd2240`. All FS functions and their
+conversion helpers remain in extended IRAM. Disk fixture and command behavior
+are unchanged; no new static filesystem state or hosted dependency is added.
+
+Identity: `[FEATURE FS-LAYOUT 57]1`, `[TEST FS-LAYOUT 57]` immediately before
+idle. Hardware pending; no flash performed. Regress ls boot, nested/root cat,
+disk and other services after flashing. Future portable FS work should use
+the matching MINIX source file when possible, per the user's book preference.
+
+## Reference-aligned MM layout — image 58
+
+[x] Record image-57 listing regression in docs/hardware/fs-layout-v57.log.
+Root and boot directories list correctly; ls /boot/README yields error 8,
+the expected not-a-directory status. Heartbeat reaches 3087. No MM request
+or IRQ-5000 check was included in that capture.
+
+[x] Split kernel/mm.c into mm/main.c (receive/dispatch/reply, source validation
+and removable trace) and mm/alloc.c (allocation/free/ownership/coalescing and
+private block table). Add mm/mm.h and mm/proto.h matching reference filenames.
+Preserve CP32 helper names, protocol, static allocator state and extended IRAM.
+The reference MM uses an independent process and hole list; CP32 remains a
+kernel-linked bounded allocator/service, without fork/exec/signal machinery.
+
+[x] Move numap and mem_copy unchanged into kernel/system.c, where MINIX places
+process-address translation. Preserve mapped range/overflow checks and the
+Xtensa flat-SRAM task-stack exception. MEM RAM-device code stays in kernel/
+memory.c; early heap geometry also stays in the kernel. Remove kernel/mm.c.
+
+[x] Build MM objects under build/mm to avoid main.o collisions. Move the MM
+service/allocator test to tests/mm/test_main.py and point mapping checks at
+kernel/system.c. Extend reference-layout tests and the book/source guide.
+All 23 host scripts, warning-free clean build, whitespace and ELF checks pass:
+`_iram_end=0x403743b0`, `_iram_ext_end=0x4038267c`, `_stack_top=0x3fcd2250`.
+MM, numap and mem_copy remain in extended IRAM. No allocator/protocol or
+on-disk behavior change is introduced.
+
+Identity: `[FEATURE MM-LAYOUT 58]1`, `[TEST MM-LAYOUT 58]` immediately before
+idle. Hardware pending; no flash performed. Repeat mm and filesystem/device/
+service commands with continued clock progress after flashing.

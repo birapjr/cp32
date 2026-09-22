@@ -30,7 +30,7 @@ def swapped_image(original):
         data[offset:offset+size] = struct.pack('>'+fmt, *struct.unpack_from('<'+fmt, original, offset))
     for offset in range(2048, 4096, 2):
         data[offset:offset+2] = original[offset:offset+2][::-1]
-    for offset in list(range(6144, 6208, 16)) + list(range(7168, 7200, 16)):
+    for offset in list(range(6144, 6208, 16)) + list(range(7168, 7216, 16)):
         data[offset:offset+2] = original[offset:offset+2][::-1]
     return data
 
@@ -38,10 +38,11 @@ with tempfile.TemporaryDirectory() as tmp:
     path = str(Path(tmp)/'dir.so')
     subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror',
                     '-I'+str(ROOT/'src/kernel'),
-                    str(ROOT/'src/kernel/minix-super.c'),
-                    str(ROOT/'src/kernel/minix-dir.c'), '-o', path], check=True)
+                    str(ROOT/'src/fs/super.c'), str(ROOT/'src/fs/utility.c'),
+                    *[str(ROOT/'src/fs'/name) for name in ('inode.c','path.c','open.c','read.c')], '-o', path], check=True)
     lib = C.CDLL(path)
     lib.cp32_minix_root_open.argtypes = [Reader, C.c_uint, C.POINTER(Dir)]
+    lib.cp32_minix_dir_open.argtypes = [Reader, C.c_uint, C.c_char_p, C.POINTER(Dir)]
     lib.cp32_minix_root_next.argtypes = [C.POINTER(Dir), C.POINTER(C.c_uint), C.c_void_p]
     lib.cp32_minix_file_open.argtypes = [Reader, C.c_uint, C.c_char_p, C.POINTER(File)]
     lib.cp32_minix_file_read.argtypes = [C.POINTER(File), C.c_void_p, C.c_uint]
@@ -52,7 +53,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert struct.unpack_from('<I', image, 1044)[0] == 63
     # Independently verify the fixture's inode links and bitmap ownership.
     links = {1: 0, 2: 0, 3: 0}
-    for base, size in ((6144, 64), (7168, 32)):
+    for base, size in ((6144, 64), (7168, 48)):
         for offset in range(base, base+size, 16):
             links[struct.unpack_from('<H', image, offset)[0]] += 1
     for number in range(1, 4):
@@ -62,7 +63,7 @@ with tempfile.TemporaryDirectory() as tmp:
         bit = zone-6+1
         assert bool(image[3072+bit//8] & (1 << (bit%8))) == (zone in (6, 7, 8))
 
-    def run(data, expected=0, expected_names=None, fail_at=None, short=False):
+    def run(data, expected=0, expected_names=None, fail_at=None, short=False, path=None):
         snapshot = bytes(data)
         calls = []
         @Reader
@@ -76,7 +77,10 @@ with tempfile.TemporaryDirectory() as tmp:
         directory = Dir()
         C.memset(C.byref(directory), 0xa5, C.sizeof(directory))
         before = bytes(directory)
-        result = lib.cp32_minix_root_open(read, len(data), C.byref(directory))
+        if path is None:
+            result = lib.cp32_minix_root_open(read, len(data), C.byref(directory))
+        else:
+            result = lib.cp32_minix_dir_open(read, len(data), path, C.byref(directory))
         names = []
         if result:
             assert bytes(directory) == before
@@ -99,6 +103,17 @@ with tempfile.TemporaryDirectory() as tmp:
     entries = [(1, '.'), (1, '..'), (2, 'boot'), (3, 'README')]
     total = run(image, expected_names=entries)
     run(swapped_image(image), expected_names=entries)
+    boot_entries = [(2, '.'), (1, '..'), (3, 'README')]
+    path_calls = run(image, path=b'/boot/', expected_names=boot_entries)
+    run(swapped_image(image), path=b'boot', expected_names=boot_entries)
+    for path in (b'boot/..', b'/./boot/../', b'////', b'../../'):
+        run(image, path=path, expected_names=entries)
+    for path in (b'README', b'README/..', b'boot/README/'):
+        run(image, path=path, expected=-8)
+    run(image, path=b'missing', expected=-5)
+    for failure in range(1, path_calls+1):
+        run(image, path=b'/boot/', expected=-4, fail_at=failure)
+        run(image, path=b'/boot/', expected=-4, fail_at=failure, short=True)
     shifted = bytearray(image)
     struct.pack_into('<H', shifted, 1032, 3)  # first zone, now two blocks each
     struct.pack_into('<H', shifted, 1034, 1)
@@ -195,8 +210,27 @@ with tempfile.TemporaryDirectory() as tmp:
     file_test(image, name=b'.', error=-6)
     for name in (b'missing', b'READ', b'readme'):
         file_test(image, name=name, error=-5)
-    for name in (b'', b'/', b'boot/README', b'123456789012345', b'\x1b'):
+    file_test(image, name=b'/', error=-6)
+    for name in (b'', b'123456789012345', b'boot/123456789012345', b'\x1b', b'/'*256):
         file_test(image, name=name, error=-7)
+    for name in (b'boot/README', b'/boot/README', b'//boot///README',
+                 b'boot/../README', b'./boot/./README', b'../../README'):
+        file_test(image, name=name)
+        file_test(swapped_image(image), name=name)
+    file_test(image, name=b'/'*249+b'README') # exact 255-byte boundary
+    for name in (b'README/', b'README/.', b'README/../README', b'boot/README/x'):
+        file_test(image, name=name, error=-8)
+    file_test(image, name=b'boot/missing', error=-5)
+    for offset, fmt, value, error in (
+        (4160, 'H', 0o100644, -8), (4162, 'H', 0, -3),
+        (4168, 'I', 49, -3), (4184, 'I', 63, -3)):
+        broken_dir = bytearray(image)
+        struct.pack_into('<'+fmt, broken_dir, offset, value)
+        file_test(broken_dir, name=b'boot/README', error=error)
+    nested_calls = file_test(image, name=b'/boot/README')
+    for failure in range(1, nested_calls+1):
+        file_test(image, name=b'/boot/README', error=-4, fail_at=failure)
+        file_test(image, name=b'/boot/README', error=-4, fail_at=failure, short=True)
     for failure in range(1, file_calls+1):
         file_test(image, error=-4, fail_at=failure)
         file_test(image, error=-4, fail_at=failure, short=True)

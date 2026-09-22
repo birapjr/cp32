@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory() as tmp:
     libpath = str(Path(tmp) / 'super.so')
     subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror',
                     '-I'+str(ROOT/'src/kernel'),
-                    str(ROOT/'src/kernel/minix-super.c'), '-o', libpath], check=True)
+                    str(ROOT/'src/fs/super.c'), str(ROOT/'src/fs/utility.c'), '-o', libpath], check=True)
     lib = C.CDLL(libpath)
     lib.cp32_minix_super_read.argtypes = [Reader, C.c_uint, C.POINTER(Super)]
 

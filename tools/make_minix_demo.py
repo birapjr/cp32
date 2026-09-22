@@ -35,10 +35,10 @@ def build_image():
             disk[offset:offset+16] = raw
 
     inode(1, 0o40755, 3, 64, 6)
-    inode(2, 0o40755, 2, 32, 7)
-    inode(3, 0o100444, 1, len(README), 8)
+    inode(2, 0o40755, 2, 48, 7)
+    inode(3, 0o100444, 2, len(README), 8)
     directory(6, [(1, '.'), (1, '..'), (2, 'boot'), (3, 'README')])
-    directory(7, [(2, '.'), (1, '..')])
+    directory(7, [(2, '.'), (1, '..'), (3, 'README')])
     disk[8192:8192+len(README)] = README
     return bytes(disk)
 

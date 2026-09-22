@@ -14,9 +14,13 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c memory.c minix-super.c minix-dir.c minix-demo.c cardputer.c display.c ramdisk.c
+C_SRCS = start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
+MM_SRCS = main.c alloc.c
+MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
+FS_SRCS = super.c inode.c path.c open.c read.c utility.c
+FS_HEADERS = $(wildcard fs/*.h)
 LIB_SRCS = lib/other/printk.c
-C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
+C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) $(patsubst %.c,$(BUILD_DIR)/fs/%.o,$(FS_SRCS)) $(patsubst %.c,$(BUILD_DIR)/mm/%.o,$(MM_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
 
 TARGET  = cp32
@@ -50,6 +54,16 @@ tests:
 	exit $$status
 
 # Compile all .c files
+$(BUILD_DIR)/mm/%.o: mm/%.c $(MM_HEADERS) | $(BUILD_DIR)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
+
 $(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py | $(BUILD_DIR)
 	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@
 

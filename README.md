@@ -7,7 +7,21 @@ I will be using the Minix v2 as base for the code, ajusting it as it goes.
 
 The project initial goal have the os kernel, a shell and some applications
 
+## Following the MINIX 2 sources
+
+Filesystem and memory-manager code follow the reference directory and filenames:
+compare `src/fs/` and `src/mm/` with `minix-2.0.0/src/fs/` and `minix-2.0.0/src/mm/`.
+See [the source map](docs/minix-source-layout.md)
+for corresponding functions and current limitations. Keep new portable MINIX
+features in the matching subsystem/file where possible; retain separate names
+for CP32-specific hardware and bring-up glue.
+
+The current filesystem is a read-only subset linked into the firmware, not yet
+a standalone MINIX FS server. RAM-device code remains in `src/kernel/`.
+
 ## Compile Steps
+
+Run these commands from `src/` (the existing Makefile also builds `src/fs/`).
 
 Clean old build
 ```shell
