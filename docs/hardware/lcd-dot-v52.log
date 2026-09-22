@@ -1,0 +1,28 @@
+User-supplied image-52 excerpts. No exception appears in the supplied capture.
+The user requests continued porting but does not explicitly confirm LCD glyph
+appearance. Serial font output alone does not establish visual correctness.
+
+[FEATURE LCD-DOT 52]1
+[TEST LCD-DOT 52]
+[TTY line=ls]
+.
+..
+boot
+README
+[TTY WRITE V48 bytes=23 ticks=19]
+[TTY line=font]
+hyphen: -
+under:  _
+slash:  /
+equals: =
+dots: . ..
+[TTY WRITE V48 bytes=58 ticks=90]
+[CTX kernel-running ticks=1453 heartbeat=1]
+[TTY line=fsinfo]
+MINIX V2 superblock: inodes=32 zones=63
+Not mounted
+[RAM IPC V49 result=0]
+[MM IPC V44 alloc-release-result=0]
+[SYS IPC V44 result=0 uptime=3234]
+[CTX kernel-running ticks=3530 heartbeat=2]
+[TTY IPC V44 reply-result=0]

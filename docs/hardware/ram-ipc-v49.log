@@ -1,0 +1,14 @@
+User-supplied image-49 log excerpts, 2026-09-22.
+User reports kernel stable. This capture does not include a disk command,
+RAM service trace, or IRQ 5000; MEM device I/O remains hardware-unverified.
+
+[FEATURE RAM-IPC 49]1
+[TEST RAM-IPC 49]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[TTY WRITE V44 result=18 expected=18]
+[SYS IPC V44 result=0 uptime=742]
+[MM IPC V44 alloc-release-result=0]
+[TTY IPC V44 reply-result=0]
+[CTX kernel-running ticks=1608 heartbeat=1]
+[CMD ls capacity=65536 formatted=0]

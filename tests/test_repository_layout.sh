@@ -3,7 +3,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-test -f "$root/agent.md"
+test -f "$root/AGENTS.md"
 test -f "$root/src/Makefile"
 test -d "$root/src/kernel"
 test -d "$root/src/include"

@@ -1,0 +1,34 @@
+User-supplied image-51 excerpts. User reports period glyph incorrect on LCD.
+USB directory entries and geometry are correct. No exception in the capture.
+No IRQ 5000 or file-content read is included.
+
+[FEATURE MINIX-DIR 51]1
+[TEST MINIX-DIR 51]
+[CTX kernel-running ticks=1205 heartbeat=1]
+[TTY line=disk]
+[RAM V49 op=3 result=512 n=1]
+[RAM V49 op=4 result=512 n=2]
+[RAM V49 op=3 result=512 n=3]
+[RAM V49 op=4 result=512 n=4]
+[RAM V49 op=3 result=512 n=5]
+[RAM IPC V49 result=0]
+[TTY line=ls]
+[RAM V49 op=3 result=24 n=6]
+[RAM V49 op=3 result=2 n=7]
+[RAM V49 op=3 result=64 n=8]
+.
+..
+boot
+README
+[TTY WRITE V48 bytes=23 ticks=19]
+[CTX kernel-running ticks=2619 heartbeat=2]
+[TTY line=fsinfo]
+MINIX V2 superblock: inodes=32 zones=63
+Not mounted
+[TTY WRITE V48 bytes=56 ticks=131]
+[TTY line=ls]
+.
+..
+boot
+README
+[TTY WRITE V48 bytes=23 ticks=151]

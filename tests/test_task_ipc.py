@@ -21,6 +21,7 @@ NAMES = ['cp32_save_blocked_frame', 'cp32_complete_blocked_frame',
          'cp32_ipc_state_check', 'cp32_ready_queue_check', 'cp32_trace_task_ipc',
          'interrupt_message', 'interrupt', 'unhold']
 BODIES = '\n'.join(extract_function(ROOT/'src/kernel/proc.c', n) for n in NAMES)
+BODIES += '\n' + extract_function(ROOT/'src/kernel/main.c', 'cp32_boot_process_flags')
 PRELUDE = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -35,8 +36,8 @@ PRELUDE = r'''
 #define NIL_PROC ((struct proc *)0)
 enum { OK=0, EINVAL=-1, EFAULT=-2, ELOCKED=-3, E_BAD_DEST=-4,
        E_BAD_SRC=-5, EBADCALL=-6, SEND=1, RECEIVE=2, BOTH=3,
-       P_SLOT_FREE=1, SENDING=4, RECEIVING=8, NR_TASKS=9, NR_PROCS=4,
-       TTY_PROC_NR=-9, IDLE=-7, CLOCK=-3, SYSTASK=-2, HARDWARE=-1, HARD_INT=2, FS_PROC_NR=1, MM_PROC_NR=0, LOW_USER=2,
+       P_SLOT_FREE=1, SENDING=4, RECEIVING=8, P_STOP=64, NR_TASKS=9, NR_PROCS=4,
+       TTY_PROC_NR=-9, IDLE=-7, MEM=-4, CLOCK=-3, SYSTASK=-2, HARDWARE=-1, HARD_INT=2, FS_PROC_NR=1, MM_PROC_NR=0, LOW_USER=2,
        ANY=104, NQ=3, TASK_Q=0, SERVER_Q=1, USER_Q=2 };
 typedef uintptr_t reg_t;
 typedef uintptr_t vir_bytes;
@@ -89,7 +90,7 @@ static void reset(void) {
   for (int i=0;i<NR_TASKS+NR_PROCS;i++) {
     pproc_addr[i]=&proc[i]; proc[i].p_nr=i-NR_TASKS; proc[i].p_flags=P_SLOT_FREE;
   }
-  int active[]={IDLE,TTY_PROC_NR,FS_PROC_NR,CLOCK,MM_PROC_NR,SYSTASK};
+  int active[]={IDLE,TTY_PROC_NR,FS_PROC_NR,CLOCK,MM_PROC_NR,SYSTASK,MEM};
   held_head=held_tail=NIL_PROC; k_reenter=switching=irq_mask=0;
   for (unsigned i=0;i<sizeof(active)/sizeof(active[0]);i++) {
     struct proc *p=proc_addr(active[i]); p->p_flags=0;
@@ -141,6 +142,36 @@ static void exchange(int receiver_first, int endpoint) {
   invoke(tty,RECEIVE,ANY,&incoming);
   assert(cp32_irq_return_proc==fs); /* Real saved caller is selected for resume. */
 }
+static void suspended_tty_read(int revive_first) {
+  reset();
+  struct proc *fs=proc_addr(FS_PROC_NR), *tty=proc_addr(TTY_PROC_NR);
+  message request={0,3,64}, incoming={0}, reply={0,68,-998};
+  ready(fs); ready(tty);
+  invoke(tty,RECEIVE,ANY,&incoming);
+  invoke(fs,BOTH,TTY_PROC_NR,&request);
+  invoke(tty,SEND,FS_PROC_NR,&reply);
+  assert(request.m_type==68 && request.payload==-998 && fs->p_flags==0);
+  /* TTY can be woken while FS has not yet started its second RECEIVE. */
+  invoke(tty,RECEIVE,ANY,&incoming);
+  k_reenter=1; interrupt(TTY_PROC_NR); k_reenter=0;
+  assert(incoming.m_type==HARD_INT && tty->p_flags==0);
+  reply.m_type=67; reply.payload=3;
+  if (revive_first) {
+    invoke(tty,SEND,FS_PROC_NR,&reply);
+    assert(tty->p_flags==SENDING && tty->p_blocked_frame_valid);
+    interrupt(TTY_PROC_NR); /* Coalesced poll must not complete a blocked SEND. */
+    assert(tty->p_flags==SENDING && tty->p_int_blocked);
+    invoke(fs,RECEIVE,TTY_PROC_NR,&request);
+  } else {
+    invoke(fs,RECEIVE,TTY_PROC_NR,&request);
+    assert(fs->p_flags==RECEIVING && fs->p_blocked_frame_valid);
+    invoke(tty,SEND,FS_PROC_NR,&reply);
+  }
+  assert(fs->p_flags==0 && tty->p_flags==0);
+  assert(!fs->p_blocked_frame_valid && !tty->p_blocked_frame_valid);
+  assert(request.m_source==TTY_PROC_NR && request.m_type==67 && request.payload==3);
+  assert(cp32_ipc_state_check() && cp32_ready_queue_check());
+}
 static void hardware_receive(int deferred) {
   reset();
   struct proc *clock=proc_addr(CLOCK), *owner=proc_addr(FS_PROC_NR);
@@ -186,6 +217,30 @@ static void hardware_filtered_receive(void) {
   assert(incoming.m_source==HARDWARE && incoming.m_type==HARD_INT);
   assert(!clock->p_int_blocked && clock->p_flags==0);
 }
+static unsigned console_cpu_share(int parked) {
+  reset();
+  unsigned tty_runs=0;
+  /* A long TTY render with CLOCK runnable and FS/MM/SYS waiting for IPC.
+   * Image 46 also has four dummy tasks and LOW_USER spinning in idle code. */
+  for (int n=-NR_TASKS;n<=LOW_USER;n++) {
+    struct proc *p=proc_addr(n);
+    p->p_reg=proc_addr(CLOCK)->p_reg;
+    p->p_flags=parked ? cp32_boot_process_flags(n) : 0;
+    if(n==TTY_PROC_NR || n==CLOCK || n==SYSTASK || n==MM_PROC_NR || n==FS_PROC_NR || n==MEM)
+      assert(cp32_boot_process_flags(n)==0);
+    else if(n!=IDLE && n!=HARDWARE) assert(cp32_boot_process_flags(n)==P_STOP);
+    if(n==FS_PROC_NR || n==MM_PROC_NR || n==SYSTASK || (parked && n==MEM)) continue;
+    if(!isidlehardware(n) && !p->p_flags) ready(p);
+  }
+  proc_ptr=current_proc=proc_addr(IDLE);
+  for(int tick=0;tick<1200;tick++) {
+    sched();
+    assert(!proc_ptr->p_flags && cp32_ready_queue_check());
+    if(proc_ptr->p_nr==TTY_PROC_NR) tty_runs++;
+    if(parked) assert(proc_ptr->p_nr==TTY_PROC_NR || proc_ptr->p_nr==CLOCK);
+  }
+  return tty_runs;
+}
 static void task_queue_fairness(void) {
   reset();
   /* Five runnable tasks after TTY blocks, matching the live bootstrap queue.
@@ -210,9 +265,13 @@ static void task_queue_fairness(void) {
   }
 }
 int main(void) {
-  for (int i=0;i<100;i++) { exchange(i&1,TTY_PROC_NR); exchange(i&1,MM_PROC_NR); exchange(i&1,SYSTASK); hardware_receive(i&1); }
+  for (int i=0;i<100;i++) { exchange(i&1,TTY_PROC_NR); exchange(i&1,MM_PROC_NR); exchange(i&1,SYSTASK); exchange(i&1,MEM); hardware_receive(i&1); }
   hardware_filtered_receive();
+  suspended_tty_read(0); suspended_tty_read(1);
   task_queue_fairness();
+  unsigned old_share=console_cpu_share(0), new_share=console_cpu_share(1);
+  assert(old_share==100 && new_share==600);
+  printf("TTY CPU share model: %u/1200 before, %u/1200 with placeholders stopped\n",old_share,new_share);
   reset();
   struct proc *fs=proc_addr(FS_PROC_NR),*tty=proc_addr(TTY_PROC_NR);
   message out={0,5,7},in={0};
@@ -232,7 +291,7 @@ int main(void) {
 }
 '''
 # Declare instrumentation counters independently of production initialization.
-known=set(NAMES)|set(re.findall(r'\bcp32_\w+',PRELUDE))
+known=set(NAMES)|{'cp32_boot_process_flags'}|set(re.findall(r'\bcp32_\w+',PRELUDE))
 counters=set(re.findall(r'\bcp32_\w+', BODIES))-known
 prototypes='\n'.join(body[:body.index('{')].rstrip()+';' for body in
                       [extract_function(ROOT/'src/kernel/proc.c', n) for n in NAMES])

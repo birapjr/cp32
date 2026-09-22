@@ -365,3 +365,330 @@ ELF/image checks pass; hardware confirmation is pending. Symbols:
 Device input, full shell TTY routing and complete terminal control sequences
 remain incomplete. LCD batch flush may occur after the byte-count reply when
 the shell owns an outer command batch. No automatic flashing performed.
+
+## TTY input duplicate copies — image 45, build-tested
+
+The previous in_transfer directly wrote each input byte, advanced the virtual
+address and count, then copied the same bytes again via the legacy 64-byte
+buffer. Even a one-byte request could write a second byte beyond its requested
+range and report twice the consumed count. It also bypassed canonical semantics
+for FS and wrote an unrelated shell-global byte.
+
+Image `[FEATURE TTY-READ-COPY 45]1` / `[TEST TTY-READ-COPY 45]` restores the
+MINIX buffered accounting contract with CP32 numap translation: each byte is
+copied and counted once, and invalid destinations fail before queue removal.
+Canonical and EOF behavior now applies to FS as to other clients. Existing
+shell input uses its separate direct reader, so device-backed input remains
+unfinished. In particular, its raw keyboard queue does not produce the full
+IN_EOT/IN_EOF line-discipline representation; connect in_process and task-owned
+wakeups before enabling DEV_READ for the shell.
+
+All 19 host scripts and clean Xtensa ELF/bin build pass. New tests execute the
+production transfer with nonidentity mapping and destination guards, covering
+chunk boundaries, ring wrap, canonical/EOF, partial reads and mapping failure.
+Sections/segments and image layout pass: `_iram_end=0x40374310`,
+`_iram_ext_end=0x40380DD4`, `_stack_top=0x3FCCE270`.
+Hardware status: pending; no automatic flash or serial-console result.
+Manual regression should exercise write (18-byte reply and LCD text),
+sys/mm/ipc/ls and continued CLOCK progress. That regression alone will not
+validate the repaired input path until a real DEV_READ backend is connected.
+
+
+## Image 45 hardware regression — LCD and TTY write confirmed
+
+Evidence: `docs/hardware/tty-read-copy-v45.log`; the user confirms everything
+appears as expected on the LCD. Both `[FEATURE TTY-READ-COPY 45]1` and
+`[TEST TTY-READ-COPY 45]` identify the image. Unchanged subsystem diagnostics
+retain V44 labels; these do not identify a different flashed image.
+
+[x] One real TTY DEV_WRITE exchange reports `result=18 expected=18` and the
+user confirms correct LCD output. This validates the first hardware write
+exchange for the backend introduced in image 44, running in image 45.
+
+[x] Subsequent MM allocate/release returns 0, SYS returns 0 with uptime 1461,
+TTY ioctl IPC returns 0, and ls prints capacity 65536/formatted=0. CLOCK
+receives its initial two HARD_INT messages at ticks 14 and 33; kernel
+heartbeats advance through ticks 1596 and 3266. No exception appears in the
+capture, and initial selected-frame checks report frame=1.
+
+Remaining: the capture has one write, not repeated-write stress, and ends
+before the IRQ-5000 sample, so it does not show a later CLOCK message count.
+The shell still reads through its direct helper; this regression does not
+exercise the repaired DEV_READ transfer on hardware. Connect line-discipline
+input, TTY wakeups and SUSPEND/REVIVE handling before claiming that feature
+complete. No code or image change was made when recording this evidence.
+
+## Image 46 — device-backed TTY input, awaiting hardware
+
+`[FEATURE TTY-READ 46]1` and `[TEST TTY-READ 46]` identify the new image.
+The shell now sends DEV_READ, accepts an immediate reply or waits for REVIVE
+after SUSPEND, and validates reply source/type/process/count. TTY polls at most
+eight controller events per device-read callback and feeds in_process; timer
+interrupts only flag the line and post a coalesced TTY notification after init.
+No I2C or LCD operation was added to the ISR.
+
+Two source issues had to be resolved to activate this path: positional c_cc
+defaults used MINIX's old indexes rather than CP32's header indexes, and
+independent TTY echo could preempt a direct shell LCD transfer. Defaults now
+use named indexes. All shell output uses DEV_WRITE, buffered into bounded
+command batches, so TTY owns runtime LCD transactions and echo. The existing
+boot display setup runs before task handoff. LCD backspace now crosses wrapped
+rows, allowing MINIX BS-space-BS erase to update the preceding row.
+
+All 20 host scripts pass, including production canonical/raw input, echo,
+Ctrl-U/Ctrl-D, immediate/suspended replies, malformed/failed I/O, output bounds,
+and IPC REVIVE arriving before or after the client starts RECEIVE. A pending
+TTY poll does not complete a blocked SEND in the IPC tests. Clean build,
+ELF/image layout and section/segment checks pass without compiler warnings:
+`_iram_end=0x40374334`, `_iram_ext_end=0x40380E50`, `_stack_top=0x3FCCE420`.
+
+Hardware status: pending. Test lx, Backspace, s, Enter first; expect ls and
+`[TTY READ V46 reply=3 n=1]`. Then exercise wrapped erase, Ctrl-U, empty Ctrl-D,
+repeated write/sys/mm/ipc/ls, typing during output, and continued CLOCK messages
+through IRQ 5000. Unchanged subsystem markers still say V44; the feature/test
+markers identify image 46. No automatic flash was performed.
+
+This build changes scheduling load by waking TTY periodically and moves the
+interactive shell onto suspended reads. Host passes cannot certify silicon
+timing, keyboard FIFO behavior or long-duration progress. Raw/timed terminal
+modes and full cancellation/signal behavior remain unvalidated on hardware.
+
+## Image 46 latency regression — image 47 removes idle-task contention
+
+The user's image-46 capture (excerpts in `docs/hardware/tty-read-v46.log`)
+confirms working Backspace, a 3-byte TTY read, successful MM/SYS/TTY requests,
+ls and CLOCK count 673 at IRQ 5000. Display writes are reported very slow.
+The write command spans heartbeats at 7081 and 8285 before returning 18 bytes:
+at least 1204 ticks occur inside that observed interval; the full latency is
+not timestamped. No exception appears in the supplied capture.
+
+Boot made four placeholder task slots and LOW_USER runnable despite assigning
+them the idle loop. The class-rotating scheduler gives TTY only a fraction of
+the task-class share, whereas FS previously rendered from the server class.
+The IRQ-5000 sample selects -8, one of those placeholders. A production
+scheduler model reproduces 100/1200 TTY selections with the old workload and
+600/1200 when placeholders are stopped, with CLOCK continuously runnable.
+
+Image 47 uses P_STOP for those reserved boot descriptors. Their frames/maps
+remain initialized, the implemented services remain runnable, and IDLE is the
+fallback when there is no useful work. IRQ/frame handling, class fairness,
+TTY polling and software SPI are unchanged. There are no new hardware-register
+assumptions in this fix.
+
+Identity: `[FEATURE TTY-LATENCY 47]1`, `[TEST TTY-LATENCY 47]`.
+`[TTY WRITE V47 bytes=... ticks=...]` reports task-side rendering elapsed ticks
+for the first eight writes and every 500th, including descheduling and excluding
+request queue wait. All 20 host scripts, clean Xtensa build and ELF/image checks
+pass: `_iram_end=0x4037433C`, `_iram_ext_end=0x40380F70`,
+`_stack_top=0x3FCCE570`. Hardware latency remains unverified; no flash performed.
+
+Next capture: repeated write/ls, typing and Backspace, timing markers, service
+queries and IRQ 5000 with advancing clock-msgs. Idle heartbeats are no longer
+expected alongside every busy write. The scheduler model cannot establish the
+actual speedup or prove that all remaining display latency is resolved.
+
+## Image 47 faster; image 48 coalesces the double scroll repaint
+
+User confirms improved speed on image 47 but reports two screen cycles for a
+scroll. Excerpts in `docs/hardware/tty-latency-v47.log` show successful MM/SYS/
+TTY/ls/write, and later write timings of 205–211 ticks. The separate prompt
+costs one tick. The capture has no exception, but no IRQ-5000 sample either.
+
+Two source behaviors caused avoidable transfer work: Enter echo immediately
+painted its scroll before the command response, and begin-batch did not defer
+ordinary glyphs until a later scroll occurred. Thus even a batched write could
+paint characters that would subsequently move or leave the visible screen.
+
+Image 48 computes the whole batch's text/cursor layout in memory, including
+all required scrolling, and then paints final changed cells once. Enter echo
+keeps its logical newline pending for the next output/character echo; starting
+a batch preserves pending layout. No open batch spans IPC, and normal writes
+still flush at completion. Explicit clear discards pending repaint state.
+The tradeoff is deliberate: Enter alone does not visually scroll until the
+next output or ordinary echo. The shell always writes a response or prompt.
+
+Identity: `[FEATURE LCD-SCROLL 48]1`, `[TEST LCD-SCROLL 48]` and write timing
+`[TTY WRITE V48 bytes=... ticks=...]`. All 20 scripts, clean Xtensa build,
+image-layout and section/segment checks pass without warnings. Pixel tests
+establish final-image equivalence and at most one paint per changed cell,
+including nested batches and more than a screen of output. One modeled
+Enter-plus-command workload drops from 344 to 178 cell writes. Symbols:
+`_iram_end=0x40374354`, `_iram_ext_end=0x40380F78`, `_stack_top=0x3FCCE570`.
+
+Hardware status: pending; no flash performed. Repeat commands on a full LCD,
+check one visible scroll pass, wrapped erase and prompt placement, and capture
+timings with continued CLOCK progress. Timing now includes the deferred Enter
+scroll inside the next write; compare complete interaction time, not just a
+single V47/V48 write marker. Software SPI transport remains unchanged.
+
+## Image 48 scrolling accepted; image 49 adds MEM device IPC
+
+The user confirms image-48 scrolling looks correct. Evidence excerpts in
+`docs/hardware/lcd-scroll-v48.log` include repeated ls, MM/SYS/TTY success,
+an 18-byte write and heartbeat tick 1928. No exception appears in the supplied
+capture. That bounded acceptance does not include IRQ 5000 or full terminal
+mode validation.
+
+The next missing storage prerequisite was a device message service: the RAM
+disk previously had only directly callable helpers. Image 49 adds memory.c's
+MEM task using the existing MINIX RAM_DEV/DEV_READ/DEV_WRITE/TASK_REPLY ABI.
+Only FS requests are serviced. Buffer mapping precedes data mutation, transfers
+use 64-byte chunks, and EOF yields zero/short counts. Unknown minors and
+unsupported operations are rejected; raw memory devices are not exposed.
+MEM retains its existing mapped descriptor/stack and now blocks on RECEIVE
+instead of remaining stopped. Other placeholder tasks remain stopped.
+
+The disk command exercises five real exchanges while preserving the last
+sector on success. It attempts restoration after test-I/O failure and reports
+any restoration/verification failure. No format/reset is added to startup.
+This command is a device check, not file I/O, and must be revisited once a
+filesystem owns that sector. The ABI and limitations are in docs/ramdisk-ipc.md.
+
+Markers: `[FEATURE RAM-IPC 49]1`, `[TEST RAM-IPC 49]`, normal-path
+`[RAM V49 op=... result=... n=...]`, and `[RAM IPC V49 result=0]` on successful
+shell completion. All 21 host scripts, clean Xtensa build and ELF/image checks
+pass. Tests include the real backend, translated buffer bounds, 1 KiB blocks,
+EOF, caller/operation checks, reply field aliases, transport errors, 100
+checksum-preserving diagnostic cycles and injected partial-write/restore
+failures. Existing production scheduler/IPC tests include MEM exchanges.
+`_iram_end=0x40374368`, `_iram_ext_end=0x403814AC`, `_stack_top=0x3FCCEF10`.
+
+Hardware remains pending; no flash performed. Run disk repeatedly and confirm
+zero status, then check write/ls/mm/sys/ipc, LCD scrolling and CLOCK progress
+through IRQ 5000. Filesystem structures, vectored block I/O and actual FS/user
+services remain incomplete. The existing CP32 format marker is not a MINIX
+filesystem and ls remains diagnostic output.
+
+## Image 49 bounded stability result; image 50 superblock recognition
+
+The supplied image-49 capture shows successful write/SYS/MM/IPC/ls commands
+and heartbeat tick 1608, without an exception. The user reports kernel stable.
+Excerpts: docs/hardware/ram-ipc-v49.log. It contains no disk command, RAM
+service trace or IRQ 5000, so it does not establish MEM device correctness or
+long-duration stability.
+
+Image 50 adds read-only fsinfo through MEM DEV_READ. Original MINIX V2 headers
+in both byte orders are decoded without struct-layout assumptions; capacity,
+metadata overlap, bitmap sizes and shift bounds are validated. Errors do not
+publish partial geometry. The blank RAM disk should report No MINIX filesystem.
+No mount, format, inode traversal or file API is added, and ls remains a
+diagnostic. Details: docs/minix-superblock.md and minix.port-status.md.
+
+All 22 host scripts and the clean Xtensa build pass; no compiler warnings.
+ELF size/segments/sections checked: `_iram_end=0x40374368`,
+`_iram_ext_end=0x4038186c`, `_stack_top=0x3fccf380`. Parser and shell handler
+are in extended IRAM. Markers: `[FEATURE MINIX-SUPER 50]1` and
+`[TEST MINIX-SUPER 50]`. Existing service traces retain their versions.
+Hardware pending; no flashing performed. Run fsinfo and disk, then the
+accepted command/scrolling regression and extended CLOCK progress.
+
+Review finding for future process lifecycle work: system.c:do_fork assigns
+zero to p_reg.a[1] as a child return value, but a1 is Xtensa's stack pointer.
+Do not enable fork on that assumption. Audit do_exec's complete saved frame
+at the same time. This is outside the active storage-recognition path and is
+not claimed as fixed by image 50.
+
+## Image 50 hardware result — basic storage path accepted
+
+The subsequent user capture identifies MINIX-SUPER 50. disk completes all five
+512-byte transfers and reports `[RAM IPC V49 result=0]`, covering save,
+pattern write/read, restoration and verification. fsinfo then reads 24 bytes
+through MEM and prints No MINIX filesystem, as expected for the blank disk.
+MM/IPC/SYS/ls and TTY output continue successfully, with SYS uptime 2147 and
+no exception in the capture. Excerpts: docs/hardware/minix-super-v50.log.
+
+Basic MEM I/O and blank-superblock recognition are now hardware-confirmed.
+Repeated disk cycles, valid-image recognition, malformed-image behavior on
+hardware and IRQ-5000/long-duration progress remain outside this evidence.
+No firmware change or marker increment is needed for this result recording.
+
+## Image 51 — real MINIX root-directory listing
+
+Image 50 hardware established the basic MEM diagnostic and blank-superblock
+path. Image 51 now provisions a deterministic volatile MINIX V2 boot image,
+generated by tools/make_minix_demo.py. Its declared 63 zones exclude the final
+physical block used by disk. ls reads actual root inode/map/directory records
+through MEM IPC; hardcoded entries are removed. Expected entries: ., ..,
+boot, README. fsinfo now reports inodes=32 zones=63 and Not mounted.
+
+The read-only implementation supports seven direct zones and ASCII names.
+It rejects unsupported larger directories, bad maps/types/sizes/zone pointers
+and short I/O. It is not a mount, full consistency check or file-content API.
+Details and next hardware procedure: docs/minix-directory.md.
+
+All 23 host scripts and clean Xtensa build pass without warnings. Tests cover
+disk endian conversion including 16-bit bitmap chunks, geometry and malformed
+records, read failures and unchanged disks across ten real-backend listing/
+diagnostic cycles using the shell/MEM adapter. ELF layout checked:
+`_iram_end=0x4037438c`, `_iram_ext_end=0x40381d9c`, `_stack_top=0x3fcd18d0`.
+The generated prefix occupies 8253 bytes of rodata; the RAM disk retains its
+existing BSS allocation. New runtime code is in extended IRAM.
+
+Markers: `[FEATURE MINIX-DIR 51]1`, `[TEST MINIX-DIR 51]`. No hardware result
+yet and no flash performed. Confirm fsinfo/ls, repeat disk and listing, then
+TTY/MM/SYS/IPC and extended clock regressions. Fork/exec frame issues remain
+outside this storage step.
+## Image 52 — missing LCD period glyph
+
+The image-51 capture confirms a successful disk diagnostic, two real root
+listings, valid superblock geometry and heartbeat tick 2619. Evidence:
+docs/hardware/minix-dir-v51.log. The user reports incorrect LCD periods,
+although USB correctly prints the directory names `.` and `..`.
+
+Root cause: display.c:glyph_scaled had no period case and generated a fallback
+pattern. Image 52 defines a 2x2 dot on the baseline. Cell dimensions, cursor
+movement, opaque background painting and scrolling remain unchanged. The
+font command now includes . and ..; host pixel tests verify both directory
+rows and erasure. Markers: `[FEATURE LCD-DOT 52]1`, `[TEST LCD-DOT 52]`.
+All 23 host scripts and warning-free clean build pass. ELF size, segments and
+sections checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x40381da8`,
+`_stack_top=0x3fcd18f0`.
+Hardware visual validation pending; no flashing performed. File reads and
+mounting remain future work, and this capture does not establish IRQ-5000
+or long-duration stability.
+## Image 53 — read-only root files
+
+The image-52 capture confirms ls/font/fsinfo/disk/MM/SYS/IPC execution and
+heartbeat tick 3530 without an exception in the supplied log. It contains no
+explicit LCD appearance confirmation or IRQ 5000. Evidence is preserved in
+docs/hardware/lcd-dot-v52.log.
+
+Image 53 implements root-name lookup and regular-file reads through MEM, exposed
+by cat README and cat /README. The reader validates inode allocation/type/link
+count/size and direct-zone ownership/bounds, returns zeros for sparse zones,
+and handles EOF. Staged 64-byte reads preserve position and caller data on
+device failure. cat distinguishes missing files and directory targets; it is
+a text viewer, while the underlying reader returns exact bytes.
+
+Seven direct zones and root names only are supported. There is no full path
+resolver, permission enforcement, descriptor table, mount or writable file API.
+The image and scratch reservation are unchanged. See docs/minix-file-read.md.
+
+All 23 host scripts and the warning-free clean build pass. Tests cover endian,
+EOF, sparse/empty/cross-zone files, invalid names/inodes/maps/zones, failure
+atomicity, and ten checksum-preserving production cat/list/disk cycles through
+the real backend and modeled MEM adapter. ELF checked: `_iram_end=0x403743b0`,
+`_iram_ext_end=0x4038242c`, `_stack_top=0x3fcd1fe0`. New functions use extended
+IRAM. Markers: `[FEATURE MINIX-READ 53]1`, `[TEST MINIX-READ 53]`.
+Hardware remains pending; no flash performed. Validate cat success and errors,
+repeat after disk, then regress directory, service, LCD and clock behavior.
+## Image 54 — reversed keyboard event polarity
+
+The image-53 hardware log confirms cat README and missing-file handling,
+IRQ 5000 with unknown=0/clock-msgs=805, and heartbeat tick 5867. Full supplied
+evidence: docs/hardware/minix-read-v53.log. The user reports Aa not behaving
+as Shift, apparent uppercase via Fn, and inability to return to lowercase.
+
+Confirmed defect: cp32_cardputer_key interpreted bit 7 as release, but the
+official M5Stack TCA8418 reader interprets it as press. Modifiers were therefore
+set on release and printable input emitted on release. Fn/Aa coordinates
+already match the vendor map. Image 54 fixes polarity rather than swapping
+keys, rejects invalid matrix positions and keeps Ctrl-Shift-letter usable.
+No Fn function layer, caps lock or overflow recovery is claimed.
+
+The host tests repeated the original polarity mistake and are corrected.
+All 23 scripts and clean build pass without warnings, including repeated case
+transitions, release order and Fn independence. ELF sections/segments checked:
+`_iram_end=0x403743b0`, `_iram_ext_end=0x40382414`, `_stack_top=0x3fcd1fd0`.
+Markers: `[FEATURE KBD-SHIFT 54]1`, `[TEST KBD-SHIFT 54]`. Hardware validation
+pending; no flashing performed. References and procedure: docs/keyboard-shift.md.

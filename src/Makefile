@@ -14,7 +14,7 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c cardputer.c display.c ramdisk.c
+C_SRCS = start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c mm.c memory.c minix-super.c minix-dir.c minix-demo.c cardputer.c display.c ramdisk.c
 LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
@@ -50,6 +50,12 @@ tests:
 	exit $$status
 
 # Compile all .c files
+$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py | $(BUILD_DIR)
+	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@
+
+$(BUILD_DIR)/minix-demo.o: CFLAGS += -I$(BUILD_DIR)
+$(BUILD_DIR)/minix-demo.o: $(BUILD_DIR)/minix-demo.h
+
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 

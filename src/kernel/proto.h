@@ -66,9 +66,12 @@ _PROTOTYPE( void cp32_timer_irq_dispatch, (cp32_irq_frame_t *frame) );
 _PROTOTYPE( void cp32_irq_dispatch, (cp32_irq_frame_t *frame, uint32_t pending) );
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
+/* memory.c: MINIX /dev/ram task at MEM. */
+_PROTOTYPE( void mem_task, (void) );
+
 /* tty.c */
 _PROTOTYPE( void handle_events, (struct tty *tp)                 );
-_PROTOTYPE( int cp32_tty_read_char, (char *out)                  );
+_PROTOTYPE( void cp32_tty_poll_tick, (void)                     );
 _PROTOTYPE( void tty_reply, (int code, int replyee, int proc_nr,
 		int status)                                      );
 _PROTOTYPE( void tty_wakeup, (clock_t now)				);

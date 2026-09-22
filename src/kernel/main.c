@@ -30,6 +30,17 @@ extern int _sendrec(int dest, message *m);
 extern unsigned cardputer_keyboard_stale_events;
 extern tty_t tty_table[];
 
+/* Only implemented services are runnable at boot. Keep reserved descriptors
+ * and their frames available, but do not schedule copies of the idle loop.
+ * MINIX runs IDLE only when the ready queues have no work. */
+CP32_IRAM_EXT static int cp32_boot_process_flags(int endpoint)
+{
+  if (endpoint == TTY_PROC_NR || endpoint == CLOCK || endpoint == SYSTASK ||
+      endpoint == MM_PROC_NR || endpoint == FS_PROC_NR || endpoint == MEM ||
+      endpoint == IDLE || endpoint == HARDWARE) return 0;
+  return P_STOP;
+}
+
 /* Validate the first task-owned descriptor before the IRQ return path is
  * enabled.  CLOCK is the first production task and its private stack window
  * is the smallest useful proof that the saved call0 frame is self-owned. */
@@ -117,6 +128,7 @@ void main(void)
     /* Start the first production descriptor. CLOCK owns the normal receive
      * loop and is the first real consumer of task-owned IPC suspension. */
     rp->p_reg.pc = (t == CLOCK) ? (reg_t)clock_task :
+        (t == MEM) ? (reg_t)mem_task :
         (t == SYSTASK) ? (reg_t)sys_task :
         (t == TTY_PROC_NR) ? (reg_t)tty_task :
         (t == MM_PROC_NR) ? (reg_t)mm_task :
@@ -164,9 +176,9 @@ void main(void)
     }
     rp->p_map[S].mem_phys = rp->p_reg.sp >> CLICK_SHIFT;
     rp->p_map[S].mem_len = 4;
-    rp->p_flags = 0;
+    rp->p_flags = cp32_boot_process_flags(t);
 
-    /* TTY, CLOCK, MM and SYS suspend through their own receive frames. */
+    /* Implemented services, including MEM, suspend on their receive frames. */
     if (!isidlehardware(t) && rp->p_flags == 0) lock_ready(rp);
   }
 
@@ -180,7 +192,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE TTY-WRITE 44]");
+  usbj_print("[FEATURE KBD-SHIFT 54]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -233,6 +245,7 @@ void main(void)
   usbj_print(" fifo=");
   usbj_print_u32((uint32_t)kbd_count);
   usbj_print("]\r\n");
+  if (cp32_minix_demo_init() != 0) panic("RAM demo init failed", NO_NUM);
   usbj_print("[RAMDISK capacity=");
   usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
   usbj_print("]\r\n");
@@ -299,7 +312,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST TTY-WRITE 44]\r\n");
+  usbj_print("[TEST KBD-SHIFT 54]\r\n");
   kernel_idle_loop();
 }
 

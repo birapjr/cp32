@@ -1,0 +1,35 @@
+# Selected excerpts from the user's image-47 USB capture, 2026-09-20.
+# User confirms improved display speed, but reports two scroll repaint cycles.
+# Gaps between groups omit boot and other service lines.
+[FEATURE TTY-LATENCY 47]1
+[TEST TTY-LATENCY 47]
+
+[TTY READ V46 reply=3 n=1]
+[TTY line=la]
+[CMD unknown=la]
+[TTY WRITE V47 bytes=20 ticks=22]
+[TTY line=ls]
+ramdisk
+boot
+README
+[CMD ls capacity=65536 formatted=0]
+[TTY WRITE V47 bytes=62 ticks=69]
+[TTY line=mm]
+[MM V44 received=1 op=1001 source=1 resumed=1]
+[MM V44 received=2 op=1002 source=1 resumed=1]
+[MM IPC V44 alloc-release-result=0]
+[TTY WRITE V47 bytes=23 ticks=208]
+[CTX kernel-running ticks=1688 heartbeat=1]
+[TTY line=write]
+[TTY WRITE V47 bytes=18 ticks=205]
+[CTX V44 FS-RETURN n=2 tick=2537 pc=0x4037407B sp=0x3FCD8400 a0=0x40372441 a15=0x3FCD8400 sar=0x00000000 lcount=0x00000000 frame=1]
+[TTY WRITE V44 result=18 expected=18]
+[TTY WRITE V47 bytes=2 ticks=1]
+[TTY line=sys]
+[SYS V44 received=1 op=2 source=1 resumed=1]
+[SYS V44 received=2 op=8 source=1 resumed=1]
+[SYS IPC V44 result=0 uptime=2951]
+[TTY WRITE V47 bytes=18 ticks=211]
+[TTY line=ipc]
+[TTY IPC V44 reply-result=0]
+[TTY WRITE V47 bytes=32 ticks=210]

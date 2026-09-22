@@ -614,10 +614,8 @@ int irq;
 #endif
   }
 
-  /* The bring-up FS console polls the keyboard directly. Do not inject a
-   * synthetic TTY notification from the clock ISR until task-owned IPC
-   * receive/suspend is live; that notification can consume the IRQ return
-   * path and stop subsequent timer ticks. */
+  /* Periodic task wakeup for the polled Cardputer keyboard backend. */
+  cp32_tty_poll_tick();
 
   /* Step 3: Charge CPU time to the running process.
    * If interrupted inside a kernel handler (k_reenter != 0), charge HARDWARE.
