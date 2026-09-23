@@ -143,13 +143,42 @@ CP32_IRAM_EXT static int cp32_shell_disk_check(void)
   return result;
 }
 
-CP32_IRAM_EXT static void cp32_shell_cat(const char *name)
+/* Find the last ten lines with bounded backward windows. Reads may stop
+ * at zone boundaries, so fill each window before scanning it in reverse. */
+CP32_IRAM_EXT static int cp32_shell_tail_start(struct cp32_minix_file *file)
+{
+  char bytes[64];
+  unsigned end = file->size, start, length, have, lines = 0, i;
+  int result;
+  while (end) {
+    start = end > sizeof(bytes) ? end - sizeof(bytes) : 0;
+    length = end - start;
+    result = cp32_minix_file_seek(file, start, 0);
+    if (result) return result;
+    have = 0;
+    while (have < length) {
+      result = cp32_minix_file_read(file, bytes + have, length - have);
+      if (result <= 0) return result ? result : -CP32_SUPER_IO;
+      have += result;
+    }
+    for (i = length; i > 0; i--) {
+      unsigned position = start + i - 1;
+      if (bytes[i-1] == '\n' && position != file->size - 1 && ++lines == 10)
+        return cp32_minix_file_seek(file, position + 1, 0);
+    }
+    end = start;
+  }
+  return cp32_minix_file_seek(file, 0, 0);
+}
+
+CP32_IRAM_EXT static void cp32_shell_show(const char *name, int tail)
 {
   struct cp32_minix_file file;
   char bytes[64], text[129];
   unsigned i, n, printed = 0;
   int result, newline = 1;
   result = cp32_minix_file_open(cp32_shell_disk_read, cp32_ramdisk_capacity(), name, &file);
+  if (!result && tail) result = cp32_shell_tail_start(&file);
   if (!result) {
     while ((result = cp32_minix_file_read(&file, bytes, sizeof(bytes))) > 0) {
       n = 0;
@@ -176,6 +205,16 @@ CP32_IRAM_EXT static void cp32_shell_cat(const char *name)
       cp32_shell_print("\r\n");
     }
   }
+}
+
+CP32_IRAM_EXT static void cp32_shell_cat(const char *name)
+{
+  cp32_shell_show(name, 0);
+}
+
+CP32_IRAM_EXT static void cp32_shell_tail(const char *name)
+{
+  cp32_shell_show(name, 1);
 }
 
 /* Allocate/release via MM's real IPC service; never touch allocator state
@@ -288,6 +327,11 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     cp32_shell_cat(line + 4);
   } else if (strcmp(line, "cat") == 0) {
     cp32_shell_print("Usage: cat filename\r\n");
+  } else if (line[0] == 't' && line[1] == 'a' && line[2] == 'i' &&
+             line[3] == 'l' && line[4] == ' ') {
+    cp32_shell_tail(line + 5);
+  } else if (strcmp(line, "tail") == 0) {
+    cp32_shell_print("Usage: tail filename\r\n");
   } else if (strcmp(line, "fsinfo") == 0) {
     cp32_shell_fsinfo();
   } else if (strcmp(line, "disk") == 0) {

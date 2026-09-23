@@ -777,3 +777,151 @@ checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x4038267c`,
 `_stack_top=0x3fcd2250`. MM and mapping/copy routines remain in extended IRAM.
 Markers: `[FEATURE MM-LAYOUT 58]1`, `[TEST MM-LAYOUT 58]`. Hardware pending;
 no flashing performed. Validate repeated mm and nested cat/list/disk/services.
+
+## Reference-aligned library layout — image 59
+
+[x] Compare remaining source responsibilities against minix-2.0.0. Move
+memcpy/memset/strcpy/strcmp/strtol unchanged from kernel/klib.c into matching
+lib/ansi filenames. Keep CP32 delay and hardware/bring-up files in place.
+Preserve the freestanding call0 ABI, implementations and section attributes.
+MINIX's full libc semantics are not claimed; existing strtol gaps are recorded
+in the refreshed minix.port-status.md. See docs/minix-source-layout.md.
+
+[x] Update separate library object paths and relocate runtime tests under
+tests/lib/ansi. Clean build has no warnings; all 23 host scripts pass.
+ELF sections/segments and image-layout check pass: _iram_end=0x403743b0,
+_iram_ext_end=0x4038267c, _stack_top=0x3fcd2250.
+
+[x] Record supplied image-58 hardware results: mm alloc-release-result=0,
+cat boot/README prints the expected two lines, disk result=0, heartbeat 1369.
+No repeated MM cycle or IRQ-5000 result is present in that capture.
+
+Identity: [FEATURE LIB-LAYOUT 59]1 and [TEST LIB-LAYOUT 59] immediately before
+idle. Hardware pending; no flash performed. Recheck mm, cat boot/README,
+ls boot, disk and sys, with normal keyboard/LCD behavior and clock progress.
+
+## MINIX V2 single-indirect regular-file reads — image 60
+
+[x] Record image-59 hardware acceptance in docs/hardware/lib-layout-v59.log:
+SYS/MM/IPC succeed, root and /boot list correctly, /boot/README content is
+correct, TTY WRITE returns 18, IRQ 5000 has unknown=0. No disk command was
+included in this capture.
+
+[x] Implement single-indirect regular-file mapping in fs/read.c, following
+MINIX read_map/rd_indir: seven direct zones plus 256 four-byte V2 entries in
+one 1024-byte indirect block, independent of zone scaling. Inode open stores
+validated geometry and checks the indirect root's bounds/allocation/aliasing.
+Read mapping explicitly decodes either endian order, checks referenced data
+zones and allocation, and preserves sparse holes. CP32 uses four-byte metadata
+reads and a 64-byte staged data transfer instead of MINIX's block cache; this
+preserves bounded stack use, freestanding ABI and error atomicity. Directories
+remain direct-only; double-indirect regular files return unsupported.
+
+[x] Host tests cover direct/indirect boundaries, last entry 255, both byte
+orders, 1/2 KiB zones, missing indirect trees and entries, EOF, corrupt and
+unallocated pointers, metadata/data short reads, unchanged buffers/positions,
+and unchanged handles on open failures. All 23 scripts pass. Clean build is
+warning-free; ELF/image layout checks pass. _iram_end=0x403743b0,
+_iram_ext_end=0x40382870, _stack_top=0x3fcd2450. Mapping/read code stays in
+extended IRAM. Previous uncommitted image-59 layout work is preserved.
+
+Identity: [FEATURE MINIX-INDIRECT 60]1 and [TEST MINIX-INDIRECT 60] immediately
+before idle. Hardware validation pending; no flash performed. Existing mm,
+sys, ipc, ls /boot, cat /boot/README, disk and write commands are regression
+checks only: the boot fixture has no indirect file. An on-device indirect-file
+fixture is still needed to validate the new path through real MEM IPC.
+
+## On-device single-indirect fixture — image 61
+
+[x] Record supplied image-60 log in docs/hardware/minix-indirect-v60.log.
+Root/nested README reads, boot listing, disk/MM/SYS/IPC/TTY calls succeed;
+IRQ 5000 reports unknown=0 and heartbeat reaches 5332. This validates the
+existing direct-file regression, not the new single-indirect path.
+
+[x] Extend the production boot image with boot/INDIRECT (inode 4). Seven
+1024-byte direct zones 9..15 contain 224 labeled lines; indirect block 16
+points to data zone 17 containing the final INDIRECT READ OK line. File size
+7185 bytes. Inode/zone maps and boot directory size are updated, root README
+and links preserved, final scratch block 63 remains outside filesystem zones.
+The generator retains its minimal fixture option for existing hostile parser
+tests; its normal CLI, used by firmware and MEM integration, emits the larger
+fixture. No runtime test hook or new shell command is introduced.
+
+[x] Verify the production fixture through actual shell cat, filesystem, MEM
+handler and backing storage with modeled IPC. Check every direct-zone line,
+indirect tail, allocation metadata, and unchanged disk checksum. All 23 host
+scripts pass; clean cross-build has no warnings and ELF/image layout checks
+pass. _iram_end=0x403743b0, _iram_ext_end=0x40382870,
+_stack_top=0x3fcd4820. Initialized fixture prefix is 17425 bytes (formerly
+8253); task stacks remain inside DRAM. Earlier uncommitted work preserved.
+
+Identity: [FEATURE INDIRECT-DEMO 61]1 and [TEST INDIRECT-DEMO 61] immediately
+before idle. Hardware pending; no flash performed. Run ls boot, then
+cat boot/INDIRECT: it prints 224 numbered direct-zone lines and must end with
+INDIRECT READ OK. Then run disk, cat README and mm. The long output exercises
+scrolling and scheduling as well as the first single-indirect data read.
+
+## Read-only file seeking and tail — image 62
+
+[x] Record image-61 hardware in docs/hardware/indirect-demo-v61.log. The full
+INDIRECT fixture reaches INDIRECT READ OK, IRQ 5000 has unknown=0, subsequent
+disk/MM checks return zero, and heartbeat reaches 6336. Single-indirect reads
+are now hardware-validated for this fixture (not all malformed/endian cases).
+
+[x] Add cp32_minix_file_seek to fs/open.c, matching MINIX do_lseek's file
+position responsibility. Support start/current/end, signed 32-bit offsets,
+beyond-EOF seeking, and unchanged state on invalid origin/negative position/
+overflow. CP32 retains caller-owned handles rather than claiming descriptor
+syscalls; target range is enforced on 64-bit host tests too. No cache/read-ahead
+state exists to invalidate, and no disk I/O occurs during seeking.
+
+[x] Add tail filename to the CP32 command client: last ten lines using 64-byte
+backward windows, filling reads that stop at zone boundaries. Reuse cat's
+existing rendering/error behavior. A trailing newline does not add an empty
+line; unterminated final lines count. This is an ordinary command, not a manual
+kernel diagnostic hook. Existing cat behavior remains tested.
+
+[x] Clean build, all 23 host scripts, whitespace and ELF/image-layout checks
+pass without warnings. Tests cover offset arithmetic, unchanged failure state,
+EOF and indirect readback; shell/MEM integration checks the expected ten-line
+indirect tail and empty/short/unterminated text. _iram_end=0x403743b0,
+_iram_ext_end=0x40382b04, _stack_top=0x3fcd4ad0. Earlier uncommitted work kept.
+
+Identity: [FEATURE MINIX-SEEK 62]1 and [TEST MINIX-SEEK 62] immediately before
+idle. Hardware pending; no flash performed. Run tail boot/INDIRECT: expect
+Direct zone 7, line 24 through line 32 then INDIRECT READ OK. Run tail README,
+cat README, disk and mm to regress shorter reads and other services.
+
+## Double-indirect regular files — image 63
+
+[x] Record supplied image-62 hardware evidence: tail boot/INDIRECT shows
+zone 7 lines 24–32 then INDIRECT READ OK; tail README and MM succeed. A
+subsequent capture runs disk (correcting earlier dist typo): five 512-byte
+transfers and RAM IPC result=0. Neither capture includes IRQ 5000.
+
+[x] Extend fs/read.c mapping using MINIX read_map's excess/256 and excess%256
+indices; inode.c decodes/validates the double root at inode byte 56. Handle
+missing root/child/data as sparse holes. Validate allocation, geometry and
+root/parent/direct aliases before following pointers. Four-byte explicit
+endian decoding and staged 64-byte data reads preserve bounded Xtensa stack
+use and unchanged caller buffer/position on failure. Regular files now cover
+7+256+65536 zones; directories remain direct-only. This is read-only mapping,
+not a complete filesystem integrity checker or descriptor service.
+
+[x] Add boot/DOUBLE (inode 5): sparse logical prefix of 263 KiB, double root
+18, child table 19, data zone 20. Last ten lines are Double indirect line 02
+through 10, then DOUBLE INDIRECT READ OK. tail exercises the new tree without
+printing/scanning the sparse prefix. Zone/inode maps and boot listing updated;
+reserved scratch block remains outside the filesystem. No runtime probe added.
+
+[x] All 23 host scripts and warning-free clean build pass. Tests cover both
+byte orders and 1/2 KiB zones; single/double boundary, child-table transition,
+last addressable entry, sparse trees, corrupt/unallocated roots/children/data,
+short reads, unchanged failure state, and fixture tail via shell/MEM/backend.
+ELF/image layout checks pass: _iram_end=0x403743b0,
+_iram_ext_end=0x40382c4c, _stack_top=0x3fcd5910.
+
+Identity: [FEATURE MINIX-DOUBLE 63]1, [TEST MINIX-DOUBLE 63] immediately before
+idle. Hardware pending; no flash performed. Run tail boot/DOUBLE, then
+tail boot/INDIRECT, disk and mm. Avoid cat boot/DOUBLE for routine validation:
+it would render the large sparse prefix as question marks.

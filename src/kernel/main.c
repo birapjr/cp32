@@ -192,7 +192,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE MM-LAYOUT 58]");
+  usbj_print("[FEATURE MINIX-DOUBLE 63]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -312,7 +312,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST MM-LAYOUT 58]\r\n");
+  usbj_print("[TEST MINIX-DOUBLE 63]\r\n");
   kernel_idle_loop();
 }
 

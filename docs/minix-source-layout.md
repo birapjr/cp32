@@ -92,3 +92,64 @@ Image identity: `[TEST FS-LAYOUT 57]`. Commands and disk contents are intended
 to remain unchanged. Recheck ls boot, cat boot/README, cat README, disk, and
 ordinary service/LCD behavior after flashing because splitting objects changes
 ELF addresses even when behavior is preserved.
+
+## Remaining tree comparison (image 59)
+
+The five standard primitives formerly in kernel/klib.c now each occupy the
+same filename as MINIX under src/lib/ansi/: memcpy.c, memset.c, strcpy.c,
+strcmp.c and strtol.c. Implementations, signatures and section attributes are
+preserved. Objects live under build/lib/ansi; runtime tests are in
+tests/lib/ansi/test_runtime.c. This is source alignment, not replacement
+with the reference libc. In particular, strtol still lacks full range/error
+handling. CP32's calibrated busy-wait delay stays in kernel/klib.c.
+
+| Existing location | Comparison and decision |
+| --- | --- |
+| kernel/start.c, main.c, proc.c, clock.c, system.c, tty.c, misc.c, memory.c | Already match MINIX kernel responsibilities; retain filenames. ESP32 startup, timer and register handling are adaptations. |
+| lib/other/printk.c | Already matches the reference library location. |
+| kernel/port.c | Retain CP32 trap/context glue. A future kernel/table.c split could centralize shared globals after auditing EXTERN ownership; do not move the whole file. |
+| kernel/cardputer.c, display.c, serial.c, wdt.c, hardware_init.c | Cardputer/ESP32-specific drivers; retain. PC keyboard/console filenames would imply a misleading hardware correspondence. |
+| kernel/mpx32.S, vectors.S, irq.S, klib32.S, esp32s3.ld | Xtensa startup, exception and linker implementation; retain. |
+| kernel/ramdisk.c, minix-demo.c; tools/make_minix_demo.py | CP32 backing storage and boot fixture; retain. MINIX MEM request handling already lives in kernel/memory.c. |
+| kernel/cp32-shell.c | CP32 diagnostic client; retain until an independent FS server and user ABI exist. Moving it to commands/sh would not implement a MINIX shell. |
+| include/esp32* and include/minix/cp32* | Architecture/protocol additions; retain alongside existing compatibility headers. |
+
+Add reference files such as fs/main.c, cache.c and mm/forkexit.c when their
+actual server/cache/lifecycle functionality is implemented. Empty matching
+files would not help readers follow the book. Image 59 requires a hardware
+regression despite unchanged algorithms and memory-region boundaries.
+
+## Single-indirect reads (image 60)
+
+Regular-file mapping now extends MINIX read.c responsibilities with a private
+cp32_read_map helper: seven direct zones and 256 single-indirect entries.
+inode.c validates the indirect root; file.h retains superblock geometry in
+the caller-owned handle. Metadata is decoded explicitly without allocating a
+1024-byte cache block on a kernel task stack. Directory traversal remains
+direct-only, and double-indirect files remain unsupported. The boot fixture
+is unchanged, so hardware indirect-path validation needs a larger fixture.
+
+## Hardware fixture (image 61)
+
+The production generator now adds boot/INDIRECT: inode 4, seven direct data
+zones 9..15, indirect table zone 16 and tail zone 17. Run cat boot/INDIRECT;
+after 224 labeled lines, INDIRECT READ OK confirms the indirect tail reached
+the console. The regular parser and shell need no manual diagnostic hook.
+The final scratch block remains reserved; all content is volatile across reset.
+
+## File positions (image 62)
+
+cp32_minix_file_seek lives in fs/open.c, corresponding to MINIX do_lseek.
+It updates caller-owned handle offsets for start/current/end origins within
+the signed 32-bit range. There is no descriptor table or read-ahead cache yet.
+The CP32 shell's tail command uses this API to find the last ten lines with
+bounded stack buffers, then shares cat's rendering. tail boot/INDIRECT provides
+a short hardware regression across the direct/single-indirect boundary.
+
+## Double-indirect mapping (image 63)
+
+fs/read.c follows MINIX read_map's two-level index calculation and inode.c
+reads the double root. Regular files support 7+256+65536 zones; directories
+remain direct-only. The caller-owned file.h handle stores both indirect roots.
+boot/DOUBLE is a sparse fixture: tail boot/DOUBLE ends in DOUBLE INDIRECT READ
+OK, exercising double-indirect metadata without reading its sparse prefix.

@@ -11,7 +11,15 @@ import struct
 
 README = b'CP32 MINIX V2 RAM filesystem.\nRead-only filesystem bring-up.\n'
 
-def build_image():
+# Exactly seven direct zones, then a short single-indirect tail.
+INDIRECT = b''.join(
+    (f'Direct zone {zone+1}, line {line+1:02d}'.ljust(31)+'\n').encode('ascii')
+    for zone in range(7) for line in range(32)) + b'INDIRECT READ OK\n'
+
+DOUBLE = b''.join(f'Double indirect line {i:02d}\n'.encode() for i in range(1,11)) + b'DOUBLE INDIRECT READ OK\n'
+
+def build_image(include_indirect=False):
+    """Keep a minimal parser fixture; CLI firmware always includes INDIRECT."""
     disk = bytearray(65536)
     disk[1024:1048] = struct.pack('<6HIHHI', 32, 0, 1, 1, 6, 0,
                                   0x7fffffff, 0x2468, 0, 63)
@@ -40,6 +48,29 @@ def build_image():
     directory(6, [(1, '.'), (1, '..'), (2, 'boot'), (3, 'README')])
     directory(7, [(2, '.'), (1, '..'), (3, 'README')])
     disk[8192:8192+len(README)] = README
+    if include_indirect:
+        # Inode 4, direct data zones 9..15, indirect table 16, tail zone 17.
+        inode(2, 0o40755, 2, 80, 7)
+        directory(7, [(2, '.'), (1, '..'), (3, 'README'), (4, 'INDIRECT'), (5, 'DOUBLE')])
+        disk[4288:4352] = struct.pack('<4H4I10I', 0o100444, 1, 0, 0,
+            len(INDIRECT), 0, 0, 0, *range(9, 16), 16, 0, 0)
+        disk[2048] |= 1 << 4
+        for zone in range(9, 18):
+            bit = zone - 6 + 1
+            disk[3072 + bit//8] |= 1 << (bit%8)
+        disk[9*1024:16*1024] = INDIRECT[:7*1024]
+        struct.pack_into('<I', disk, 16*1024, 17)
+        disk[17*1024:17*1024+len(INDIRECT)-7*1024] = INDIRECT[7*1024:]
+        # Sparse logical file: double-indirect data begins at zone index 263.
+        disk[4352:4416] = struct.pack('<4H4I10I', 0o100444, 1, 0, 0,
+            263*1024+len(DOUBLE), 0, 0, 0, *([0]*8), 18, 0)
+        disk[2048] |= 1 << 5
+        for zone in range(18, 21):
+            bit = zone - 5
+            disk[3072+bit//8] |= 1 << (bit%8)
+        struct.pack_into('<I', disk, 18*1024, 19)
+        struct.pack_into('<I', disk, 19*1024, 20)
+        disk[20*1024:20*1024+len(DOUBLE)] = DOUBLE
     return bytes(disk)
 
 def main():
@@ -47,7 +78,7 @@ def main():
     parser.add_argument('--image', required=True)
     parser.add_argument('--header', required=True)
     args = parser.parse_args()
-    disk = build_image()
+    disk = build_image(include_indirect=True)
     Path(args.image).write_bytes(disk)
     # Store only the initialized prefix in firmware. The RAM disk is zeroed
     # by startup; the full .img remains available for independent inspection.

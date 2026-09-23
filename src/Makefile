@@ -19,9 +19,10 @@ MM_SRCS = main.c alloc.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
 FS_SRCS = super.c inode.c path.c open.c read.c utility.c
 FS_HEADERS = $(wildcard fs/*.h)
+ANSI_SRCS = memcpy.c memset.c strcpy.c strcmp.c strtol.c
 LIB_SRCS = lib/other/printk.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) $(patsubst %.c,$(BUILD_DIR)/fs/%.o,$(FS_SRCS)) $(patsubst %.c,$(BUILD_DIR)/mm/%.o,$(MM_SRCS))
-LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS))
+LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS)) $(patsubst %.c,$(BUILD_DIR)/lib/ansi/%.o,$(ANSI_SRCS))
 
 TARGET  = cp32
 
@@ -54,6 +55,10 @@ tests:
 	exit $$status
 
 # Compile all .c files
+$(BUILD_DIR)/lib/ansi/%.o: lib/ansi/%.c | $(BUILD_DIR)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 $(BUILD_DIR)/mm/%.o: mm/%.c $(MM_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@

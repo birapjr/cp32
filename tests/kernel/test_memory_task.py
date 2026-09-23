@@ -13,7 +13,7 @@ from test_idle_handoff import extract_function
 bodies = [extract_function(ROOT / 'src/kernel/memory.c', name)
           for name in ('cp32_mem_request', 'mem_task')]
 bodies += [extract_function(ROOT / 'src/kernel/cp32-shell.c', name)
-           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_cat', 'cp32_shell_ls')]
+           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_tail_start', 'cp32_shell_show', 'cp32_shell_cat', 'cp32_shell_tail', 'cp32_shell_ls')]
 prelude = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -49,7 +49,7 @@ static unsigned char user[1026];
 static unsigned user_size=1024, copies,max_copy;
 static int shell_mode, requests, fail_request, partial_write, corrupt_reply;
 static int receives,sends,traces,panic_mode;
-static char console[512];
+static char console[10000];
 static void cp32_shell_print(const char *text) {
   assert(strlen(console)+strlen(text)<sizeof(console)); strcat(console,text);
 }
@@ -209,7 +209,7 @@ int main(void) {
     console[0]=0; cp32_shell_cat("/boot/README");
     assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
     console[0]=0; cp32_shell_ls("boot");
-    assert(!strcmp(console,".\r\n..\r\nREADME\r\n"));
+    assert(!strcmp(console,".\r\n..\r\nREADME\r\nINDIRECT\r\nDOUBLE\r\n"));
     assert(cp32_minix_root_open(cp32_shell_disk_read,capacity,&dir)==0);
     for(unsigned entry=0;entry<4;entry++) {
       assert(cp32_minix_root_next(&dir,&number,name)==1);
@@ -219,6 +219,52 @@ int main(void) {
     assert(cp32_shell_disk_check()==0);
     assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
   }
+  /* Full indirect fixture through production shell, MEM and backing disk. */
+  console[0]=0; cp32_shell_cat("/boot/INDIRECT");
+  char expected_line[40]; unsigned cursor=0;
+  for(unsigned zone=1;zone<=7;zone++) for(unsigned line=1;line<=32;line++) {
+    int n=sprintf(expected_line,"Direct zone %u, line %02u",zone,line);
+    while(n<31) expected_line[n++]=' ';
+    expected_line[n++]='\r'; expected_line[n++]='\n';
+    assert(!memcmp(console+cursor,expected_line,n)); cursor+=n;
+  }
+  assert(!strcmp(console+cursor,"INDIRECT READ OK\r\n"));
+  assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
+  console[0]=0; cp32_shell_tail("boot/INDIRECT");
+  cursor=0;
+  for(unsigned line=24;line<=32;line++) {
+    int n=sprintf(expected_line,"Direct zone 7, line %02u",line);
+    while(n<31) expected_line[n++]=' ';
+    expected_line[n++]='\r'; expected_line[n++]='\n';
+    assert(!memcmp(console+cursor,expected_line,n)); cursor+=n;
+  }
+  assert(!strcmp(console+cursor,"INDIRECT READ OK\r\n"));
+  console[0]=0; cp32_shell_tail("README");
+  assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
+  console[0]=0; cp32_shell_tail("boot/DOUBLE");
+  cursor=0;
+  for(unsigned line=2;line<=10;line++) {
+    int n=sprintf(expected_line,"Double indirect line %02u\r\n",line);
+    assert(!memcmp(console+cursor,expected_line,n)); cursor+=n;
+  }
+  assert(!strcmp(console+cursor,"DOUBLE INDIRECT READ OK\r\n"));
+  assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
+  /* Tail line semantics, including empty and unterminated files. */
+  const char *inputs[]={"", "\n", "one", "one\n",
+      "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12",
+      "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n"};
+  const char *outputs[]={"", "\r\n", "one\r\n", "one\r\n",
+      "3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n",
+      "3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n"};
+  for(unsigned test=0;test<sizeof(inputs)/sizeof(inputs[0]);test++) {
+    unsigned n=strlen(inputs[test]);
+    unsigned char size_bytes[4]={n&255,(n>>8)&255,0,0};
+    assert(cp32_ramdisk_write_bytes(4232,size_bytes,4)==0);
+    if(n) assert(cp32_ramdisk_write_bytes(8192,inputs[test],n)==0);
+    console[0]=0; cp32_shell_tail("README"); assert(!strcmp(console,outputs[test]));
+  }
+  /* Restore the boot fixture after isolated edge cases. */
+  assert(cp32_minix_demo_init()==0);
   console[0]=0; cp32_shell_cat("missing"); assert(!strcmp(console,"File not found\r\n"));
   console[0]=0; cp32_shell_cat("boot"); assert(!strcmp(console,"Is a directory\r\n"));
   console[0]=0; cp32_shell_cat("README/.."); assert(!strcmp(console,"Not a directory\r\n"));

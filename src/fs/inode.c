@@ -66,7 +66,7 @@ CP32_IRAM_EXT int cp32_fs_file_inode(cp32_disk_reader read,
   next.size = cp32_fs_u32(raw + 8, swap);
   next.zone_bytes = 1024U << super->log_zone_size;
   if (next.size > super->max_size) return -CP32_SUPER_INVALID;
-  if (next.size > 7 * next.zone_bytes) return -CP32_SUPER_UNSUPPORTED;
+  if (next.size > (7 + 256 + 256*256) * next.zone_bytes) return -CP32_SUPER_UNSUPPORTED;
   used = (next.size + next.zone_bytes - 1) / next.zone_bytes;
   for (i = 0; i < 7; i++) {
     unsigned j;
@@ -78,6 +78,28 @@ CP32_IRAM_EXT int cp32_fs_file_inode(cp32_disk_reader read,
       if (next.zones[j] == next.zones[i]) return -CP32_SUPER_INVALID;
     result = cp32_fs_allocated(read, (2 + super->imap_blocks) * 1024,
                        next.zones[i] - super->first_data_zone + 1, swap);
+    if (result) return result;
+  }
+  next.super = *super;
+  next.indirect = cp32_fs_u32(raw + 52, swap);
+  if (used > 7 && next.indirect) {
+    if (next.indirect < super->first_data_zone || next.indirect >= super->zones)
+      return -CP32_SUPER_INVALID;
+    for (i = 0; i < 7; i++)
+      if (next.indirect == next.zones[i]) return -CP32_SUPER_INVALID;
+    result = cp32_fs_allocated(read, (2 + super->imap_blocks) * 1024,
+                       next.indirect - super->first_data_zone + 1, swap);
+    if (result) return result;
+  }
+  next.double_indirect = cp32_fs_u32(raw + 56, swap);
+  if (used > 263 && next.double_indirect) {
+    if (next.double_indirect < super->first_data_zone ||
+        next.double_indirect >= super->zones ||
+        next.double_indirect == next.indirect) return -CP32_SUPER_INVALID;
+    for (i = 0; i < 7; i++)
+      if (next.double_indirect == next.zones[i]) return -CP32_SUPER_INVALID;
+    result = cp32_fs_allocated(read, (2 + super->imap_blocks) * 1024,
+                       next.double_indirect - super->first_data_zone + 1, swap);
     if (result) return result;
   }
   next.position = 0;

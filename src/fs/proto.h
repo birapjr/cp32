@@ -30,6 +30,9 @@ CP32_IRAM_EXT int cp32_minix_dir_open(cp32_disk_reader read, unsigned capacity,
                                      const char *path, struct cp32_minix_dir *dir);
 CP32_IRAM_EXT int cp32_minix_file_open(cp32_disk_reader read, unsigned capacity,
                                       const char *name, struct cp32_minix_file *file);
+/* whence: 0=start, 1=current, 2=end; returns 0 or negative status. */
+CP32_IRAM_EXT int cp32_minix_file_seek(struct cp32_minix_file *file,
+                                      long offset, int whence);
 /* read.c: up to 64 bytes, zero at EOF, negative status on failure. */
 CP32_IRAM_EXT int cp32_minix_file_read(struct cp32_minix_file *file,
                                       char *buffer, unsigned count);

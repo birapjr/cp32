@@ -10,7 +10,7 @@ import tempfile
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools'))
-from make_minix_demo import build_image, README
+from make_minix_demo import build_image, README, INDIRECT, DOUBLE
 
 class Super(C.Structure):
     _fields_ = [(name, C.c_uint) for name in (
@@ -21,7 +21,8 @@ class Dir(C.Structure):
                 ('position', C.c_uint), ('zones', C.c_uint*7)]
 class File(C.Structure):
     _fields_ = [('read', Reader), ('size', C.c_uint), ('position', C.c_uint),
-                ('zone_bytes', C.c_uint), ('zones', C.c_uint*7)]
+                ('zone_bytes', C.c_uint), ('zones', C.c_uint*7),
+                ('super', Super), ('indirect', C.c_uint), ('double_indirect', C.c_uint)]
 
 def swapped_image(original):
     data = bytearray(original)
@@ -236,7 +237,7 @@ with tempfile.TemporaryDirectory() as tmp:
         file_test(image, error=-4, fail_at=failure, short=True)
     for offset, fmt, value, error in (
         (4226, 'H', 0, -3), (4224, 'H', 0o20644, -2),
-        (4232, 'I', 0xffffffff, -3), (4232, 'I', 7169, -2),
+        (4232, 'I', 0xffffffff, -3), (4232, 'I', 65799*1024+1, -2),
         (4248, 'I', 5, -3), (4248, 'I', 63, -3)):
         bad = bytearray(image)
         struct.pack_into('<'+fmt, bad, offset, value)
@@ -263,3 +264,177 @@ with tempfile.TemporaryDirectory() as tmp:
     crossing[3072] &= ~(1 << 4)
     file_test(crossing, error=-3)
     print('MINIX file reads: root lookup, endian, EOF, sparse zones, crossing, errors and unchanged offsets/buffers pass')
+
+    # Single-indirect mapping: both byte orders and multi-block zones.
+    for swap in (False, True):
+        for shift in (0, 1):
+            endian = '>' if swap else '<'
+            indirect = bytearray(image)
+            # Keep directory zones unscaled for lookup; open the regular inode
+            # with validated geometry directly to isolate scaled read mapping.
+            superblock = Super(32, 63 >> shift, 6, shift, 0x7fffffff, 1, 1, int(swap))
+            zbytes = 1024 << shift
+            direct, table, datazone = 10, 11, 12
+            size = 8*zbytes+9
+            struct.pack_into(endian+'4H4I10I', indirect, 4224,
+                0o100444, 2, 0, 0, size, 0, 0, 0,
+                direct, 0, 0, 0, 0, 0, 0, table, 0, 0)
+            indirect[2048:2050] = struct.pack(endian+'H', 15)
+            indirect[3072:3074] = struct.pack(endian+'H', 1 | sum(1 << (z-5) for z in (direct,table,datazone)))
+            indirect[direct*zbytes:(direct+1)*zbytes] = b'D'*zbytes
+            indirect[datazone*zbytes:(datazone+1)*zbytes] = b'I'*zbytes
+            struct.pack_into(endian+'II', indirect, table*zbytes, datazone, 0)
+            fail = [None]
+            @Reader
+            def reader(offset, buffer, count):
+                assert 0 <= offset and 0 < count <= len(indirect)-offset
+                C.memmove(buffer, bytes(indirect[offset:offset+count]), count)
+                return count-1 if offset == fail[0] else count
+            lib.cp32_fs_file_inode.argtypes = [Reader, C.POINTER(Super), C.c_uint, C.POINTER(File)]
+            f = File()
+            assert lib.cp32_fs_file_inode(reader, C.byref(superblock), 3, C.byref(f)) == 0
+            def at(position, expected=None, error=None):
+                f.position = position
+                buf = C.create_string_buffer(b'Z'*64, 64)
+                result = lib.cp32_minix_file_read(C.byref(f), buf, 64)
+                if error is not None:
+                    assert result == error and f.position == position and buf.raw == b'Z'*64
+                else:
+                    assert result == len(expected) and buf.raw[:result] == expected
+                    assert f.position == position+result
+            at(zbytes-3, b'D'*3)
+            at(zbytes, bytes(64))
+            at(7*zbytes-3, bytes(3))
+            at(7*zbytes, b'I'*64)
+            at(8*zbytes, bytes(9))
+            at(size, b'')
+            for offset in (table*zbytes, 3072, datazone*zbytes):
+                fail[0] = offset
+                at(7*zbytes, error=-4)
+            fail[0] = None
+            for bad in (5, superblock.zones, table, direct, 13):
+                struct.pack_into(endian+'I', indirect, table*zbytes, bad)
+                at(7*zbytes, error=-3)
+            struct.pack_into(endian+'I', indirect, table*zbytes, 0)
+            at(7*zbytes, bytes(64))
+            f.indirect = 0
+            at(7*zbytes, bytes(64))
+            f.size = 263*zbytes
+            at(262*zbytes, bytes(64))
+            f.indirect = table
+            struct.pack_into(endian+'I', indirect, table*zbytes+255*4, datazone)
+            at(262*zbytes, b'I'*64)
+            f.size += 1
+            at(263*zbytes, bytes(1))
+            # Invalid/unallocated/aliased indirect metadata cannot publish a handle.
+            for bad in (5, superblock.zones, direct, 13):
+                struct.pack_into(endian+'I', indirect, 4224+52, bad)
+                C.memset(C.byref(f), 0xa5, C.sizeof(f))
+                before = bytes(f)
+                assert lib.cp32_fs_file_inode(reader, C.byref(superblock), 3, C.byref(f)) == -3
+                assert bytes(f) == before
+    print('Single-indirect reads: endian, scaled zones, holes, boundaries, corrupt pointers and short I/O pass')
+
+    expanded = build_image(include_indirect=True)
+    assert len(INDIRECT) == 7*1024+len(b'INDIRECT READ OK\n')
+    assert len(expanded) == 65536 and not any(expanded[63*1024:])
+    run(expanded, path=b'boot', expected_names=boot_entries+[(4, 'INDIRECT'), (5, 'DOUBLE')])
+    file_test(expanded, name=b'/boot/INDIRECT', content=INDIRECT)
+    assert struct.unpack_from('<I', expanded, 4288+52)[0] == 16
+    assert struct.unpack_from('<I', expanded, 16*1024)[0] == 17
+    assert struct.unpack_from('<H', expanded, 4288+2)[0] == 1
+    for zone in range(6, 63):
+        bit = zone-5
+        assert bool(expanded[3072+bit//8] & (1 << (bit%8))) == (zone <= 20)
+    print('Boot INDIRECT fixture: exact contents, inode/table ownership and scratch reservation pass')
+
+    lib.cp32_minix_file_seek.argtypes = [C.POINTER(File), C.c_long, C.c_int]
+    @Reader
+    def seek_reader(offset, buffer, count):
+        C.memmove(buffer, expanded[offset:offset+count], count)
+        return count
+    f = File()
+    assert lib.cp32_minix_file_open(seek_reader, len(expanded), b'boot/INDIRECT', C.byref(f)) == 0
+    for offset, whence, expected in ((0,0,0), (7168,0,7168), (-17,2,7168),
+                                    (-1,1,7167), (1,1,7168),
+                                    (100,2,len(INDIRECT)+100), (0x7fffffff,0,0x7fffffff)):
+        assert lib.cp32_minix_file_seek(C.byref(f), offset, whence) == 0
+        assert f.position == expected
+    for offset, whence in ((1,1), (-1,0), (-2147483648,0), (0,3), (0,-1),
+                           (-len(INDIRECT)-1,2)):
+        before = bytes(f)
+        assert lib.cp32_minix_file_seek(C.byref(f), offset, whence) == -3
+        assert bytes(f) == before
+    assert lib.cp32_minix_file_read(C.byref(f), C.create_string_buffer(64), 64) == 0
+    assert lib.cp32_minix_file_seek(C.byref(f), -17, 2) == 0
+    buf = C.create_string_buffer(64)
+    assert lib.cp32_minix_file_read(C.byref(f), buf, 64) == 17
+    assert buf.raw[:17] == b'INDIRECT READ OK\n'
+    assert lib.cp32_minix_file_seek(None,0,0) == -3
+    print('Seek: start/current/end, signed limits, EOF, unchanged failures and indirect readback pass')
+
+    f = File()
+    assert lib.cp32_minix_file_open(seek_reader,len(expanded),b'boot/DOUBLE',C.byref(f)) == 0
+    assert lib.cp32_minix_file_seek(C.byref(f),263*1024,0) == 0
+    output = b''
+    while True:
+        n = lib.cp32_minix_file_read(C.byref(f),buf,64)
+        assert n >= 0
+        if not n: break
+        output += buf.raw[:n]
+    assert output == DOUBLE
+
+    for swap in (0, 1):
+        for shift in (0, 1):
+            order = '>' if swap else '<'
+            data = bytearray(65536)
+            zb = 1024 << shift
+            sp = Super(32, 63 >> shift, 6, shift, 0x7fffffff, 1, 1, swap)
+            struct.pack_into(order+'H',data,2048,1<<3)
+            struct.pack_into(order+'H',data,3072,sum(1<<(z-5) for z in (10,11,12)))
+            struct.pack_into(order+'4H4I10I',data,4224,0o100444,1,0,0,
+                             65799*zb,0,0,0,*([0]*8),10,0)
+            for index in (0,1,255):
+                struct.pack_into(order+'I',data,10*zb+index*4,11)
+                struct.pack_into(order+'I',data,11*zb+index*4,12)
+            data[12*zb:13*zb] = b'X'*zb
+            fail = [None]
+            @Reader
+            def double_reader(offset,buffer,count):
+                assert 0 <= offset and 0 < count <= len(data)-offset
+                C.memmove(buffer,bytes(data[offset:offset+count]),count)
+                return count-1 if offset == fail[0] else count
+            f = File()
+            assert lib.cp32_fs_file_inode(double_reader,C.byref(sp),3,C.byref(f)) == 0
+            def check(index, expected=b'X'*64, error=None):
+                f.position=index*zb
+                before=bytes(f)
+                C.memset(buf,0x5a,64)
+                n=lib.cp32_minix_file_read(C.byref(f),buf,64)
+                if error is not None:
+                    assert n == error and bytes(f) == before and buf.raw == b'Z'*64
+                else:
+                    assert n == 64 and buf.raw == expected
+            for index in (263,264,518,519,65798): check(index)
+            check(262,bytes(64))
+            check(265,bytes(64))
+            check(263+2*256,bytes(64))
+            f.double_indirect=0
+            check(263,bytes(64))
+            f.double_indirect=10
+            for offset in (10*zb,11*zb,3072,12*zb):
+                fail[0]=offset
+                check(263,error=-4)
+            fail[0]=None
+            for table, good in ((10,11),(11,12)):
+                for bad in (5,sp.zones,10,11,13):
+                    if bad == good: continue
+                    struct.pack_into(order+'I',data,table*zb,bad)
+                    check(263,error=-3)
+                struct.pack_into(order+'I',data,table*zb,good)
+            for bad in (5,sp.zones,13):
+                struct.pack_into(order+'I',data,4224+56,bad)
+                before=bytes(f)
+                assert lib.cp32_fs_file_inode(double_reader,C.byref(sp),3,C.byref(f)) == -3
+                assert bytes(f) == before
+    print('Double indirect: endian/scaled zones, both index boundaries, holes, corrupt trees and short I/O pass')
