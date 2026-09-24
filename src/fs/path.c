@@ -46,13 +46,26 @@ CP32_IRAM_EXT int cp32_minix_root_next(struct cp32_minix_dir *dir,
                                       unsigned *inode, char name[15])
 {
   unsigned char raw[16];
-  unsigned zone_bytes, offset, number, i;
+  unsigned zone_bytes, offset, number, i, zone;
   int result;
   if (!dir || !dir->read || !inode || !name) return -CP32_SUPER_INVALID;
   zone_bytes = 1024U << dir->super.log_zone_size;
   while (dir->position < dir->size) {
-    offset = dir->zones[dir->position / zone_bytes] * zone_bytes +
-             dir->position % zone_bytes;
+    if (dir->position / zone_bytes < 7) {
+      zone = dir->zones[dir->position / zone_bytes];
+    } else {
+      struct cp32_minix_file mapping;
+      mapping.read=dir->read;
+      mapping.super=dir->super;
+      mapping.zone_bytes=zone_bytes;
+      mapping.indirect=dir->indirect;
+      mapping.double_indirect=0;
+      for(i=0;i<7;i++) mapping.zones[i]=dir->zones[i];
+      result=cp32_fs_read_map(&mapping,dir->position/zone_bytes,&zone);
+      if(result) return result;
+      if(!zone) return -CP32_SUPER_INVALID; /* directories cannot have holes */
+    }
+    offset = zone * zone_bytes + dir->position % zone_bytes;
     if (dir->read(offset, (char *)raw, sizeof(raw)) != sizeof(raw))
       return -CP32_SUPER_IO;
     number = cp32_fs_u16(raw, dir->super.swapped);
@@ -69,5 +82,31 @@ CP32_IRAM_EXT int cp32_minix_root_next(struct cp32_minix_dir *dir,
     dir->position += 16;
     return 1;
   }
+  return 0;
+}
+
+/* Compose without collapsing dot components: README/.. must still fail
+ * during inode traversal. Caller supplies a PATH_MAX+1 byte output buffer. */
+CP32_IRAM_EXT int cp32_minix_abspath(const char *cwd, const char *path, char *out)
+{
+  char next[CP32_MINIX_PATH_MAX+1];
+  unsigned n=0, i=0;
+  if (!cwd || cwd[0]!='/' || !path || !*path || !out) return -CP32_FILE_NAME;
+  if (*path!='/') {
+    while (cwd[i]) {
+      if (n==CP32_MINIX_PATH_MAX) return -CP32_FILE_NAME;
+      next[n++]=cwd[i++];
+    }
+    if (next[n-1]!='/') {
+      if (n==CP32_MINIX_PATH_MAX) return -CP32_FILE_NAME;
+      next[n++]='/';
+    }
+  }
+  for (i=0;path[i];i++) {
+    if (n==CP32_MINIX_PATH_MAX) return -CP32_FILE_NAME;
+    next[n++]=path[i];
+  }
+  next[n]=0;
+  for(i=0;i<=n;i++) out[i]=next[i];
   return 0;
 }

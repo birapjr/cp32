@@ -1,4 +1,4 @@
-# MINIX port status — image 63
+# MINIX port status — image 73
 
 ## Summary
 
@@ -165,3 +165,105 @@ validation remains pending. Region endpoints: 0x403743b0 / 0x40382c4c; stack
 top 0x3fcd5910. Prior statements that regular-file double-indirect reads are
 unsupported are superseded by this implementation; full FS service, directory
 indirection, descriptors, permissions and writes remain future work.
+
+## Image 64 update
+
+Image 63 double-indirect and single-indirect tail commands, disk/MM and IRQ
+5000 unknown=0 are hardware-confirmed in docs/hardware/minix-double-v63.log.
+Metadata inspection now lives in fs/stadir.c:cp32_minix_stat, following MINIX's
+same file. Regular/directory metadata is decoded with immutable failure output;
+full stat/fstat ABI, device nodes, permission policy and timestamp updates remain
+future work. All 23 host scripts, clean build and ELF checks pass. Image 64
+hardware validation is pending: stat README, stat boot and stat boot/DOUBLE.
+Current endpoints: IRAM 0x403743b0, extended IRAM 0x40382f60, stack 0x3fcd5ca0.
+
+## Image 65 update
+
+Image 64 stat metadata, disk/MM and IRQ 5000 unknown=0 are hardware-confirmed
+in docs/hardware/minix-stat-v64.log. Image 65 adds shell cwd, cd/pwd and relative
+ls/cat/tail/stat via helpers in fs/path.c and stadir.c. This supersedes older
+statements that all relative shell paths start at root; per-process cwd inode
+references and permission policy remain missing. All 23 host tests, clean
+build and ELF checks pass. Hardware validation pending. Current endpoints:
+IRAM 0x403743b0, extended IRAM 0x40383418, stack 0x3fcd6280.
+
+## Image 66 update
+
+Image 65 cwd/relative command handling passes on hardware through IRQ 5000;
+cd - was unsupported. Image 66 adds command-client previous-directory toggling
+with atomic failure behavior. All 23 host scripts and clean build/ELF checks
+pass; hardware pending. This remains temporary single-client state, not full
+MINIX process/environment semantics. Current endpoints: 0x403743b0,
+0x403834d4 and stack 0x3fcd6450.
+
+## Image 67 update
+
+Image 66 previous-directory and relative read regressions pass through IRQ
+5000 (unknown=0), recorded in docs/hardware/cwd-prev-v66.log. Image 67 lifts
+the seven-direct-zone directory limit to include single-indirect mapping,
+using the regular-file mapper from path.c. Double-indirect directories remain
+unsupported. All 23 host tests, clean build and ELF checks pass; hardware
+validation pending via ls/cat boot/LARGE. Current region endpoints are
+0x403743b0, 0x40383628 and stack 0x3fcd88b0. Older statements that directories
+are direct-only are superseded by this bounded extension.
+
+## Image 68 interrupt correction
+
+Image 67 exercises large-directory navigation successfully, but at IRQ 15000
+raw disabled internal-timer bits inflate unknown reporting. Image 68 filters
+IRQ dispatcher input with INTENABLE, preserving raw diagnostics and enabled
+unregistered sources. Both assembly entry/handoff paths pass host tests;
+all 23 scripts and clean build/ELF checks pass. Hardware soak beyond 15000
+is pending. This supersedes any blanket clean-soak claim for image 67.
+Current endpoints: IRAM 0x403743b8, extended IRAM 0x40383628, stack 0x3fcd88b0.
+
+## Image 69 update
+
+Image 68 interrupt masking is hardware-confirmed through IRQ 20000 with
+unknown=0 even after raw compare-timer pending bits appear. Image 69 adds
+fs/cache.c's four-block clean cache; source-level validation includes bounded
+reads, atomic failed fills and invalidation before raw writes. All 24 host
+scripts and clean build/ELF checks pass; hardware validation pending. This
+supersedes prior claims that no block cache exists; full MINIX buffer locking,
+LRU/hash queues, dirty/write-back state and independent FS server remain absent.
+Region endpoints: 0x403743b8, 0x40383920 and stack 0x3fcd9bd0.
+
+## Image 70 update
+
+Image 69 cache read/disk/read regression and IRQ 15000 unknown=0 pass on
+hardware. Image 70 adds single-client read-only descriptors in fs/filedes.c
+and routes production cat/tail through them. This supersedes older blanket
+claims that there is no descriptor table; per-process descriptors, shared
+open-file descriptions, dup/fork and a syscall FS server remain missing.
+All 24 host tests, clean build and ELF checks pass; hardware validation pending.
+Current endpoints: 0x403743b8, 0x40383ae8 and stack 0x3fcda060.
+
+## Image 71 update
+
+Image 70 passes the twelve-read reuse/error/disk regression in the second boot
+of docs/hardware/minix-fd-v70.log. Image 71 adds reference-counted descriptions
+in filedes.c and dup/dup2 in misc.c; tail's production scan uses dup. cmp tests
+two independent opens. All 24 host scripts, clean build and ELF checks pass;
+hardware validation pending. dup2 has host coverage but no production caller.
+This supersedes prior blanket statements that descriptor sharing is absent;
+per-process tables, fork inheritance and FS syscall dispatch remain missing.
+Current endpoints: 0x403743b8, 0x4038400c, stack 0x3fcda600.
+
+## Image 72 update
+
+Image 71 comparisons, descriptor-backed tail/cat, disk/MM and IRQ 10000 pass
+on hardware. Image 72 renames the fixture's uppercase entries to lowercase
+for Cardputer typing; filesystem contents and behavior are unchanged. Use
+readme, boot/indirect, boot/double and boot/large/readme in current commands.
+All 24 host scripts, clean build and ELF checks pass; hardware pending.
+Memory boundaries are unchanged from image 71.
+
+## Image 73 update
+
+Image 72 lowercase listing/read/tail/cmp and IRQ 10000 unknown=0 pass on hardware.
+Image 73 adds descriptor fstat to stadir.c with inode identity in open state;
+production tail uses it. Metadata access preserves offsets and does not redo
+path lookup. All 24 host scripts, clean build and ELF checks pass; hardware
+validation pending. Prior statements that fstat is absent are superseded for
+this bounded internal API; full syscall ABI and inode-lifetime management are
+still missing. Endpoints: 0x403743b8, 0x403840e4, stack 0x3fcda700.

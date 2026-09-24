@@ -45,13 +45,13 @@ def build_image(include_indirect=False):
     inode(1, 0o40755, 3, 64, 6)
     inode(2, 0o40755, 2, 48, 7)
     inode(3, 0o100444, 2, len(README), 8)
-    directory(6, [(1, '.'), (1, '..'), (2, 'boot'), (3, 'README')])
-    directory(7, [(2, '.'), (1, '..'), (3, 'README')])
+    directory(6, [(1, '.'), (1, '..'), (2, 'boot'), (3, 'readme')])
+    directory(7, [(2, '.'), (1, '..'), (3, 'readme')])
     disk[8192:8192+len(README)] = README
     if include_indirect:
         # Inode 4, direct data zones 9..15, indirect table 16, tail zone 17.
-        inode(2, 0o40755, 2, 80, 7)
-        directory(7, [(2, '.'), (1, '..'), (3, 'README'), (4, 'INDIRECT'), (5, 'DOUBLE')])
+        inode(2, 0o40755, 3, 96, 7)
+        directory(7, [(2, '.'), (1, '..'), (3, 'readme'), (4, 'indirect'), (5, 'double'), (6, 'large')])
         disk[4288:4352] = struct.pack('<4H4I10I', 0o100444, 1, 0, 0,
             len(INDIRECT), 0, 0, 0, *range(9, 16), 16, 0, 0)
         disk[2048] |= 1 << 4
@@ -71,6 +71,17 @@ def build_image(include_indirect=False):
         struct.pack_into('<I', disk, 18*1024, 19)
         struct.pack_into('<I', disk, 19*1024, 20)
         disk[20*1024:20*1024+len(DOUBLE)] = DOUBLE
+        # Directory with deleted slots and a live entry beyond seven zones.
+        inode(3, 0o100444, 3, len(README), 8)
+        disk[4416:4480] = struct.pack('<4H4I10I',0o40755,2,0,0,
+            7*1024+16,0,0,0,*range(21,28),28,0,0)
+        disk[2048] |= 1 << 6
+        for zone in range(21,30):
+            bit=zone-5
+            disk[3072+bit//8] |= 1 << (bit%8)
+        directory(21,[(6,'.'),(2,'..')])
+        struct.pack_into('<I',disk,28*1024,29)
+        directory(29,[(3,'readme')])
     return bytes(disk)
 
 def main():

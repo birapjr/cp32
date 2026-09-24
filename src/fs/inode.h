@@ -6,6 +6,6 @@
 struct cp32_minix_dir {
   struct cp32_minix_super super;
   cp32_disk_reader read;
-  unsigned size, position, zones[7];
+  unsigned size, position, zones[7], indirect;
 };
 #endif

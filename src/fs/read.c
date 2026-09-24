@@ -29,7 +29,7 @@ CP32_IRAM_EXT static int cp32_read_indirect(struct cp32_minix_file *file,
   return 0;
 }
 
-CP32_IRAM_EXT static int cp32_read_map(struct cp32_minix_file *file,
+CP32_IRAM_EXT int cp32_fs_read_map(struct cp32_minix_file *file,
                                       unsigned index, unsigned *zone)
 {
   unsigned table, excess;
@@ -57,7 +57,7 @@ CP32_IRAM_EXT int cp32_minix_file_read(struct cp32_minix_file *file,
   if (chunk > sizeof(bytes)) chunk = sizeof(bytes);
   within = file->position % file->zone_bytes;
   if (chunk > file->zone_bytes - within) chunk = file->zone_bytes - within;
-  result = cp32_read_map(file, file->position / file->zone_bytes, &zone);
+  result = cp32_fs_read_map(file, file->position / file->zone_bytes, &zone);
   if (result) return result;
   if (zone) {
     if (file->read(zone * file->zone_bytes + within, bytes, chunk) != (int)chunk)

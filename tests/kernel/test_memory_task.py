@@ -13,7 +13,7 @@ from test_idle_handoff import extract_function
 bodies = [extract_function(ROOT / 'src/kernel/memory.c', name)
           for name in ('cp32_mem_request', 'mem_task')]
 bodies += [extract_function(ROOT / 'src/kernel/cp32-shell.c', name)
-           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_tail_start', 'cp32_shell_show', 'cp32_shell_cat', 'cp32_shell_tail', 'cp32_shell_ls')]
+           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_uncached', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_tail_scan', 'cp32_shell_tail_start', 'cp32_shell_show', 'cp32_shell_cat', 'cp32_shell_tail', 'cp32_shell_ls', 'cp32_shell_stat', 'cp32_shell_cd', 'cp32_shell_cmp')]
 prelude = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -50,6 +50,8 @@ static unsigned user_size=1024, copies,max_copy;
 static int shell_mode, requests, fail_request, partial_write, corrupt_reply;
 static int receives,sends,traces,panic_mode;
 static char console[10000];
+static char cp32_shell_cwd[256]="/";
+static char cp32_shell_previous[256];
 static void cp32_shell_print(const char *text) {
   assert(strlen(console)+strlen(text)<sizeof(console)); strcat(console,text);
 }
@@ -194,22 +196,22 @@ int main(void) {
   /* Boot fixture, parser, directory, shell adapter, MEM and real backing
    * storage together. The scratch diagnostic must preserve the filesystem. */
   corrupt_reply=0; requests=0;
-  assert(cp32_minix_demo_init()==0);
+  assert(cp32_minix_demo_init()==0); cp32_cache_invalidate();
   assert(cp32_ramdisk_checksum(0,capacity,&before)==0);
   assert(cp32_minix_super_read(cp32_shell_disk_read,capacity,&super)==0);
   assert(super.ninodes==32 && super.zones==63);
   assert(super.zones*1024 <= capacity-512);
   struct cp32_minix_dir dir;
   char name[15]; unsigned number;
-  const char *names[]={".","..","boot","README"};
+  const char *names[]={".","..","boot","readme"};
   const unsigned numbers[]={1,1,2,3};
   for(int cycle=0;cycle<10;cycle++) {
-    console[0]=0; cp32_shell_cat("README");
+    console[0]=0; cp32_shell_cat("readme");
     assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
-    console[0]=0; cp32_shell_cat("/boot/README");
+    console[0]=0; cp32_shell_cat("/boot/readme");
     assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
     console[0]=0; cp32_shell_ls("boot");
-    assert(!strcmp(console,".\r\n..\r\nREADME\r\nINDIRECT\r\nDOUBLE\r\n"));
+    assert(!strcmp(console,".\r\n..\r\nreadme\r\nindirect\r\ndouble\r\nlarge\r\n"));
     assert(cp32_minix_root_open(cp32_shell_disk_read,capacity,&dir)==0);
     for(unsigned entry=0;entry<4;entry++) {
       assert(cp32_minix_root_next(&dir,&number,name)==1);
@@ -220,7 +222,7 @@ int main(void) {
     assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
   }
   /* Full indirect fixture through production shell, MEM and backing disk. */
-  console[0]=0; cp32_shell_cat("/boot/INDIRECT");
+  console[0]=0; cp32_shell_cat("/boot/indirect");
   char expected_line[40]; unsigned cursor=0;
   for(unsigned zone=1;zone<=7;zone++) for(unsigned line=1;line<=32;line++) {
     int n=sprintf(expected_line,"Direct zone %u, line %02u",zone,line);
@@ -230,7 +232,7 @@ int main(void) {
   }
   assert(!strcmp(console+cursor,"INDIRECT READ OK\r\n"));
   assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
-  console[0]=0; cp32_shell_tail("boot/INDIRECT");
+  console[0]=0; cp32_shell_tail("boot/indirect");
   cursor=0;
   for(unsigned line=24;line<=32;line++) {
     int n=sprintf(expected_line,"Direct zone 7, line %02u",line);
@@ -239,9 +241,9 @@ int main(void) {
     assert(!memcmp(console+cursor,expected_line,n)); cursor+=n;
   }
   assert(!strcmp(console+cursor,"INDIRECT READ OK\r\n"));
-  console[0]=0; cp32_shell_tail("README");
+  console[0]=0; cp32_shell_tail("readme");
   assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
-  console[0]=0; cp32_shell_tail("boot/DOUBLE");
+  console[0]=0; cp32_shell_tail("boot/double");
   cursor=0;
   for(unsigned line=2;line<=10;line++) {
     int n=sprintf(expected_line,"Double indirect line %02u\r\n",line);
@@ -249,6 +251,78 @@ int main(void) {
   }
   assert(!strcmp(console+cursor,"DOUBLE INDIRECT READ OK\r\n"));
   assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
+  console[0]=0; cp32_shell_stat("readme");
+  assert(!strcmp(console,"file inode=3 size=61 links=3\r\nuid=0 gid=0 mtime=0\r\n"));
+  console[0]=0; cp32_shell_stat("boot");
+  assert(!strcmp(console,"directory inode=2 size=96 links=3\r\nuid=0 gid=0 mtime=0\r\n"));
+  assert(cp32_minix_chdir(cp32_shell_disk_read,capacity,cp32_shell_cwd,"boot")==0);
+  assert(!strcmp(cp32_shell_cwd,"/boot"));
+  console[0]=0; cp32_shell_stat("double");
+  assert(strstr(console,"file inode=5 size=269576 links=1")!=0);
+  console[0]=0; cp32_shell_cat("readme");
+  assert(strstr(console,"CP32 MINIX V2 RAM filesystem.")!=0);
+  assert(cp32_minix_chdir(cp32_shell_disk_read,capacity,cp32_shell_cwd,"readme/..")==-8);
+  assert(!strcmp(cp32_shell_cwd,"/boot"));
+  assert(cp32_minix_chdir(cp32_shell_disk_read,capacity,cp32_shell_cwd,"..")==0);
+  assert(!strcmp(cp32_shell_cwd,"/"));
+  console[0]=0; cp32_shell_cd("-");
+  assert(!strcmp(console,"No previous directory\r\n"));
+  assert(!strcmp(cp32_shell_cwd,"/") && !cp32_shell_previous[0]);
+  console[0]=0; cp32_shell_cd("boot");
+  assert(!console[0] && !strcmp(cp32_shell_cwd,"/boot"));
+  assert(!strcmp(cp32_shell_previous,"/"));
+  console[0]=0; cp32_shell_cd("readme");
+  assert(!strcmp(console,"Directory change failed: 8\r\n"));
+  assert(!strcmp(cp32_shell_cwd,"/boot") && !strcmp(cp32_shell_previous,"/"));
+  console[0]=0; cp32_shell_cd("-");
+  assert(!strcmp(console,"/\r\n") && !strcmp(cp32_shell_previous,"/boot"));
+  console[0]=0; cp32_shell_cd("-");
+  assert(!strcmp(console,"/boot\r\n") && !strcmp(cp32_shell_previous,"/"));
+  cp32_cache_invalidate(); requests=0; fail_request=1; console[0]=0; cp32_shell_cd("-");
+  assert(!strcmp(console,"Directory change failed: 4\r\n"));
+  assert(!strcmp(cp32_shell_cwd,"/boot") && !strcmp(cp32_shell_previous,"/"));
+  fail_request=0;
+  cp32_shell_cd("/");
+  console[0]=0; cp32_shell_ls("boot/large");
+  assert(!strcmp(console,".\r\n..\r\nreadme\r\n"));
+  console[0]=0; cp32_shell_cat("boot/large/readme");
+  assert(!strcmp(console,"CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n"));
+  cp32_cache_invalidate(); requests=0;
+  console[0]=0; cp32_shell_ls("boot/large");
+  assert(requests<40); /* hundreds of directory entries, tens of block reads */
+  /* Raw writes, including failed attempts, must invalidate cached blocks. */
+  char cache_saved[16], cache_seen[16], cache_pattern[16];
+  memset(cache_pattern,'Q',sizeof(cache_pattern));
+  assert(cp32_shell_disk_read(capacity-16,cache_saved,16)==16);
+  assert(cp32_shell_disk_io(DEV_WRITE,capacity-16,cache_pattern,16)==16);
+  assert(cp32_shell_disk_read(capacity-16,cache_seen,16)==16);
+  assert(!memcmp(cache_seen,cache_pattern,16));
+  requests=0; fail_request=1;
+  assert(cp32_shell_disk_io(DEV_WRITE,capacity-16,cache_saved,16)==EIO);
+  fail_request=0;
+  assert(cp32_shell_disk_read(capacity-16,cache_seen,16)==16 && requests==2);
+  assert(!memcmp(cache_seen,cache_pattern,16));
+  assert(cp32_shell_disk_io(DEV_WRITE,capacity-16,cache_saved,16)==16);
+  assert(cp32_shell_disk_read(capacity-16,cache_seen,16)==16);
+  assert(!memcmp(cache_seen,cache_saved,16));
+  for(unsigned repeat=0;repeat<12;repeat++) {
+    console[0]=0; cp32_shell_cmp("readme boot/large/readme");
+    assert(!strcmp(console,"Files identical\r\n"));
+    console[0]=0; cp32_shell_cmp("readme boot/indirect");
+    assert(!strcmp(console,"Files differ\r\n"));
+    console[0]=0; cp32_shell_cmp("readme missing");
+    assert(!strcmp(console,"Compare failed: 5\r\n"));
+  }
+  console[0]=0; cp32_shell_cmp("boot/indirect boot/indirect");
+  assert(!strcmp(console,"Files identical\r\n"));
+  cp32_cache_invalidate(); requests=0; fail_request=1;
+  console[0]=0; cp32_shell_cmp("readme readme");
+  assert(!strcmp(console,"Compare failed: 4\r\n"));
+  fail_request=0;
+  console[0]=0; cp32_shell_cmp("readme readme");
+  assert(!strcmp(console,"Files identical\r\n"));
+  console[0]=0; cp32_shell_cmp("readme");
+  assert(!strcmp(console,"Usage: cmp file1 file2\r\n"));
   /* Tail line semantics, including empty and unterminated files. */
   const char *inputs[]={"", "\n", "one", "one\n",
       "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12",
@@ -257,17 +331,18 @@ int main(void) {
       "3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n",
       "3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n"};
   for(unsigned test=0;test<sizeof(inputs)/sizeof(inputs[0]);test++) {
+    cp32_cache_invalidate();
     unsigned n=strlen(inputs[test]);
     unsigned char size_bytes[4]={n&255,(n>>8)&255,0,0};
     assert(cp32_ramdisk_write_bytes(4232,size_bytes,4)==0);
     if(n) assert(cp32_ramdisk_write_bytes(8192,inputs[test],n)==0);
-    console[0]=0; cp32_shell_tail("README"); assert(!strcmp(console,outputs[test]));
+    console[0]=0; cp32_shell_tail("readme"); assert(!strcmp(console,outputs[test]));
   }
   /* Restore the boot fixture after isolated edge cases. */
-  assert(cp32_minix_demo_init()==0);
+  assert(cp32_minix_demo_init()==0); cp32_cache_invalidate();
   console[0]=0; cp32_shell_cat("missing"); assert(!strcmp(console,"File not found\r\n"));
   console[0]=0; cp32_shell_cat("boot"); assert(!strcmp(console,"Is a directory\r\n"));
-  console[0]=0; cp32_shell_cat("README/.."); assert(!strcmp(console,"Not a directory\r\n"));
+  console[0]=0; cp32_shell_cat("readme/.."); assert(!strcmp(console,"Not a directory\r\n"));
   puts("MEM: mapped chunked I/O, EOF/bounds, reply aliases, IPC errors, 100 preserved-sector cycles and restoration failures passed");
 }
 '''
@@ -281,6 +356,6 @@ with tempfile.TemporaryDirectory(prefix='cp32-memory-task-') as folder:
                     '-I' + str(ROOT / 'src/kernel'), '-I' + str(ROOT / 'src/fs'), '-I' + str(p), str(p / 'test.c'),
                     str(ROOT / 'src/kernel/ramdisk.c'),
                     *[str(ROOT / 'src/fs' / name) for name in
-                      ('super.c','utility.c','inode.c','path.c','open.c','read.c')],
+                      ('cache.c','super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c')],
                     str(ROOT / 'src/kernel/minix-demo.c'), '-o', str(p / 'test')], check=True)
     subprocess.run([str(p / 'test')], check=True)

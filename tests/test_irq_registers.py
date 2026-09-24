@@ -102,6 +102,8 @@ class Machine:
             self.pc += 1
             if op in ("movi", "mov"):
                 self.put(args[0], self.value(args[1]))
+            elif op == "and":
+                self.put(args[0], self.value(args[1]) & self.value(args[2]))
             elif op in ("addi", "or"):
                 x, y = map(self.value, args[1:])
                 self.put(args[0], x + y if op == "addi" else x | y)
@@ -154,11 +156,30 @@ class IRQRegisters(unittest.TestCase):
         machine.global_set("cp32_user_rfe_count", 0)
         return machine
 
+    def test_pending_mask_preserves_enabled_unregistered_sources(self):
+        for entry in ("irq_kernel", "irq_user"):
+            for pending, enabled in ((0x18044,4),(0x18040,4),
+                                     (0x18064,0x24),(4,0),(0xffffffff,0xffffffff)):
+                with self.subTest(entry=entry,pending=pending,enabled=enabled):
+                    m=self.prepare()
+                    m.sr["interrupt"]=pending
+                    m.sr["intenable"]=enabled
+                    m.global_set("cp32_context_handoff_gate",0)
+                    def dispatch(cpu,name):
+                        self.assertEqual(name,"cp32_irq_dispatch")
+                        self.assertEqual(cpu.reg[3],pending & enabled)
+                    m.dispatch=dispatch
+                    m.run(entry)
+                    self.assertEqual(m.reg,m.original)
+                    self.assertEqual(m.sr["interrupt"],pending)
+                    self.assertEqual(m.sr["intenable"],enabled)
+
     def test_irq_owner_and_handoff_from_both_vectors(self):
         for entry in ("irq_kernel", "irq_user"):
             for handoff in (False, True):
                 with self.subTest(entry=entry, handoff=handoff):
                     m = self.prepare()
+                    m.sr["interrupt"] = 0x18044  # masked CCOMPAREs plus SYSTIMER
                     owner = m.global_get("proc_ptr")
                     original_ps = 0x130 if entry == "irq_user" else 0x110
                     m.sr["ps"] = original_ps

@@ -89,7 +89,7 @@ and now links the six FS translation units. The layout test checks matching
 reference filenames and the absence of the old combined implementations.
 
 Image identity: `[TEST FS-LAYOUT 57]`. Commands and disk contents are intended
-to remain unchanged. Recheck ls boot, cat boot/README, cat README, disk, and
+to remain unchanged. Recheck ls boot, cat boot/readme, cat readme, disk, and
 ordinary service/LCD behavior after flashing because splitting objects changes
 ELF addresses even when behavior is preserved.
 
@@ -131,8 +131,8 @@ is unchanged, so hardware indirect-path validation needs a larger fixture.
 
 ## Hardware fixture (image 61)
 
-The production generator now adds boot/INDIRECT: inode 4, seven direct data
-zones 9..15, indirect table zone 16 and tail zone 17. Run cat boot/INDIRECT;
+The production generator now adds boot/indirect: inode 4, seven direct data
+zones 9..15, indirect table zone 16 and tail zone 17. Run cat boot/indirect;
 after 224 labeled lines, INDIRECT READ OK confirms the indirect tail reached
 the console. The regular parser and shell need no manual diagnostic hook.
 The final scratch block remains reserved; all content is volatile across reset.
@@ -143,7 +143,7 @@ cp32_minix_file_seek lives in fs/open.c, corresponding to MINIX do_lseek.
 It updates caller-owned handle offsets for start/current/end origins within
 the signed 32-bit range. There is no descriptor table or read-ahead cache yet.
 The CP32 shell's tail command uses this API to find the last ten lines with
-bounded stack buffers, then shares cat's rendering. tail boot/INDIRECT provides
+bounded stack buffers, then shares cat's rendering. tail boot/indirect provides
 a short hardware regression across the direct/single-indirect boundary.
 
 ## Double-indirect mapping (image 63)
@@ -151,5 +151,75 @@ a short hardware regression across the direct/single-indirect boundary.
 fs/read.c follows MINIX read_map's two-level index calculation and inode.c
 reads the double root. Regular files support 7+256+65536 zones; directories
 remain direct-only. The caller-owned file.h handle stores both indirect roots.
-boot/DOUBLE is a sparse fixture: tail boot/DOUBLE ends in DOUBLE INDIRECT READ
+boot/double is a sparse fixture: tail boot/double ends in DOUBLE INDIRECT READ
 OK, exercising double-indirect metadata without reading its sparse prefix.
+
+## Metadata (image 64)
+
+stat belongs to fs/stadir.c in MINIX 2, not stat.c. CP32's cp32_minix_stat
+follows that location, returning explicitly decoded inode metadata in a bounded
+caller-owned structure from type.h. The shell stat command displays basic
+fields; this is not yet the full stat/fstat syscall and device ABI. Sparse
+files expose their logical size without reading their data zones.
+
+## Working directory (image 65)
+
+fs/path.c composes relative names while preserving dot components for actual
+inode traversal. fs/stadir.c handles validated directory changes, as MINIX
+places do_chdir there. CP32's temporary command client owns a canonical path
+string; ls/cat/tail/stat use it and cd/pwd expose it. This does not yet supply
+MINIX per-process cwd inode references, permission checks or chroot semantics.
+
+Image 66 adds cd - in kernel/cp32-shell.c. Previous-directory history is a
+command-client policy; filesystem chdir validation stays in fs/stadir.c.
+Only successful changes update history, and both paths survive lookup errors.
+
+## Indirect directories (image 67)
+
+Directory scanning in fs/path.c now uses fs/read.c's shared zone mapper,
+matching MINIX search_dir/read_map. inode.c validates directory indirect roots;
+inode.h stores them. Directories support one indirect level and reject holes.
+boot/large contains deleted slots before an indirectly stored README entry,
+exercising real directory lookup; cat boot/large/readme should print the usual
+README text. Regular-file double-indirect support remains unchanged.
+
+## Clean cache (image 69)
+
+fs/cache.c implements a bounded subset of MINIX get_block/invalidate with four
+clean blocks and FIFO replacement. The CP32 shell's filesystem reader uses it;
+raw disk diagnostics bypass it and invalidate before writes. No dirty-buffer,
+write-back or multi-client support is claimed. Future device mutations must
+join the invalidation contract. Static blocks stay in internal DRAM; cache
+code stays in extended IRAM, with only 64-byte staging on the task stack.
+
+## Descriptor ownership (image 70)
+
+fs/filedes.c now manages eight single-client read-only descriptors, corresponding
+to MINIX get_fd/get_filp ownership. Thin operations delegate to the existing
+open.c/read.c implementations. cat and tail use descriptors and close them
+on completion or error. Full per-process filp tables, dup/fork sharing and
+syscall dispatch remain future work; CP32's bounded status API is explicit.
+
+## Shared open descriptions (image 71)
+
+fs/filedes.c now separates descriptor mappings from reference-counted open
+state. fs/misc.c contains dup/dup2 wrappers, following MINIX misc.c:do_dup.
+Separate opens have independent offsets; aliases share an offset and survive
+closing another reference. Tail scans through an owned duplicate and closes
+it before output. The temporary client's cmp uses independent opens. Process
+inheritance and user-facing syscall semantics remain later work.
+
+## Lowercase fixture names (image 72)
+
+All interactive fixture paths now use lowercase: readme, boot/readme,
+boot/indirect, boot/double and boot/large/readme. Contents and inode identities
+are unchanged. Lookup remains case-sensitive. Historical hardware logs and
+chronological issue notes retain the names used by their original images.
+
+## Descriptor metadata (image 73)
+
+fs/stadir.c now shares stat_inode decoding between pathname stat and descriptor
+fstat, matching MINIX do_stat/do_fstat. file.h retains the opened inode number;
+filedes.c supplies an internal read-only description view. Tail uses fstat for
+size, exercising descriptor identity without changing its shared offset.
+Inode reference caching, unlink semantics and syscall-copy ABI remain future work.

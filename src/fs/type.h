@@ -9,4 +9,8 @@ typedef int (*cp32_disk_reader)(unsigned offset, char *buffer, int count);
 #define CP32_IRAM_EXT
 #endif
 #endif
+/* Bounded metadata result; not the complete MINIX struct stat ABI. */
+struct cp32_minix_stat {
+  unsigned inode, mode, links, uid, gid, size, atime, mtime, ctime;
+};
 #endif

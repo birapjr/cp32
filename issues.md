@@ -925,3 +925,323 @@ Identity: [FEATURE MINIX-DOUBLE 63]1, [TEST MINIX-DOUBLE 63] immediately before
 idle. Hardware pending; no flash performed. Run tail boot/DOUBLE, then
 tail boot/INDIRECT, disk and mm. Avoid cat boot/DOUBLE for routine validation:
 it would render the large sparse prefix as question marks.
+
+## Inode metadata / stat — image 64
+
+[x] Save supplied image-63 hardware capture in docs/hardware/minix-double-v63.log.
+Both single/double indirect tails match, disk and MM return zero, and IRQ 5000
+reports unknown=0. This confirms the fixture paths, not every host edge case.
+
+[x] Add fs/stadir.c:cp32_minix_stat, matching MINIX stadir.c:do_stat/stat_inode.
+Resolve paths, check inode allocation, decode mode/links/uid/gid/logical size
+and atime/mtime/ctime explicitly in either byte order. Publish only on success.
+Support regular files and directories; special types remain unsupported. Unlike
+a read, metadata inspection need not map data zones. No permission enforcement,
+descriptor fstat, device metadata or timestamp updates are claimed. CP32 keeps
+caller-owned results and byte decoding for the freestanding Xtensa environment.
+
+[x] Add stat pathname to the temporary shell, printing type/inode/size/links,
+uid/gid/mtime (decimal). Sparse files report logical size. Add the translation
+unit to firmware, parser tests, integration build and reference-layout checks.
+All 23 host scripts and warning-free clean build pass. Tests cover endian
+metadata, nonzero owners/timestamps, root/nested paths, sparse logical size,
+malformed inodes, every short-I/O stage and unchanged output on failure. Real
+shell/MEM-backend tests verify README and boot metadata output. ELF/image
+checks pass: _iram_end=0x403743b0, _iram_ext_end=0x40382f60,
+_stack_top=0x3fcd5ca0. Prior working-tree changes preserved.
+
+Identity: [FEATURE MINIX-STAT 64]1, [TEST MINIX-STAT 64] immediately before idle.
+Hardware pending; no flash performed. Run stat README (inode 3 size 61 links 2),
+stat boot (directory inode 2 size 80 links 2), stat boot/DOUBLE (inode 5 size
+269576 links 1), then tail boot/DOUBLE, disk and mm. Fixture uid/gid/mtime are 0.
+
+## Working directory — image 65
+
+[x] Record image-64 hardware in docs/hardware/minix-stat-v64.log: stat boot,
+README, DOUBLE and INDIRECT report expected metadata; disk/MM pass and IRQ
+5000 has unknown=0. No new fault appears in the supplied capture.
+
+[x] Add cp32_minix_abspath in fs/path.c and cp32_minix_chdir in fs/stadir.c,
+following MINIX path traversal and do_chdir/change responsibilities. Join
+relative paths without prematurely collapsing components: README/.. must
+fail as not-a-directory. Validate target directory, canonicalize for pwd,
+verify canonical/original inode identity, then publish cwd. Invalid paths,
+path overflow and I/O errors preserve cwd. Absolute paths ignore cwd; root
+parents remain at root. Bounded buffers preserve freestanding execution.
+
+[x] Add cd/pwd to CP32 shell and route ls/cat/tail/stat through its working
+directory. Bare ls uses current directory; bare cd returns to root. This is
+single-client textual state, not MINIX per-process inode references, permission
+checking, chroot, symlinks or mount-aware cwd. The read-only tree keeps paths
+stable; those features require replacing/expanding this bounded API later.
+
+[x] Clean build, all 23 host scripts, ELF/image and whitespace checks pass.
+Tests cover relative/absolute and dot paths in both byte orders, failed
+file-as-directory traversal, empty/oversized paths, every short-I/O stage,
+unchanged cwd on errors, and actual shell/MEM relative stat/cat integration.
+_iram_end=0x403743b0, _iram_ext_end=0x40383418, _stack_top=0x3fcd6280.
+Previous uncommitted work is preserved.
+
+Identity: [FEATURE MINIX-CWD 65]1, [TEST MINIX-CWD 65] immediately before idle.
+Hardware pending; no flash performed. Run pwd (expect /), cd boot, pwd (expect
+/boot), ls, stat DOUBLE, tail DOUBLE, cd README (must fail and retain /boot),
+cd .., pwd (expect /), disk and mm.
+
+## Previous-directory switching — image 66
+
+[x] Save image-65 capture as docs/hardware/minix-cwd-v65.log. cd boot, pwd,
+relative ls/stat/tail, cd / succeed; IRQ 5000 unknown=0 and heartbeat 9436.
+The attempted cd - returns error 5 because image 65 resolves a literal hyphen.
+No disk/MM command is present in this capture.
+
+[x] Add previous-directory policy to cp32-shell.c:cp32_shell_cd. Successful
+changes save the old path; cd - revalidates and switches to it, printing its
+path. Before any successful change, report No previous directory. Stage the
+new cwd so lookup and I/O failures preserve both current and previous paths.
+Keep this CP32 command policy outside fs/stadir.c: MINIX change/do_chdir
+validates directories, while previous-directory selection belongs to a shell.
+No per-process environment/OLDPWD ABI is claimed. Existing FS and call0 ABI
+remain unchanged; bounded path buffers only.
+
+[x] All 23 host scripts and warning-free clean build pass. Integration tests
+exercise first-use error, repeated toggling, regular-file rejection and failed
+MEM read with both directory states preserved. ELF/image and whitespace
+checks pass: _iram_end=0x403743b0, _iram_ext_end=0x403834d4,
+_stack_top=0x3fcd6450. Earlier user/work-in-progress changes preserved.
+
+Identity: [FEATURE CWD-PREV 66]1 and [TEST CWD-PREV 66] immediately before idle.
+Hardware pending; no flash performed. Run cd boot, cd /, cd - (prints /boot),
+pwd, tail DOUBLE, cd - (prints /), pwd, disk, mm. A failed cd README while in
+/boot must leave current/previous directory state unchanged.
+
+## Single-indirect directory mapping — image 67
+
+[x] Record image-66 hardware in docs/hardware/cwd-prev-v66.log: cd - returns
+from /boot to /, relative DOUBLE/README reads succeed, root listing/read works,
+IRQ 5000 unknown=0 and heartbeat reaches 6608. No disk/MM command in capture.
+
+[x] Extend directory inode decoding to seven direct zones plus 256 indirect
+entries. Validate the indirect root and allocation before publishing a handle.
+path.c directory scanning calls the shared fs/read.c:cp32_fs_read_map beyond
+direct zones, corresponding to MINIX search_dir using read_map. Preserve
+byte-order decoding, bounded Xtensa stack buffers, deleted-entry skipping,
+inode/name checks and rejection of directory holes. Double-indirect directory
+sizes still return unsupported; regular-file double mapping is unchanged.
+
+[x] Add boot/LARGE, inode 6: seven direct zones 21..27, table 28 and data 29.
+Dot entries are in zone 21, deleted entries fill intervening slots, and README
+is the first indirect entry. Correct link accounting: boot links=3 size=96;
+README links=3 (root, boot, LARGE). Root unchanged. Scratch block stays reserved.
+This is a real on-disk fixture used by normal ls/cat/path operations.
+
+[x] All 23 host scripts and warning-free clean build pass. Tests cover actual
+shell/MEM listing and nested cat, both byte orders, corrupt/empty/unallocated
+pointers, and metadata/data I/O failures preserving handles and entry outputs.
+ELF/image/whitespace checks pass: _iram_end=0x403743b0,
+_iram_ext_end=0x40383628, _stack_top=0x3fcd88b0. Prior changes preserved.
+
+Identity: [FEATURE MINIX-DIRMAP 67]1, [TEST MINIX-DIRMAP 67] immediately before
+idle. Hardware pending; no flash performed. Run ls boot/LARGE (., .., README),
+cat boot/LARGE/README, cd boot/LARGE, pwd, cat README, cd /, disk and mm.
+Repeated lookups scan deleted entries, so this fixture may be slower until a
+filesystem block cache is implemented.
+
+## Mask disabled pending interrupts before dispatch — image 68
+
+[x] Record image-67 log in docs/hardware/minix-dirmap-v67.log. Large-directory
+navigation/listing, parent traversal, disk/MM and cwd toggling work through
+heartbeat 15749. IRQ 10000 has unknown=0; IRQ 15000 shows unknown=8265 and
+raw pending=0x00018040. This is a new diagnostic failure, not clean IRQ soak.
+
+[x] Identify architectural difference: MINIX mpx386.s receives individual
+8259-delivered interrupt vectors; CP32 irq.S reads Xtensa's raw INTERRUPT
+bitmap. Espressif core-isa.h defines timer mask 0x00018040 (CCOMPARE0/1/2 on
+6/15/16); TRM chapter Interrupt Matrix documents INTENABLE masking. Startup
+programs compare registers and leaves those lines disabled. Raw pending bits
+can therefore exist without those lines being enabled interrupt causes.
+Sources: https://github.com/espressif/esp-idf/blob/master/components/xtensa/esp32s3/include/xtensa/config/core-isa.h
+https://documentation.espressif.com/esp32-s3_technical_reference_manual_en.pdf
+
+[x] Mask IRQ dispatch input with INTENABLE after saving registers. Preserve
+raw pending state, enabled sources, enabled-unregistered reporting, frame ABI,
+owner selection and source-owned device acknowledgement. No timer reprogramming
+or pending-bit clearing is added. IRQ status becomes [IRQ V68 count=...].
+
+[x] Clean build and all 23 host scripts pass without warnings. Assembly model
+executes both entry paths with masked compare bits, no enabled pending bits,
+enabled unregistered bits and full bitmaps; verifies register restoration and
+unchanged CPU mask/pending state. Existing handoff tests also inject compare
+pending bits. Disassembly confirms rsr interrupt / rsr intenable / and before
+call0 dispatch. ELF/image and whitespace checks pass: _iram_end=0x403743b8,
+_iram_ext_end=0x40383628, _stack_top=0x3fcd88b0.
+
+Identity: [FEATURE IRQ-MASK 68]1 and [TEST IRQ-MASK 68] immediately before idle.
+Hardware pending; no flash performed. Run beyond tick 15000 with ls/cat/cd on
+boot/LARGE, disk and mm. Expect unknown=0 in IRQ V68 reports while only the
+registered SYSTIMER is enabled. Raw pending may still be 0x00018040: those bits
+are deliberately neither cleared nor hidden. Actual hardware confirmation is
+required before marking the long-run issue resolved.
+
+## Clean filesystem block cache — image 69
+
+[x] Record image-68 hardware in docs/hardware/irq-mask-v68.log. IRQ 15000 and
+20000 retain unknown=0 despite raw pending=0x00018040 with ien=4; MM/disk,
+SYS/IPC, cwd/listing and metadata calls succeed. This confirms the masked
+pending-bit fix over the supplied longer run, not indefinite soak proof.
+
+[x] Add fs/cache.c matching MINIX get_block/invalidate responsibilities:
+four clean 1024-byte blocks, FIFO replacement and reader/capacity identity.
+The single FS client wraps uncached MEM reads; cache misses remain actual IPC.
+Bound parser requests to 64 bytes and stage output so cross-block failures
+never partially publish bytes. Invalidate a victim before filling it; short
+reads never publish valid cache state. Partial final device blocks are bounded.
+CP32 uses static internal DRAM rather than MINIX's full device/hash/LRU/dirty
+buffer pool; no write-back, concurrent callers or pinned buffers yet.
+
+[x] Invalidate before all shell raw DEV_WRITE attempts, including failed or
+partial writes and diagnostic restoration. Boot fixture initialization precedes
+runtime cache use. Any future backing-device writer/reset path must likewise
+invalidate before mutation. Host tests that mutate backing storage directly
+explicitly invalidate it. Existing read-only filesystem semantics are preserved.
+
+[x] Clean build, all 24 host scripts and ELF/image/whitespace checks pass.
+New cache tests cover hits, eviction, crossing, short I/O, capacity edges,
+reader replacement and explicit invalidation. Shell/MEM integration validates
+raw successful/failed writes cannot retain stale blocks and listing LARGE
+uses fewer than 40 device requests while traversing hundreds of slots.
+_iram_end=0x403743b8, _iram_ext_end=0x40383920, _stack_top=0x3fcd9bd0.
+Static cache blocks begin at 0x3fcb0798. Prior working-tree changes preserved.
+
+Identity: [FEATURE MINIX-CACHE 69]1 and [TEST MINIX-CACHE 69] immediately before
+idle. Hardware pending; no flash performed. Run ls boot/LARGE repeatedly,
+cat boot/LARGE/README, cd boot/LARGE, pwd, cat README, cd /, disk, then repeat
+ls boot/LARGE and cat boot/LARGE/README. Check tail boot/DOUBLE, mm, and IRQ
+reports beyond tick 15000. Expect identical output with fewer MEM exchanges.
+
+## Read-only file descriptors — image 70
+
+[x] Save image-69 hardware in docs/hardware/minix-cache-v69.log. LARGE listing
+and README reads work before and after disk; DOUBLE tail and MM succeed.
+IRQ 15000 unknown=0 despite masked raw pending bits. READE typo correctly
+reports File not found. This confirms the supplied cache regression sequence.
+
+[x] Add fs/filedes.c following MINIX get_fd/get_filp responsibilities: eight
+read-only slots, lowest-free allocation, publish only after successful open,
+independent offsets, checked read/seek/close and reuse after close. Small
+wrappers delegate pathname/open, read mapping and seek to existing files.
+CP32 static DRAM replaces full MINIX per-process filp references for now;
+no descriptor inheritance, dup, credentials, user syscall ABI or multiple
+clients are claimed. Negative CP32 statuses remain distinct from syscall errno.
+
+[x] Route normal shell cat/tail through the descriptor API, always closing
+a successful open after EOF or read/seek failure. Tail obtains size through
+seek-to-end and retains bounded backward scanning. No manual diagnostic probe.
+Existing command syntax, cache invalidation and on-disk fixture stay unchanged.
+
+[x] All 24 host scripts, warning-free clean build, ELF/image and whitespace
+checks pass. Twenty fill/drain cycles verify failed opens do not consume slots,
+independent offsets, exhaustion, reuse, invalid/double closes, failed-read
+buffer/position preservation, failed-seek output preservation and indirect
+reads. Repeated shell/MEM tests cover actual descriptor-backed cat/tail.
+_iram_end=0x403743b8, _iram_ext_end=0x40383ae8, _stack_top=0x3fcda060.
+Descriptor storage is internal DRAM at 0x3fcb0960. Prior edits preserved.
+
+Identity: [FEATURE MINIX-FD 70]1, [TEST MINIX-FD 70] immediately before idle.
+Hardware pending; no flash performed. Repeatedly run cat README, tail
+boot/DOUBLE and cat boot/LARGE/README (more than eight commands total), then
+cat missing, cat boot, disk, and cat README. Successful reads must continue
+without descriptor exhaustion after both successful and failing commands.
+
+## Shared open descriptions / duplication — image 71
+
+[x] Save complete image-70 evidence in docs/hardware/minix-fd-v70.log. Two
+boot sequences are present; the second has twelve consecutive successful cat
+README calls, correct missing/directory errors, DOUBLE tail, disk result=0,
+and another successful README read. IRQ 10000 has unknown=0 with raw masked
+pending bits. Descriptor reuse is hardware-confirmed for this sequence.
+
+[x] Separate descriptor slots from open descriptions in fs/filedes.c. Each
+successful independent open owns a fresh description; aliases reference the
+same offset via bounded reference counts. Close releases a description only
+on the final reference. Add fs/misc.c duplication wrappers following MINIX
+misc.c:do_dup, with dup2 source validation, self-target no-op and replacement.
+No per-process tables, fork inheritance or user syscall interface yet. Static
+internal DRAM and the existing read/seek ABI preserve CP32 task invariants.
+
+[x] Tail scans through an owned duplicate, sharing its final position with
+the original output descriptor and closing the duplicate even on scan error.
+This exercises dup in production without a manual test hook. Add cmp file1
+file2 to compare raw bytes via independent opens, with bounded buffers and
+cleanup on every failure. Command parsing accepts two whitespace-separated
+paths; quoting and filenames containing spaces are not supported by cmp yet.
+
+[x] Clean build, all 24 host scripts, ELF/image and whitespace checks pass.
+Host tests exercise shared/independent offsets, last-close lifetime, 20 reuse
+cycles, full tables, dup2 replacement/self/alias cases and invalid descriptors.
+Shell/MEM tests cover equal/different files, repeated second-open failures,
+long equal files, I/O error recovery and descriptor-backed tail. ELF confirms
+cp32_fd_dup/share are retained in extended IRAM; dup2 remains host-tested API
+without a production caller. _iram_end=0x403743b8,
+_iram_ext_end=0x4038400c, _stack_top=0x3fcda600. Earlier edits preserved.
+
+Identity: [FEATURE MINIX-DUP 71]1, [TEST MINIX-DUP 71] immediately before idle.
+Hardware pending; no flash performed. Run cmp README boot/LARGE/README
+(identical), cmp README boot/INDIRECT (differ), cmp README missing (error 5),
+then repeat tail boot/DOUBLE and cat README, disk and mm. Tail directly tests
+shared-position duplicate lifetime; cmp tests independent simultaneous opens.
+
+## Lowercase boot filenames — image 72
+
+[x] Record image-71 hardware in docs/hardware/minix-dup-v71.log. Comparisons
+report identical and different as expected, tail DOUBLE and README succeed,
+disk/MM pass, IRQ 10000 unknown=0. The missing-file comparison used READMe
+as its first operand, so it confirms case-sensitive failure, not specifically
+second-open cleanup. Host tests cover second-open cleanup separately.
+
+[x] Rename boot fixture entries README/INDIRECT/DOUBLE/LARGE to
+readme/indirect/double/large at the user's request for easier keyboard input.
+Update every hard-link name, parser and shell/MEM test path and listing.
+Keep contents, inode numbers, links, byte lengths, geometry and read-only
+behavior unchanged. Case-sensitive lookup is preserved (uppercase README
+is now a negative test). Repository source filenames are unchanged.
+
+[x] Warning-free clean build, all 24 host scripts, ELF/image and whitespace
+checks pass. Memory endpoints are unchanged: _iram_end=0x403743b8,
+_iram_ext_end=0x4038400c, _stack_top=0x3fcda600.
+
+Identity: [FEATURE LOWER-NAMES 72]1 and [TEST LOWER-NAMES 72] immediately before
+idle. Hardware pending; no flash performed. Run ls boot, cat readme,
+cat boot/large/readme, tail boot/double, cmp readme boot/large/readme.
+Use lowercase paths for all future hardware tests; historical logs retain
+the spelling of the image actually tested.
+
+## Descriptor-based metadata — image 73
+
+[x] Record image-72 hardware in docs/hardware/lower-names-v72.log. Lowercase
+large-directory listing, root/nested readme and double tail succeed; cmp
+boot/readme boot/large/readme returns identical after an earlier cpm typo.
+IRQ 10000 unknown=0. No disk/MM command is present in that capture.
+
+[x] Store inode identity in each open description and add cp32_fd_fstat in
+fs/stadir.c, following MINIX do_fstat/stat_inode. Path stat and descriptor
+fstat share one byte-decoding helper. Descriptor metadata reads only allocation
+and inode bytes using the saved reader/geometry/number, with no pathname lookup
+or offset change. Duplicates retain identity after another reference closes.
+Bad descriptors and metadata I/O failures preserve output and shared position.
+The existing single-client, read-only and regular-file descriptor limits apply;
+this does not add inode-cache lifetime/unlink semantics or a user syscall ABI.
+
+[x] Tail obtains size through fstat instead of seeking solely to query EOF.
+Its production duplicate/seek/read path remains intact. No manual probe added.
+All 24 host scripts and warning-free clean build pass. New tests cover both
+byte orders, path-stat parity, exact metadata-only reads, descriptor identity
+after synthetic entry removal, shared lifetime, unchanged offsets/output on
+short reads and invalid descriptors, and sparse logical size. Full shell/MEM
+regressions exercise tail with fstat. ELF/image/whitespace checks pass:
+_iram_end=0x403743b8, _iram_ext_end=0x403840e4, _stack_top=0x3fcda700.
+cp32_fd_fstat is retained in extended IRAM at 0x40382248. Prior edits preserved.
+
+Identity: [FEATURE MINIX-FSTAT 73]1 and [TEST MINIX-FSTAT 73] immediately before
+idle. Hardware pending; no flash performed. Run tail readme, tail boot/indirect,
+tail boot/double, cmp readme boot/large/readme, disk, tail boot/double and mm.
+Expect existing output; the normal tail path now obtains metadata by descriptor.

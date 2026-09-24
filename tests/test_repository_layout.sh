@@ -14,7 +14,7 @@ grep -q -- '-nostdlib' "$root/src/Makefile"
 grep -q '^tests:' "$root/src/Makefile"
 
 # Keep portable FS responsibilities alongside the same MINIX reference files.
-for name in super.c inode.c path.c open.c read.c utility.c fs.h const.h type.h super.h inode.h file.h proto.h; do
+for name in misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c utility.c fs.h const.h type.h super.h inode.h file.h proto.h; do
   test -f "$root/src/fs/$name"
   test -f "$root/minix-2.0.0/src/fs/$name"
 done

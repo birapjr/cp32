@@ -17,7 +17,7 @@ LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sect
 C_SRCS = start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
 MM_SRCS = main.c alloc.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
-FS_SRCS = super.c inode.c path.c open.c read.c utility.c
+FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c utility.c
 FS_HEADERS = $(wildcard fs/*.h)
 ANSI_SRCS = memcpy.c memset.c strcpy.c strcmp.c strtol.c
 LIB_SRCS = lib/other/printk.c
