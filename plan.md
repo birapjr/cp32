@@ -7,11 +7,12 @@ ESP32-S3 replacements are valid when they preserve that behavior.
 
 ## Current boundary
 
-CP32 is a bare-metal, kernel-only port. `src/Makefile` builds 18 C sources
-plus four Xtensa assembly units. The tree has no `src/mm/`, `src/fs/`, user
-image, libc/syscall ABI, or application tree. `main()` initializes descriptors
-and enters diagnostic/idle behavior; production context transfer remains
-gated and must be hardware-validated.
+CP32 is a bare-metal, kernel-focused port. `src/Makefile` builds 27 C sources
+plus four Xtensa assembly units. Portable filesystem code now follows the
+MINIX filenames in `src/fs/` and MM code in `src/mm/`. The tree has no user
+image, libc/syscall ABI, or application tree. Kernel-linked service tasks and
+the diagnostic shell run through IPC. See `minix.port-status.md` for the current
+assessment; the sections below retain the chronological bring-up history.
 
 ## Validated status and remaining work
 
@@ -181,11 +182,13 @@ Reference: `minix-2.0.0/src/fs/`, kernel `driver.c`, `memory.c`, and disk
 drivers. CP32: `ramdisk.c/.h`.
 
 Present: bounded sector read/write, format/reset, checksum, and host tests.
-Missing: `src/fs/`, inode/cache/path/file-descriptor operations, block-driver
-protocol, root filesystem, image loader, and boot population.
+Image 49 adds the MEM device task's OPEN/CLOSE/READ/WRITE IPC service over
+the RAM disk; host tests/build pass, hardware validation is pending.
+Missing: `src/fs/`, inode/cache/path/file-descriptor operations, vectored
+block I/O, root filesystem, image loader, and boot population.
 
-Next: define the block-device message ABI, then add the smallest FS server
-over the tested RAM disk.
+Next: validate the MEM IPC path on hardware, then add a filesystem layer.
+The implemented device ABI is documented in `docs/ramdisk-ipc.md`.
 
 ### 10. MM server and user process environment — Missing
 
@@ -240,13 +243,12 @@ Known unresolved issue:
 
 ## Continue here
 
-User confirms image-43 punctuation is correct; `docs/hardware/lcd-punct-v43.log`
-records '-' as 0x2D, '_' as 0x5F and CLOCK progress to IRQ 5000. Image 44
-connects TTY DEV_WRITE to the LCD and adds shell write for a real byte-count
-reply. All 18 host scripts and the clean build pass. Next: manually flash,
-run write repeatedly and expect result=18 expected=18 plus LCD text, then
-sys/mm/ipc/ls with continued CLOCK progress. Device-backed DEV_READ and
-full shell routing through TTY remain later work.
+Image 57 hardware confirms root/boot listing and rejection of ls on a regular
+file, with heartbeat 3087. Image 58 aligns MM with the book: src/mm/main.c and
+alloc.c, plus mm.h/proto.h. numap/mem_copy now reside in kernel/system.c,
+matching the reference kernel boundary. All 23 tests and clean build pass.
+Hardware pending: repeat mm, then cat boot/README, ls boot, disk and services.
+See docs/minix-source-layout.md. Next porting work: indirect zones and FS APIs.
 
 ## SYSTIMER continuation — image 30, 2026-09-17
 
@@ -751,3 +753,979 @@ Existing IPC, scheduler and LCD pixel tests also pass.
 `_iram_end=0x40374310`, `_iram_ext_end=0x40380DD0`, `_stack_top=0x3FCCE280`.
 Hardware pending: repeat write, verify the LCD text and matching byte counts,
 then regress sys/mm/ipc/ls and CLOCK progress. Manual flashing only.
+
+## TTY input transfer repair — image 45
+
+Identity: `[FEATURE TTY-READ-COPY 45]1`, `[TEST TTY-READ-COPY 45]`.
+
+[x] Restore MINIX `tty.c:in_transfer`'s single buffered copy and byte-count
+accounting. CP32 translates the remaining destination through numap instead
+of adding an x86 segment base; failed translation returns EFAULT before queue
+consumption. Remove the FS-specific canonical bypass and shared-byte side
+channel from this transfer routine. The direct shell reader still works
+through its existing separate helper.
+
+[x] Add production-function host coverage in tests/kernel/test_tty_read.py,
+called by make tests: translated guarded destinations, 1/63/64/65/150-byte
+reads, ring wrap, canonical newline/EOF, partial completion, and invalid maps.
+All 19 host scripts pass; clean build, ELF/image layout, section/segment
+inspection and diff whitespace checks pass without compiler warnings.
+`_iram_end=0x40374310`, `_iram_ext_end=0x40380DD4`,
+`_stack_top=0x3FCCE270`; input transfer stays in extended IRAM.
+
+Hardware validation pending; no flash or serial capture performed. This is
+an input-copy prerequisite, not a completed device-backed DEV_READ path.
+Keyboard line-discipline ingestion, TTY wakeups and SUSPEND/REVIVE integration
+remain required. Image 44's write acceptance is also still pending.
+
+
+## Image 45 hardware regression — LCD and TTY write confirmed
+
+Evidence: `docs/hardware/tty-read-copy-v45.log`; the user confirms everything
+appears as expected on the LCD. Both `[FEATURE TTY-READ-COPY 45]1` and
+`[TEST TTY-READ-COPY 45]` identify the image. Unchanged subsystem diagnostics
+retain V44 labels; these do not identify a different flashed image.
+
+[x] One real TTY DEV_WRITE exchange reports `result=18 expected=18` and the
+user confirms correct LCD output. This validates the first hardware write
+exchange for the backend introduced in image 44, running in image 45.
+
+[x] Subsequent MM allocate/release returns 0, SYS returns 0 with uptime 1461,
+TTY ioctl IPC returns 0, and ls prints capacity 65536/formatted=0. CLOCK
+receives its initial two HARD_INT messages at ticks 14 and 33; kernel
+heartbeats advance through ticks 1596 and 3266. No exception appears in the
+capture, and initial selected-frame checks report frame=1.
+
+Remaining: the capture has one write, not repeated-write stress, and ends
+before the IRQ-5000 sample, so it does not show a later CLOCK message count.
+The shell still reads through its direct helper; this regression does not
+exercise the repaired DEV_READ transfer on hardware. Connect line-discipline
+input, TTY wakeups and SUSPEND/REVIVE handling before claiming that feature
+complete. No code or image change was made when recording this evidence.
+
+## Task-owned console input and output — image 46, 2026-09-20
+
+Identity: `[FEATURE TTY-READ 46]1`, `[TEST TTY-READ 46]`.
+The first completed shell read emits `[TTY READ V46 reply=... n=1]`, then
+every 500 reads. Existing unchanged service diagnostics retain V44 labels.
+
+MINIX references: `minix-2.0.0/src/kernel/tty.c` do_read/in_process/
+handle_events/tty_reply and `minix-2.0.0/src/fs/device.c` device I/O and
+SUSPEND/REVIVE handling. CP32 keeps the caller buffer live across the initial
+TASK_REPLY and any subsequent REVIVE, using its existing Xtensa syscall-frame
+IPC. The existing Cardputer I2C decoder replaces the PC keyboard source;
+SYSTIMER posts a coalesced TTY notification after initialization, and all I2C,
+line processing, echo and replies execute in TTY task context.
+
+[x] Connect bounded eight-event keyboard polling to in_process. Canonical
+erase, line kill, EOF and echo now use MINIX queue flags. Map physical BS to
+VERASE in canonical mode, preserving BS in raw mode. Initialize c_cc by named
+indexes because CP32's header differs from MINIX's original positional order.
+
+[x] Replace the shell's shared queue reader with DEV_READ and validated
+TASK_REPLY/SUSPEND/REVIVE handling. Use the same reply adapter for DEV_WRITE.
+Batch shell output in a bounded 256-byte buffer and submit it through TTY:
+TTY is now the sole runtime LCD owner, preventing echo from interrupting a
+shell-owned software-SPI transaction. Boot display setup precedes task entry.
+LCD BS crosses a wrapped row so canonical erase can remove wrapped input.
+
+[x] All 20 host scripts pass. Tests execute production driver/line-discipline
+functions with decoded key events, canonical edit/echo, Ctrl-U/Ctrl-D, raw BS,
+queued/immediate and suspended reads, bounded FIFO draining and invalid/busy
+requests. Adapter tests cover both I/O directions, transport/malformed replies,
+EOF and bounded output batching. Actual IPC/scheduler tests cover REVIVE both
+before and after the client receives, plus timer notification during a blocked
+TTY SEND. Pixel-model tests cover erase across a wrapped LCD row.
+
+[x] Clean Xtensa ELF/bin build without warnings, image-layout validation,
+sections/segments and whitespace checks pass. `_iram_end=0x40374334`,
+`_iram_ext_end=0x40380E50`, `_stack_top=0x3FCCE420`; new I/O helpers and their
+literals are placed in internal memory and fit the linker limits.
+
+Hardware pending; no flashing or serial capture performed for image 46.
+Manual acceptance:
+
+1. Confirm both TTY-READ 46 identity markers. Type lx, Backspace, s, Enter;
+   expect visible ls, `[TTY READ V46 reply=3 n=1]`, `[TTY line=ls]` and output.
+2. Exercise Backspace across a wrapped LCD row, and Ctrl-U followed by ls.
+   Input should echo once and execute only after Enter. An empty Ctrl-D read
+   should return zero and leave the kernel diagnostic shell accepting input.
+3. Repeat write (result=18 expected=18), sys, mm, ipc and ls. Type while a
+   command is printing to check that TTY-owned display access stays coherent.
+4. Capture IRQ 5000 with advancing clock-msgs and no exception. This is a new
+   wakeup workload; earlier images' timer results do not certify it.
+
+Raw/timed modes, cancellation/signals, sustained FIFO stress, and full user
+terminal semantics remain separate hardware work. The diagnostic shell still
+waits for newline to dispatch a command; it is not a user-space POSIX shell.
+
+## Console CPU contention — image 46 observed, image 47 fix
+
+Evidence excerpts: `docs/hardware/tty-read-v46.log`. The user confirms working
+Backspace but reports severe display latency. The capture contains a 3-byte
+read, successful MM/SYS/TTY exchanges, ls, and CLOCK count 673 at IRQ 5000 with
+frame=1 and no exception in the supplied output. After `[TTY line=write]`,
+heartbeats at ticks 7081 and 8285 precede the correct 18-byte reply. That proves
+at least 1204 intervening ticks, not the complete command duration.
+
+[x] Image-46 bounded functional hardware regression: canonical shell reads,
+Backspace, service exchanges and continued timer operation. Repeated writes,
+Ctrl-U/EOF/raw/timed input and latency acceptance are not established.
+
+Source cause: main initialized four unused task endpoints (-8/-6/-5/-4) and
+LOW_USER with kernel_idle_loop and flags=0. Queue-class rotation gave the old
+FS renderer substantially more CPU than the new TTY renderer, which shares its
+class with these idle copies. The IRQ-5000 selection (-8) directly demonstrates
+one such placeholder running while the kernel has active services.
+
+[x] Image 47 initializes those reserved descriptors with P_STOP while keeping
+their frames, maps and entry points. TTY/CLOCK/SYS/MM/FS remain active; IDLE and
+HARDWARE retain their special roles and are not enqueued. This follows MINIX's
+use of IDLE as a fallback, without altering CP32's IRQ/RFE ownership contract,
+queue fairness, keyboard wakeup, display transport or IPC behavior.
+
+[x] Production scheduler test reproduces 100 TTY selections in 1200 ticks
+with the old boot workload, versus 600 with stopped placeholders and CLOCK
+continuously runnable. This model establishes CPU-share improvement, not a
+sixfold hardware latency claim. All 20 host scripts and clean ELF/bin build
+pass without compiler warnings. Sections/segments and image layout pass:
+`_iram_end=0x4037433C`, `_iram_ext_end=0x40380F70`, `_stack_top=0x3FCCE570`.
+
+Markers: `[FEATURE TTY-LATENCY 47]1`, `[TEST TTY-LATENCY 47]`. A removable
+production trace reports `[TTY WRITE V47 bytes=... ticks=...]` for the first
+eight device writes and every 500th thereafter. Ticks include rendering and
+time scheduled out, but exclude time waiting for TTY to accept the request.
+
+Hardware pending; no automatic flash. Compare repeated write/ls and typing/
+erase on the LCD, capture timing markers, and verify mm/sys/ipc plus continued
+CLOCK counts through IRQ 5000. Idle heartbeats may disappear during busy
+rendering because placeholder processes no longer run idle code alongside it.
+Software SPI still bounds display speed; no hardware speedup is claimed yet.
+
+## Final-layout scrolling — image 48
+
+[x] Image-47 hardware result: the user confirms improved display speed.
+`docs/hardware/tty-latency-v47.log` preserves excerpts showing successful
+MM/SYS/TTY, ls and write. Initial output takes 22/69 ticks; later scrolling
+writes take 205–211 ticks and the separate prompt takes one tick. No exception
+appears in the supplied capture. That log does not include IRQ 5000, and it
+does not timestamp Enter echo, so it cannot measure the complete scroll cost.
+The reported two repaint cycles remain the next display issue.
+
+Reference: MINIX `kernel/console.c` queues output and flushes writes/echo to
+PC video memory. CP32 retains its logical text/cursor behavior while deferring
+costly ST7789 transfers. No panel register or bus timing changes are involved.
+
+[x] Build the complete final text layout before pixel output. Printable cells,
+wrapping, erase and scrolling only modify the in-memory text buffer inside a
+batch. The outer commit compares it with painted cells, visiting each changed
+cell once; intermediate and off-screen glyphs are never transmitted.
+
+[x] Defer Enter echo's pixel repaint, retaining its logical newline/scroll
+until the next output or ordinary character echo. Begin-batch preserves that
+pending state. This combines the echo scroll and command response into one
+paint pass without holding a display batch across IPC. Normal DEV_WRITE
+newlines still commit with their output, and explicit clear resets pending
+state. TTY retains sole runtime LCD ownership.
+
+[x] All 20 host scripts and the clean ELF/bin build pass without warnings.
+Pixel tests verify identical final pixels/text/cursor, no transfers before
+outer commit, no clears during scrolling, and at most one paint per cell.
+A distinct-row Enter-plus-command case drops from 344 cell writes across two
+passes to 178 in one pass. Tests also cover output longer than the screen,
+pending echo followed by a standalone character, nested batches, overwritten
+glyphs and wrapped erase. These counts are model results, not measured panel
+latency. ELF/image and section/segment checks pass:
+`_iram_end=0x40374354`, `_iram_ext_end=0x40380F78`, `_stack_top=0x3FCCE570`.
+
+Identity: `[FEATURE LCD-SCROLL 48]1`, `[TEST LCD-SCROLL 48]`.
+Write timings now use `[TTY WRITE V48 bytes=... ticks=...]`, retaining the
+first-eight/every-500 rate. Deferred Enter scrolling is included in the next
+write's rendering time, so compare the full visible interaction as well as
+the per-write ticks. No new raw/timed-input or long-duration claim is made.
+
+Hardware pending; no automatic flash. Fill the LCD and repeat ls/mm/write/sys/
+ipc. Expect one final scrolling repaint rather than an echo repaint followed
+by an output repaint; check blank Enter, wrapped erase and typing again after
+a command. If a command has not produced output yet, Enter updates logical
+state but its pixel scroll remains pending. Continued CLOCK progress and
+visual correctness must be confirmed on image 48.
+
+## MEM RAM-disk device service — image 49
+
+[x] Image-48 scrolling hardware result: the user confirms the scrolling looks
+correct. Excerpts in `docs/hardware/lcd-scroll-v48.log` show repeated ls,
+successful MM/SYS/TTY exchanges, an 18-byte write and a later heartbeat at tick
+1928. Scrolling write samples are 143–190 ticks; no exception appears in the
+supplied capture. This confirms the bounded visual/service regression, not
+long-duration or raw/timed terminal validation; IRQ 5000 is absent.
+
+MINIX reference: `kernel/driver.c:driver_task/do_rdwt` and
+`kernel/memory.c:m_schedule`. CP32 reuses MEM (-4), RAM_DEV (0), byte-offset
+DEV_READ/DEV_WRITE and TASK_REPLY with byte count/error status. The existing
+64 KiB internal-SRAM disk replaces the reference memory geometry; no hardware
+register assumptions or image-loader changes are required.
+
+[x] Add `src/kernel/memory.c`: a receive/dispatch/reply task accepting FS
+requests, validating the complete mapped buffer, copying through a bounded
+64-byte buffer, and returning short transfers at EOF. OPEN/CLOSE validate the
+RAM minor; other memory minors and unsupported operations are rejected. The
+reply saves PROC_NR before writing its aliased reply fields. The task ignores
+non-FS/stale hardware messages as MINIX does, and panics on IPC transport errors.
+
+[x] Activate only MEM's formerly stopped descriptor and point it at mem_task.
+The remaining placeholders stay stopped; MEM blocks in RECEIVE when idle.
+Shell disk performs five real SENDREC operations: save last sector, write a
+pattern, read/compare, restore, and verify restoration. Failed/partial test I/O
+still attempts restoration; restoration failures are reported as errors.
+The backing disk is neither reset nor formatted when MEM starts.
+
+[x] All 21 host scripts pass. The MEM tests execute production service/client
+functions against the real RAM disk and modeled IPC/mapping: 64-byte chunks,
+sector crossings, 1 KiB blocks, EOF/short I/O, invalid requests, mapping failure,
+caller policy, aliased replies and IPC errors. One hundred full diagnostic
+cycles preserve the disk checksum; failure injection checks restoration after
+read/write errors and partial writes. Existing scheduler/IPC tests now exercise
+MEM exchanges in both arrival orders and confirm its boot activation.
+
+[x] Clean Xtensa build without warnings, ELF/image layout, sections/segments
+and whitespace checks pass. `_iram_end=0x40374368`,
+`_iram_ext_end=0x403814AC`, `_stack_top=0x3FCCEF10`. New service/client code is
+in extended internal IRAM; two static sector buffers add 1024 bytes of BSS.
+See `docs/ramdisk-ipc.md` for the request/reply and error contract.
+
+Identity: `[FEATURE RAM-IPC 49]1`, `[TEST RAM-IPC 49]`. Normal device requests
+emit `[RAM V49 op=... result=... n=...]` for the first eight and every 5000th
+request. Shell success is `[RAM IPC V49 result=0]`. Existing subsystem marker
+versions are unchanged.
+
+Hardware pending; no automatic flash. Run disk repeatedly, expecting zero
+status and 512-byte service transfers, then write/ls/mm/sys/ipc with accepted
+scrolling and CLOCK progress through IRQ 5000. This is the storage-device
+layer, not a filesystem: ls still prints diagnostic entries, and the private
+RAM format marker is not a MINIX superblock. SCATTERED_IO, filesystem mounting,
+inodes, directories and a real FS server remain to be implemented.
+
+## Read-only MINIX superblock — image 50
+
+[x] Analyze image-49 evidence: normal boot, TTY/SYS/MM/IPC success and heartbeat
+1608, with no exception in the supplied capture. Excerpts are recorded in
+`docs/hardware/ram-ipc-v49.log`. No disk command or RAM trace was supplied;
+MEM hardware verification and the longer IRQ-5000 regression remain pending.
+
+[x] Compare the current port against MINIX and write `minix.port-status.md`.
+The kernel/service bring-up is ahead of the historical summary; a real FS,
+full MM and user binaries remain missing. SYS fork/exec frame semantics need
+audit before lifecycle activation; do_fork currently clears a1 (Xtensa SP).
+
+[x] Add `minix-super.c:cp32_minix_super_read` and read-only shell fsinfo.
+Reference: MINIX `fs/super.c:read_super`, `super.h`, `type.h:d2_inode`.
+Decode the serialized header explicitly rather than copying a compiler-layout
+structure on Xtensa. Preserve byte-offset MEM IPC, no disk mutation, bounded
+geometry and unchanged output on failure. Recognize original V2 in both byte
+orders and distinguish V1 unsupported, absent magic, invalid geometry and I/O
+failure. This is recognition, not mounting or filesystem integrity validation.
+
+[x] All 22 host test scripts pass, including geometry/endian/error cases and
+the real shell/MEM adapter with a checksum-preserved disk. Clean Xtensa build
+has no warnings; size, segments, sections and whitespace checks pass.
+`_iram_end=0x40374368`, `_iram_ext_end=0x4038186c`, `_stack_top=0x3fccf380`.
+The new parser and shell handler reside in extended IRAM.
+
+Identity: `[FEATURE MINIX-SUPER 50]1`, `[TEST MINIX-SUPER 50]` immediately
+before idle. Unchanged MEM/TTY/SYS trace versions remain intentional.
+Hardware pending; no flash performed. Run fsinfo (blank disk: No MINIX
+filesystem), disk repeatedly (RAM IPC V49 result=0), then ordinary command
+and display regressions with CLOCK progress. See docs/minix-superblock.md.
+
+[x] Subsequent image-50 hardware capture confirms disk save/write/read/restore/
+verify transfers of 512 bytes and result=0. fsinfo reads 24 bytes through MEM
+and correctly reports No MINIX filesystem on the blank disk. MM/IPC/SYS/ls
+and TTY replies continue; SYS uptime reaches 2147. Evidence is preserved in
+docs/hardware/minix-super-v50.log. This validates the basic device path and
+absent-superblock case, not valid filesystem recognition or repeated/soak I/O.
+
+## MINIX root-directory reads — image 51
+
+[x] Generate a deterministic original MINIX V2 demo image and provision the
+volatile RAM disk before tasks start. The 63-zone filesystem leaves physical
+block 63 outside its geometry for the existing disk diagnostic. It contains
+root, boot directory and README; bitmap padding and inode link counts are
+verified. No on-device persistent storage is modified.
+
+[x] Add minix-dir.c root inode decoding and directory iteration through the
+MEM reader. Reference: MINIX inode.c:new_icopy, read.c:read_map and
+path.c:search_dir. Xtensa uses explicit disk-byte decoding and bounded stack
+buffers. Preserve read-only access, validated zone bounds, endian bitmap
+semantics and no published handle on failure. Seven direct zones and ASCII
+names are supported; indirect directories and unsupported names fail explicitly.
+
+[x] Replace diagnostic ls strings with actual entries, including dot/dot-dot.
+No full mount, subdirectory traversal or file-content API is claimed.
+
+[x] All 23 host scripts pass. New tests cover both byte orders, map/inode/zone
+errors, deleted/full-length entries, scaled zones, zone crossings and every
+read failure. Real backend plus shell/MEM adapter integration preserves the
+whole disk across ten directory/disk cycles. Clean build is warning-free;
+size/segments/sections checked. `_iram_end=0x4037438c`,
+`_iram_ext_end=0x40381d9c`, `_stack_top=0x3fcd18d0`. Runtime additions are in
+extended IRAM; the generated initialized prefix adds 8253 bytes of rodata.
+
+Identity: `[FEATURE MINIX-DIR 51]1`, `[TEST MINIX-DIR 51]` immediately before
+idle. Existing MEM diagnostics retain V49. Hardware pending; no flash performed.
+Run fsinfo (32 inodes, 63 zones), ls (., .., boot, README), disk (result=0),
+and repeat with ordinary services and extended CLOCK progress.
+
+## LCD period glyph — image 52
+
+[x] Image-51 hardware validates the generated superblock (32 inodes, 63 zones),
+two root listings, and one preserved-sector disk diagnostic. Heartbeats reach
+tick 2619. Evidence: docs/hardware/minix-dir-v51.log. The reported LCD period
+defect is rendering-specific: USB correctly shows dot and dot-dot.
+
+[x] Define the period in display.c:glyph_scaled as a 2x2 baseline dot. It
+previously used a pseudo-pattern fallback. MINIX console.c uses an adapter
+font; CP32 rasterizes characters itself on the LCD. Preserve the input byte,
+15x10 opaque cell, cursor advance and final-layout scroll batching. Extend
+the existing font command with a dots sample and pixel-model coverage of
+single/double periods and erasure.
+
+[x] All 23 host scripts and warning-free clean build pass. ELF size, segments
+and sections checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x40381da8`,
+`_stack_top=0x3fcd18f0`. Whitespace checks pass.
+
+Identity: `[FEATURE LCD-DOT 52]1`, `[TEST LCD-DOT 52]` immediately before idle.
+Hardware visual validation pending; no flash performed. Run ls and font,
+then erase a typed period and repeat ls until scrolling occurs. Filesystem
+code and image contents are unchanged from image 51.
+
+## Root file reads — image 53
+
+[x] Record image-52 hardware evidence: real listing, generated superblock,
+disk result=0, MM/SYS/IPC success and heartbeat 3530. The font command ran;
+serial output does not establish the LCD period's visual correctness.
+
+[x] Add root-name lookup and direct-zone file reads. MINIX reference:
+path.c:search_dir, inode.c:new_icopy, read.c:rw_chunk/read_map. Xtensa decodes
+disk bytes explicitly. Preserve mapped MEM IPC, read-only storage, bounded
+buffers, EOF and sparse-hole semantics. Validate the full handle before
+publishing; stage each device read before advancing position or copying data.
+
+[x] Add cat for a root name, optionally preceded by one slash, with distinct
+missing/directory/name errors. Text rendering uses existing TTY batching.
+No full pathname resolver, mount, permission or file-descriptor API is claimed.
+
+[x] All 23 host scripts and warning-free clean build pass. Host tests cover
+endian/maps/geometry, empty/sparse files, root lookup, zone crossings, EOF and
+short/error reads. Ten production cat/list/disk cycles through the real RAM
+backend and modeled MEM IPC preserve the checksum. ELF sections/segments
+checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x4038242c`,
+`_stack_top=0x3fcd1fe0`. New file functions and cat reside in extended IRAM.
+
+Identity: `[FEATURE MINIX-READ 53]1`, `[TEST MINIX-READ 53]` immediately before
+idle. Hardware pending; no flash performed. See docs/minix-file-read.md for
+expected text and regression commands. Existing subsystem traces keep their
+versions; the generated filesystem bytes remain unchanged.
+
+## Keyboard Shift event polarity — image 54
+
+[x] Record image-53 hardware log in docs/hardware/minix-read-v53.log. cat README
+prints the actual demo content; cat aaa reports File not found. IRQ 5000 has
+unknown=0 and clock-msgs=805; a later heartbeat reaches tick 5867. Directory
+target errors and repeated file/disk cycles were not captured. The user reports
+Aa ineffective, Fn apparently changing case and uppercase staying active.
+
+[x] Correct tty.c:cp32_cardputer_key to interpret bit 7 as press, following
+M5Stack's TCA8418 reader. MINIX keyboard.c:make_break requires edge-sensitive
+modifiers, but PC break-bit polarity is opposite. Preserve character mapping,
+TTY ownership and bounded polling; clear modifiers on release, emit text only
+on press, reject events outside the 7x8 matrix and retain Ctrl-letter behavior
+with Shift held. Fn and Aa coordinates match the vendor map and remain distinct.
+
+[x] Correct synthetic events in host tests and cover repeated a/A/a, release
+ordering, Fn isolation, punctuation, Ctrl-Shift and invalid coordinates.
+All 23 scripts and warning-free clean build pass. ELF sections/segments checked:
+`_iram_end=0x403743b0`, `_iram_ext_end=0x40382414`, `_stack_top=0x3fcd1fd0`.
+
+Identity: `[FEATURE KBD-SHIFT 54]1`, `[TEST KBD-SHIFT 54]` immediately before
+idle. Hardware pending; no flash performed. Follow docs/keyboard-shift.md.
+
+## Uppercase A glyph — image 55
+
+[x] Record supplied image-54 capture in docs/hardware/kbd-shift-v54.log.
+It includes interleaved compiler output, so do not treat it as an uninterrupted
+serial session. Visible results include disk success, cat boot and cat dot
+directory errors, listings, MM/SYS, IRQ 5000 and heartbeat 6288. The user
+reports uppercase A displayed as C; repeated Shift cycles were not documented.
+
+[x] Correct display.c:glyph_scaled: uppercase A had exactly the C bitmap.
+Use an apex, two stems and crossbar. MINIX console.c relies on adapter glyphs;
+CP32 supplies LCD bitmaps. Preserve the character byte, keyboard behavior,
+opaque cell geometry, cursor and batch scrolling. Add independent raster
+expectations for A/a/C/c and a case sample to the existing font command.
+
+[x] All 23 host scripts and warning-free clean build pass. ELF size/segments/
+sections checked: `_iram_end=0x403743b0`, `_iram_ext_end=0x40382420`,
+`_stack_top=0x3fcd1fe0`. Identity: `[FEATURE LCD-A 55]1`, `[TEST LCD-A 55]`
+immediately before idle. Hardware visual check pending; no flash performed.
+
+## Subdirectory paths — image 56
+
+[x] Record image-55 hardware evidence and explicit user acceptance: LCD good
+and all known issues fixed. Full supplied capture: docs/hardware/lcd-a-v55.log.
+It confirms README, disk/MM/SYS/IPC/TTY, IRQ 5000 unknown=0 and heartbeat 5165.
+This is bounded acceptance, not exhaustive keyboard/terminal-mode testing.
+
+[x] Generalize directory-inode opening and add iterative path resolution.
+Reference: MINIX path.c:last_dir/advance/search_dir. Xtensa retains explicit
+endian disk decoding; every component uses MEM reads and validated directory
+zones. Preserve bounded stack use, no recursion, no writes and unchanged
+output handles on failure. Support repeated slashes and actual dot/dot-dot
+entries; relative paths start at root. Enforce 14-byte components, 255-byte
+paths and directory-only intermediate/trailing-slash targets.
+
+[x] Add ls path and nested cat paths. The demo adds boot/README as a hard link
+to inode 3 and updates its link count, without extra zones or prefix growth.
+The final physical block remains outside filesystem geometry for disk.
+
+[x] All 23 host scripts and warning-free clean build pass. Tests include both
+byte orders, path boundaries/errors, corrupted intermediate directories,
+short/error reads throughout traversal and ten checksum-preserving production
+nested-cat/list/disk cycles through the real backend and modeled MEM IPC.
+ELF size/sections/segments checked: `_iram_end=0x403743b0`,
+`_iram_ext_end=0x40382690`, `_stack_top=0x3fcd2270`. New path helpers use
+extended IRAM. No additional dynamic or static filesystem buffers are added.
+
+Identity: `[FEATURE MINIX-PATH 56]1`, `[TEST MINIX-PATH 56]` immediately
+before idle. Hardware pending; no flash performed. See docs/minix-paths.md.
+Indirect zones, permissions, symlinks, cwd and a true FS server remain future.
+
+## Reference-aligned filesystem layout — image 57
+
+[x] Record image-56 hardware evidence in docs/hardware/minix-path-v56.log:
+root and boot directory listing, nested/root README reads and heartbeat 2872.
+No dot-dot/error-path or IRQ-5000 result appears in this capture.
+
+[x] Match MINIX source responsibilities and filenames in src/fs: super.c
+(geometry/bitmaps), inode.c (decode/validate inode state), path.c (directory
+scan/traversal), open.c (open orchestration), read.c (data/EOF/sparse holes),
+utility.c (disk endian conversion). Add matching fs.h/const.h/type.h/super.h/
+inode.h/file.h/proto.h. Remove old kernel/minix-dir and minix-super files.
+CP32-prefixed functions preserve their subset contract rather than pretending
+to expose full MINIX server/syscall APIs. Device and boot-image glue stay in
+kernel; explicit byte decoding and extended-IRAM placement remain invariants.
+
+[x] Build FS objects under build/fs, with header dependencies. Move FS tests
+to tests/fs and update the kernel MEM integration links. The source-layout
+test verifies matching reference names. Add a book/source map and README guide;
+historical notes retain image-era filenames with a pointer to the new map.
+
+[x] All 23 host scripts and warning-free clean Xtensa build pass. ELF size,
+sections and segments checked: `_iram_end=0x403743b0`,
+`_iram_ext_end=0x4038266c`, `_stack_top=0x3fcd2240`. All FS functions and their
+conversion helpers remain in extended IRAM. Disk fixture and command behavior
+are unchanged; no new static filesystem state or hosted dependency is added.
+
+Identity: `[FEATURE FS-LAYOUT 57]1`, `[TEST FS-LAYOUT 57]` immediately before
+idle. Hardware pending; no flash performed. Regress ls boot, nested/root cat,
+disk and other services after flashing. Future portable FS work should use
+the matching MINIX source file when possible, per the user's book preference.
+
+## Reference-aligned MM layout — image 58
+
+[x] Record image-57 listing regression in docs/hardware/fs-layout-v57.log.
+Root and boot directories list correctly; ls /boot/README yields error 8,
+the expected not-a-directory status. Heartbeat reaches 3087. No MM request
+or IRQ-5000 check was included in that capture.
+
+[x] Split kernel/mm.c into mm/main.c (receive/dispatch/reply, source validation
+and removable trace) and mm/alloc.c (allocation/free/ownership/coalescing and
+private block table). Add mm/mm.h and mm/proto.h matching reference filenames.
+Preserve CP32 helper names, protocol, static allocator state and extended IRAM.
+The reference MM uses an independent process and hole list; CP32 remains a
+kernel-linked bounded allocator/service, without fork/exec/signal machinery.
+
+[x] Move numap and mem_copy unchanged into kernel/system.c, where MINIX places
+process-address translation. Preserve mapped range/overflow checks and the
+Xtensa flat-SRAM task-stack exception. MEM RAM-device code stays in kernel/
+memory.c; early heap geometry also stays in the kernel. Remove kernel/mm.c.
+
+[x] Build MM objects under build/mm to avoid main.o collisions. Move the MM
+service/allocator test to tests/mm/test_main.py and point mapping checks at
+kernel/system.c. Extend reference-layout tests and the book/source guide.
+All 23 host scripts, warning-free clean build, whitespace and ELF checks pass:
+`_iram_end=0x403743b0`, `_iram_ext_end=0x4038267c`, `_stack_top=0x3fcd2250`.
+MM, numap and mem_copy remain in extended IRAM. No allocator/protocol or
+on-disk behavior change is introduced.
+
+Identity: `[FEATURE MM-LAYOUT 58]1`, `[TEST MM-LAYOUT 58]` immediately before
+idle. Hardware pending; no flash performed. Repeat mm and filesystem/device/
+service commands with continued clock progress after flashing.
+
+## Reference-aligned library layout — image 59
+
+[x] Compare remaining source responsibilities against minix-2.0.0. Move
+memcpy/memset/strcpy/strcmp/strtol unchanged from kernel/klib.c into matching
+lib/ansi filenames. Keep CP32 delay and hardware/bring-up files in place.
+Preserve the freestanding call0 ABI, implementations and section attributes.
+MINIX's full libc semantics are not claimed; existing strtol gaps are recorded
+in the refreshed minix.port-status.md. See docs/minix-source-layout.md.
+
+[x] Update separate library object paths and relocate runtime tests under
+tests/lib/ansi. Clean build has no warnings; all 23 host scripts pass.
+ELF sections/segments and image-layout check pass: _iram_end=0x403743b0,
+_iram_ext_end=0x4038267c, _stack_top=0x3fcd2250.
+
+[x] Record supplied image-58 hardware results: mm alloc-release-result=0,
+cat boot/README prints the expected two lines, disk result=0, heartbeat 1369.
+No repeated MM cycle or IRQ-5000 result is present in that capture.
+
+Identity: [FEATURE LIB-LAYOUT 59]1 and [TEST LIB-LAYOUT 59] immediately before
+idle. Hardware pending; no flash performed. Recheck mm, cat boot/README,
+ls boot, disk and sys, with normal keyboard/LCD behavior and clock progress.
+
+## MINIX V2 single-indirect regular-file reads — image 60
+
+[x] Record image-59 hardware acceptance in docs/hardware/lib-layout-v59.log:
+SYS/MM/IPC succeed, root and /boot list correctly, /boot/README content is
+correct, TTY WRITE returns 18, IRQ 5000 has unknown=0. No disk command was
+included in this capture.
+
+[x] Implement single-indirect regular-file mapping in fs/read.c, following
+MINIX read_map/rd_indir: seven direct zones plus 256 four-byte V2 entries in
+one 1024-byte indirect block, independent of zone scaling. Inode open stores
+validated geometry and checks the indirect root's bounds/allocation/aliasing.
+Read mapping explicitly decodes either endian order, checks referenced data
+zones and allocation, and preserves sparse holes. CP32 uses four-byte metadata
+reads and a 64-byte staged data transfer instead of MINIX's block cache; this
+preserves bounded stack use, freestanding ABI and error atomicity. Directories
+remain direct-only; double-indirect regular files return unsupported.
+
+[x] Host tests cover direct/indirect boundaries, last entry 255, both byte
+orders, 1/2 KiB zones, missing indirect trees and entries, EOF, corrupt and
+unallocated pointers, metadata/data short reads, unchanged buffers/positions,
+and unchanged handles on open failures. All 23 scripts pass. Clean build is
+warning-free; ELF/image layout checks pass. _iram_end=0x403743b0,
+_iram_ext_end=0x40382870, _stack_top=0x3fcd2450. Mapping/read code stays in
+extended IRAM. Previous uncommitted image-59 layout work is preserved.
+
+Identity: [FEATURE MINIX-INDIRECT 60]1 and [TEST MINIX-INDIRECT 60] immediately
+before idle. Hardware validation pending; no flash performed. Existing mm,
+sys, ipc, ls /boot, cat /boot/README, disk and write commands are regression
+checks only: the boot fixture has no indirect file. An on-device indirect-file
+fixture is still needed to validate the new path through real MEM IPC.
+
+## On-device single-indirect fixture — image 61
+
+[x] Record supplied image-60 log in docs/hardware/minix-indirect-v60.log.
+Root/nested README reads, boot listing, disk/MM/SYS/IPC/TTY calls succeed;
+IRQ 5000 reports unknown=0 and heartbeat reaches 5332. This validates the
+existing direct-file regression, not the new single-indirect path.
+
+[x] Extend the production boot image with boot/INDIRECT (inode 4). Seven
+1024-byte direct zones 9..15 contain 224 labeled lines; indirect block 16
+points to data zone 17 containing the final INDIRECT READ OK line. File size
+7185 bytes. Inode/zone maps and boot directory size are updated, root README
+and links preserved, final scratch block 63 remains outside filesystem zones.
+The generator retains its minimal fixture option for existing hostile parser
+tests; its normal CLI, used by firmware and MEM integration, emits the larger
+fixture. No runtime test hook or new shell command is introduced.
+
+[x] Verify the production fixture through actual shell cat, filesystem, MEM
+handler and backing storage with modeled IPC. Check every direct-zone line,
+indirect tail, allocation metadata, and unchanged disk checksum. All 23 host
+scripts pass; clean cross-build has no warnings and ELF/image layout checks
+pass. _iram_end=0x403743b0, _iram_ext_end=0x40382870,
+_stack_top=0x3fcd4820. Initialized fixture prefix is 17425 bytes (formerly
+8253); task stacks remain inside DRAM. Earlier uncommitted work preserved.
+
+Identity: [FEATURE INDIRECT-DEMO 61]1 and [TEST INDIRECT-DEMO 61] immediately
+before idle. Hardware pending; no flash performed. Run ls boot, then
+cat boot/INDIRECT: it prints 224 numbered direct-zone lines and must end with
+INDIRECT READ OK. Then run disk, cat README and mm. The long output exercises
+scrolling and scheduling as well as the first single-indirect data read.
+
+## Read-only file seeking and tail — image 62
+
+[x] Record image-61 hardware in docs/hardware/indirect-demo-v61.log. The full
+INDIRECT fixture reaches INDIRECT READ OK, IRQ 5000 has unknown=0, subsequent
+disk/MM checks return zero, and heartbeat reaches 6336. Single-indirect reads
+are now hardware-validated for this fixture (not all malformed/endian cases).
+
+[x] Add cp32_minix_file_seek to fs/open.c, matching MINIX do_lseek's file
+position responsibility. Support start/current/end, signed 32-bit offsets,
+beyond-EOF seeking, and unchanged state on invalid origin/negative position/
+overflow. CP32 retains caller-owned handles rather than claiming descriptor
+syscalls; target range is enforced on 64-bit host tests too. No cache/read-ahead
+state exists to invalidate, and no disk I/O occurs during seeking.
+
+[x] Add tail filename to the CP32 command client: last ten lines using 64-byte
+backward windows, filling reads that stop at zone boundaries. Reuse cat's
+existing rendering/error behavior. A trailing newline does not add an empty
+line; unterminated final lines count. This is an ordinary command, not a manual
+kernel diagnostic hook. Existing cat behavior remains tested.
+
+[x] Clean build, all 23 host scripts, whitespace and ELF/image-layout checks
+pass without warnings. Tests cover offset arithmetic, unchanged failure state,
+EOF and indirect readback; shell/MEM integration checks the expected ten-line
+indirect tail and empty/short/unterminated text. _iram_end=0x403743b0,
+_iram_ext_end=0x40382b04, _stack_top=0x3fcd4ad0. Earlier uncommitted work kept.
+
+Identity: [FEATURE MINIX-SEEK 62]1 and [TEST MINIX-SEEK 62] immediately before
+idle. Hardware pending; no flash performed. Run tail boot/INDIRECT: expect
+Direct zone 7, line 24 through line 32 then INDIRECT READ OK. Run tail README,
+cat README, disk and mm to regress shorter reads and other services.
+
+## Double-indirect regular files — image 63
+
+[x] Record supplied image-62 hardware evidence: tail boot/INDIRECT shows
+zone 7 lines 24–32 then INDIRECT READ OK; tail README and MM succeed. A
+subsequent capture runs disk (correcting earlier dist typo): five 512-byte
+transfers and RAM IPC result=0. Neither capture includes IRQ 5000.
+
+[x] Extend fs/read.c mapping using MINIX read_map's excess/256 and excess%256
+indices; inode.c decodes/validates the double root at inode byte 56. Handle
+missing root/child/data as sparse holes. Validate allocation, geometry and
+root/parent/direct aliases before following pointers. Four-byte explicit
+endian decoding and staged 64-byte data reads preserve bounded Xtensa stack
+use and unchanged caller buffer/position on failure. Regular files now cover
+7+256+65536 zones; directories remain direct-only. This is read-only mapping,
+not a complete filesystem integrity checker or descriptor service.
+
+[x] Add boot/DOUBLE (inode 5): sparse logical prefix of 263 KiB, double root
+18, child table 19, data zone 20. Last ten lines are Double indirect line 02
+through 10, then DOUBLE INDIRECT READ OK. tail exercises the new tree without
+printing/scanning the sparse prefix. Zone/inode maps and boot listing updated;
+reserved scratch block remains outside the filesystem. No runtime probe added.
+
+[x] All 23 host scripts and warning-free clean build pass. Tests cover both
+byte orders and 1/2 KiB zones; single/double boundary, child-table transition,
+last addressable entry, sparse trees, corrupt/unallocated roots/children/data,
+short reads, unchanged failure state, and fixture tail via shell/MEM/backend.
+ELF/image layout checks pass: _iram_end=0x403743b0,
+_iram_ext_end=0x40382c4c, _stack_top=0x3fcd5910.
+
+Identity: [FEATURE MINIX-DOUBLE 63]1, [TEST MINIX-DOUBLE 63] immediately before
+idle. Hardware pending; no flash performed. Run tail boot/DOUBLE, then
+tail boot/INDIRECT, disk and mm. Avoid cat boot/DOUBLE for routine validation:
+it would render the large sparse prefix as question marks.
+
+## Inode metadata / stat — image 64
+
+[x] Save supplied image-63 hardware capture in docs/hardware/minix-double-v63.log.
+Both single/double indirect tails match, disk and MM return zero, and IRQ 5000
+reports unknown=0. This confirms the fixture paths, not every host edge case.
+
+[x] Add fs/stadir.c:cp32_minix_stat, matching MINIX stadir.c:do_stat/stat_inode.
+Resolve paths, check inode allocation, decode mode/links/uid/gid/logical size
+and atime/mtime/ctime explicitly in either byte order. Publish only on success.
+Support regular files and directories; special types remain unsupported. Unlike
+a read, metadata inspection need not map data zones. No permission enforcement,
+descriptor fstat, device metadata or timestamp updates are claimed. CP32 keeps
+caller-owned results and byte decoding for the freestanding Xtensa environment.
+
+[x] Add stat pathname to the temporary shell, printing type/inode/size/links,
+uid/gid/mtime (decimal). Sparse files report logical size. Add the translation
+unit to firmware, parser tests, integration build and reference-layout checks.
+All 23 host scripts and warning-free clean build pass. Tests cover endian
+metadata, nonzero owners/timestamps, root/nested paths, sparse logical size,
+malformed inodes, every short-I/O stage and unchanged output on failure. Real
+shell/MEM-backend tests verify README and boot metadata output. ELF/image
+checks pass: _iram_end=0x403743b0, _iram_ext_end=0x40382f60,
+_stack_top=0x3fcd5ca0. Prior working-tree changes preserved.
+
+Identity: [FEATURE MINIX-STAT 64]1, [TEST MINIX-STAT 64] immediately before idle.
+Hardware pending; no flash performed. Run stat README (inode 3 size 61 links 2),
+stat boot (directory inode 2 size 80 links 2), stat boot/DOUBLE (inode 5 size
+269576 links 1), then tail boot/DOUBLE, disk and mm. Fixture uid/gid/mtime are 0.
+
+## Working directory — image 65
+
+[x] Record image-64 hardware in docs/hardware/minix-stat-v64.log: stat boot,
+README, DOUBLE and INDIRECT report expected metadata; disk/MM pass and IRQ
+5000 has unknown=0. No new fault appears in the supplied capture.
+
+[x] Add cp32_minix_abspath in fs/path.c and cp32_minix_chdir in fs/stadir.c,
+following MINIX path traversal and do_chdir/change responsibilities. Join
+relative paths without prematurely collapsing components: README/.. must
+fail as not-a-directory. Validate target directory, canonicalize for pwd,
+verify canonical/original inode identity, then publish cwd. Invalid paths,
+path overflow and I/O errors preserve cwd. Absolute paths ignore cwd; root
+parents remain at root. Bounded buffers preserve freestanding execution.
+
+[x] Add cd/pwd to CP32 shell and route ls/cat/tail/stat through its working
+directory. Bare ls uses current directory; bare cd returns to root. This is
+single-client textual state, not MINIX per-process inode references, permission
+checking, chroot, symlinks or mount-aware cwd. The read-only tree keeps paths
+stable; those features require replacing/expanding this bounded API later.
+
+[x] Clean build, all 23 host scripts, ELF/image and whitespace checks pass.
+Tests cover relative/absolute and dot paths in both byte orders, failed
+file-as-directory traversal, empty/oversized paths, every short-I/O stage,
+unchanged cwd on errors, and actual shell/MEM relative stat/cat integration.
+_iram_end=0x403743b0, _iram_ext_end=0x40383418, _stack_top=0x3fcd6280.
+Previous uncommitted work is preserved.
+
+Identity: [FEATURE MINIX-CWD 65]1, [TEST MINIX-CWD 65] immediately before idle.
+Hardware pending; no flash performed. Run pwd (expect /), cd boot, pwd (expect
+/boot), ls, stat DOUBLE, tail DOUBLE, cd README (must fail and retain /boot),
+cd .., pwd (expect /), disk and mm.
+
+## Previous-directory switching — image 66
+
+[x] Save image-65 capture as docs/hardware/minix-cwd-v65.log. cd boot, pwd,
+relative ls/stat/tail, cd / succeed; IRQ 5000 unknown=0 and heartbeat 9436.
+The attempted cd - returns error 5 because image 65 resolves a literal hyphen.
+No disk/MM command is present in this capture.
+
+[x] Add previous-directory policy to cp32-shell.c:cp32_shell_cd. Successful
+changes save the old path; cd - revalidates and switches to it, printing its
+path. Before any successful change, report No previous directory. Stage the
+new cwd so lookup and I/O failures preserve both current and previous paths.
+Keep this CP32 command policy outside fs/stadir.c: MINIX change/do_chdir
+validates directories, while previous-directory selection belongs to a shell.
+No per-process environment/OLDPWD ABI is claimed. Existing FS and call0 ABI
+remain unchanged; bounded path buffers only.
+
+[x] All 23 host scripts and warning-free clean build pass. Integration tests
+exercise first-use error, repeated toggling, regular-file rejection and failed
+MEM read with both directory states preserved. ELF/image and whitespace
+checks pass: _iram_end=0x403743b0, _iram_ext_end=0x403834d4,
+_stack_top=0x3fcd6450. Earlier user/work-in-progress changes preserved.
+
+Identity: [FEATURE CWD-PREV 66]1 and [TEST CWD-PREV 66] immediately before idle.
+Hardware pending; no flash performed. Run cd boot, cd /, cd - (prints /boot),
+pwd, tail DOUBLE, cd - (prints /), pwd, disk, mm. A failed cd README while in
+/boot must leave current/previous directory state unchanged.
+
+## Single-indirect directory mapping — image 67
+
+[x] Record image-66 hardware in docs/hardware/cwd-prev-v66.log: cd - returns
+from /boot to /, relative DOUBLE/README reads succeed, root listing/read works,
+IRQ 5000 unknown=0 and heartbeat reaches 6608. No disk/MM command in capture.
+
+[x] Extend directory inode decoding to seven direct zones plus 256 indirect
+entries. Validate the indirect root and allocation before publishing a handle.
+path.c directory scanning calls the shared fs/read.c:cp32_fs_read_map beyond
+direct zones, corresponding to MINIX search_dir using read_map. Preserve
+byte-order decoding, bounded Xtensa stack buffers, deleted-entry skipping,
+inode/name checks and rejection of directory holes. Double-indirect directory
+sizes still return unsupported; regular-file double mapping is unchanged.
+
+[x] Add boot/LARGE, inode 6: seven direct zones 21..27, table 28 and data 29.
+Dot entries are in zone 21, deleted entries fill intervening slots, and README
+is the first indirect entry. Correct link accounting: boot links=3 size=96;
+README links=3 (root, boot, LARGE). Root unchanged. Scratch block stays reserved.
+This is a real on-disk fixture used by normal ls/cat/path operations.
+
+[x] All 23 host scripts and warning-free clean build pass. Tests cover actual
+shell/MEM listing and nested cat, both byte orders, corrupt/empty/unallocated
+pointers, and metadata/data I/O failures preserving handles and entry outputs.
+ELF/image/whitespace checks pass: _iram_end=0x403743b0,
+_iram_ext_end=0x40383628, _stack_top=0x3fcd88b0. Prior changes preserved.
+
+Identity: [FEATURE MINIX-DIRMAP 67]1, [TEST MINIX-DIRMAP 67] immediately before
+idle. Hardware pending; no flash performed. Run ls boot/LARGE (., .., README),
+cat boot/LARGE/README, cd boot/LARGE, pwd, cat README, cd /, disk and mm.
+Repeated lookups scan deleted entries, so this fixture may be slower until a
+filesystem block cache is implemented.
+
+## Mask disabled pending interrupts before dispatch — image 68
+
+[x] Record image-67 log in docs/hardware/minix-dirmap-v67.log. Large-directory
+navigation/listing, parent traversal, disk/MM and cwd toggling work through
+heartbeat 15749. IRQ 10000 has unknown=0; IRQ 15000 shows unknown=8265 and
+raw pending=0x00018040. This is a new diagnostic failure, not clean IRQ soak.
+
+[x] Identify architectural difference: MINIX mpx386.s receives individual
+8259-delivered interrupt vectors; CP32 irq.S reads Xtensa's raw INTERRUPT
+bitmap. Espressif core-isa.h defines timer mask 0x00018040 (CCOMPARE0/1/2 on
+6/15/16); TRM chapter Interrupt Matrix documents INTENABLE masking. Startup
+programs compare registers and leaves those lines disabled. Raw pending bits
+can therefore exist without those lines being enabled interrupt causes.
+Sources: https://github.com/espressif/esp-idf/blob/master/components/xtensa/esp32s3/include/xtensa/config/core-isa.h
+https://documentation.espressif.com/esp32-s3_technical_reference_manual_en.pdf
+
+[x] Mask IRQ dispatch input with INTENABLE after saving registers. Preserve
+raw pending state, enabled sources, enabled-unregistered reporting, frame ABI,
+owner selection and source-owned device acknowledgement. No timer reprogramming
+or pending-bit clearing is added. IRQ status becomes [IRQ V68 count=...].
+
+[x] Clean build and all 23 host scripts pass without warnings. Assembly model
+executes both entry paths with masked compare bits, no enabled pending bits,
+enabled unregistered bits and full bitmaps; verifies register restoration and
+unchanged CPU mask/pending state. Existing handoff tests also inject compare
+pending bits. Disassembly confirms rsr interrupt / rsr intenable / and before
+call0 dispatch. ELF/image and whitespace checks pass: _iram_end=0x403743b8,
+_iram_ext_end=0x40383628, _stack_top=0x3fcd88b0.
+
+Identity: [FEATURE IRQ-MASK 68]1 and [TEST IRQ-MASK 68] immediately before idle.
+Hardware pending; no flash performed. Run beyond tick 15000 with ls/cat/cd on
+boot/LARGE, disk and mm. Expect unknown=0 in IRQ V68 reports while only the
+registered SYSTIMER is enabled. Raw pending may still be 0x00018040: those bits
+are deliberately neither cleared nor hidden. Actual hardware confirmation is
+required before marking the long-run issue resolved.
+
+## Clean filesystem block cache — image 69
+
+[x] Record image-68 hardware in docs/hardware/irq-mask-v68.log. IRQ 15000 and
+20000 retain unknown=0 despite raw pending=0x00018040 with ien=4; MM/disk,
+SYS/IPC, cwd/listing and metadata calls succeed. This confirms the masked
+pending-bit fix over the supplied longer run, not indefinite soak proof.
+
+[x] Add fs/cache.c matching MINIX get_block/invalidate responsibilities:
+four clean 1024-byte blocks, FIFO replacement and reader/capacity identity.
+The single FS client wraps uncached MEM reads; cache misses remain actual IPC.
+Bound parser requests to 64 bytes and stage output so cross-block failures
+never partially publish bytes. Invalidate a victim before filling it; short
+reads never publish valid cache state. Partial final device blocks are bounded.
+CP32 uses static internal DRAM rather than MINIX's full device/hash/LRU/dirty
+buffer pool; no write-back, concurrent callers or pinned buffers yet.
+
+[x] Invalidate before all shell raw DEV_WRITE attempts, including failed or
+partial writes and diagnostic restoration. Boot fixture initialization precedes
+runtime cache use. Any future backing-device writer/reset path must likewise
+invalidate before mutation. Host tests that mutate backing storage directly
+explicitly invalidate it. Existing read-only filesystem semantics are preserved.
+
+[x] Clean build, all 24 host scripts and ELF/image/whitespace checks pass.
+New cache tests cover hits, eviction, crossing, short I/O, capacity edges,
+reader replacement and explicit invalidation. Shell/MEM integration validates
+raw successful/failed writes cannot retain stale blocks and listing LARGE
+uses fewer than 40 device requests while traversing hundreds of slots.
+_iram_end=0x403743b8, _iram_ext_end=0x40383920, _stack_top=0x3fcd9bd0.
+Static cache blocks begin at 0x3fcb0798. Prior working-tree changes preserved.
+
+Identity: [FEATURE MINIX-CACHE 69]1 and [TEST MINIX-CACHE 69] immediately before
+idle. Hardware pending; no flash performed. Run ls boot/LARGE repeatedly,
+cat boot/LARGE/README, cd boot/LARGE, pwd, cat README, cd /, disk, then repeat
+ls boot/LARGE and cat boot/LARGE/README. Check tail boot/DOUBLE, mm, and IRQ
+reports beyond tick 15000. Expect identical output with fewer MEM exchanges.
+
+## Read-only file descriptors — image 70
+
+[x] Save image-69 hardware in docs/hardware/minix-cache-v69.log. LARGE listing
+and README reads work before and after disk; DOUBLE tail and MM succeed.
+IRQ 15000 unknown=0 despite masked raw pending bits. READE typo correctly
+reports File not found. This confirms the supplied cache regression sequence.
+
+[x] Add fs/filedes.c following MINIX get_fd/get_filp responsibilities: eight
+read-only slots, lowest-free allocation, publish only after successful open,
+independent offsets, checked read/seek/close and reuse after close. Small
+wrappers delegate pathname/open, read mapping and seek to existing files.
+CP32 static DRAM replaces full MINIX per-process filp references for now;
+no descriptor inheritance, dup, credentials, user syscall ABI or multiple
+clients are claimed. Negative CP32 statuses remain distinct from syscall errno.
+
+[x] Route normal shell cat/tail through the descriptor API, always closing
+a successful open after EOF or read/seek failure. Tail obtains size through
+seek-to-end and retains bounded backward scanning. No manual diagnostic probe.
+Existing command syntax, cache invalidation and on-disk fixture stay unchanged.
+
+[x] All 24 host scripts, warning-free clean build, ELF/image and whitespace
+checks pass. Twenty fill/drain cycles verify failed opens do not consume slots,
+independent offsets, exhaustion, reuse, invalid/double closes, failed-read
+buffer/position preservation, failed-seek output preservation and indirect
+reads. Repeated shell/MEM tests cover actual descriptor-backed cat/tail.
+_iram_end=0x403743b8, _iram_ext_end=0x40383ae8, _stack_top=0x3fcda060.
+Descriptor storage is internal DRAM at 0x3fcb0960. Prior edits preserved.
+
+Identity: [FEATURE MINIX-FD 70]1, [TEST MINIX-FD 70] immediately before idle.
+Hardware pending; no flash performed. Repeatedly run cat README, tail
+boot/DOUBLE and cat boot/LARGE/README (more than eight commands total), then
+cat missing, cat boot, disk, and cat README. Successful reads must continue
+without descriptor exhaustion after both successful and failing commands.
+
+## Shared open descriptions / duplication — image 71
+
+[x] Save complete image-70 evidence in docs/hardware/minix-fd-v70.log. Two
+boot sequences are present; the second has twelve consecutive successful cat
+README calls, correct missing/directory errors, DOUBLE tail, disk result=0,
+and another successful README read. IRQ 10000 has unknown=0 with raw masked
+pending bits. Descriptor reuse is hardware-confirmed for this sequence.
+
+[x] Separate descriptor slots from open descriptions in fs/filedes.c. Each
+successful independent open owns a fresh description; aliases reference the
+same offset via bounded reference counts. Close releases a description only
+on the final reference. Add fs/misc.c duplication wrappers following MINIX
+misc.c:do_dup, with dup2 source validation, self-target no-op and replacement.
+No per-process tables, fork inheritance or user syscall interface yet. Static
+internal DRAM and the existing read/seek ABI preserve CP32 task invariants.
+
+[x] Tail scans through an owned duplicate, sharing its final position with
+the original output descriptor and closing the duplicate even on scan error.
+This exercises dup in production without a manual test hook. Add cmp file1
+file2 to compare raw bytes via independent opens, with bounded buffers and
+cleanup on every failure. Command parsing accepts two whitespace-separated
+paths; quoting and filenames containing spaces are not supported by cmp yet.
+
+[x] Clean build, all 24 host scripts, ELF/image and whitespace checks pass.
+Host tests exercise shared/independent offsets, last-close lifetime, 20 reuse
+cycles, full tables, dup2 replacement/self/alias cases and invalid descriptors.
+Shell/MEM tests cover equal/different files, repeated second-open failures,
+long equal files, I/O error recovery and descriptor-backed tail. ELF confirms
+cp32_fd_dup/share are retained in extended IRAM; dup2 remains host-tested API
+without a production caller. _iram_end=0x403743b8,
+_iram_ext_end=0x4038400c, _stack_top=0x3fcda600. Earlier edits preserved.
+
+Identity: [FEATURE MINIX-DUP 71]1, [TEST MINIX-DUP 71] immediately before idle.
+Hardware pending; no flash performed. Run cmp README boot/LARGE/README
+(identical), cmp README boot/INDIRECT (differ), cmp README missing (error 5),
+then repeat tail boot/DOUBLE and cat README, disk and mm. Tail directly tests
+shared-position duplicate lifetime; cmp tests independent simultaneous opens.
+
+## Lowercase boot filenames — image 72
+
+[x] Record image-71 hardware in docs/hardware/minix-dup-v71.log. Comparisons
+report identical and different as expected, tail DOUBLE and README succeed,
+disk/MM pass, IRQ 10000 unknown=0. The missing-file comparison used READMe
+as its first operand, so it confirms case-sensitive failure, not specifically
+second-open cleanup. Host tests cover second-open cleanup separately.
+
+[x] Rename boot fixture entries README/INDIRECT/DOUBLE/LARGE to
+readme/indirect/double/large at the user's request for easier keyboard input.
+Update every hard-link name, parser and shell/MEM test path and listing.
+Keep contents, inode numbers, links, byte lengths, geometry and read-only
+behavior unchanged. Case-sensitive lookup is preserved (uppercase README
+is now a negative test). Repository source filenames are unchanged.
+
+[x] Warning-free clean build, all 24 host scripts, ELF/image and whitespace
+checks pass. Memory endpoints are unchanged: _iram_end=0x403743b8,
+_iram_ext_end=0x4038400c, _stack_top=0x3fcda600.
+
+Identity: [FEATURE LOWER-NAMES 72]1 and [TEST LOWER-NAMES 72] immediately before
+idle. Hardware pending; no flash performed. Run ls boot, cat readme,
+cat boot/large/readme, tail boot/double, cmp readme boot/large/readme.
+Use lowercase paths for all future hardware tests; historical logs retain
+the spelling of the image actually tested.
+
+## Descriptor-based metadata — image 73
+
+[x] Record image-72 hardware in docs/hardware/lower-names-v72.log. Lowercase
+large-directory listing, root/nested readme and double tail succeed; cmp
+boot/readme boot/large/readme returns identical after an earlier cpm typo.
+IRQ 10000 unknown=0. No disk/MM command is present in that capture.
+
+[x] Store inode identity in each open description and add cp32_fd_fstat in
+fs/stadir.c, following MINIX do_fstat/stat_inode. Path stat and descriptor
+fstat share one byte-decoding helper. Descriptor metadata reads only allocation
+and inode bytes using the saved reader/geometry/number, with no pathname lookup
+or offset change. Duplicates retain identity after another reference closes.
+Bad descriptors and metadata I/O failures preserve output and shared position.
+The existing single-client, read-only and regular-file descriptor limits apply;
+this does not add inode-cache lifetime/unlink semantics or a user syscall ABI.
+
+[x] Tail obtains size through fstat instead of seeking solely to query EOF.
+Its production duplicate/seek/read path remains intact. No manual probe added.
+All 24 host scripts and warning-free clean build pass. New tests cover both
+byte orders, path-stat parity, exact metadata-only reads, descriptor identity
+after synthetic entry removal, shared lifetime, unchanged offsets/output on
+short reads and invalid descriptors, and sparse logical size. Full shell/MEM
+regressions exercise tail with fstat. ELF/image/whitespace checks pass:
+_iram_end=0x403743b8, _iram_ext_end=0x403840e4, _stack_top=0x3fcda700.
+cp32_fd_fstat is retained in extended IRAM at 0x40382248. Prior edits preserved.
+
+Identity: [FEATURE MINIX-FSTAT 73]1 and [TEST MINIX-FSTAT 73] immediately before
+idle. Hardware pending; no flash performed. Run tail readme, tail boot/indirect,
+tail boot/double, cmp readme boot/large/readme, disk, tail boot/double and mm.
+Expect existing output; the normal tail path now obtains metadata by descriptor.

@@ -62,10 +62,8 @@
 
 
 
-extern volatile char cp32_tty_user_byte;
-
-static unsigned cp32_kbd_poll_reports;
 static unsigned cp32_tty_read_reports;
+static volatile int cp32_console_ready;
 FORWARD _PROTOTYPE( void in_transfer, (tty_t *tp) );
 CP32_IRAM_EXT static int cp32_read_keyboard_event(unsigned char *event)
 {
@@ -86,81 +84,38 @@ CP32_IRAM_EXT static int cp32_cardputer_key(unsigned char event, char *ch)
 		"\001\002ASDFGHJKL:\"\n", "\003\004\005ZXCVBNM<>? "
 	};
 	static int shift, ctrl, fn, alt;
-	unsigned code, raw_row, raw_col, row, col;
+	unsigned code, raw_row, raw_col, row, col, pressed;
 	if (!ch || event == 0) return 0;
+	/* M5Cardputer TCA8418KeyboardReader: bit 7 is press, unlike the
+	 * MINIX PC keyboard break bit. Only the configured 7x8 matrix is valid. */
+	pressed = (event & 0x80) != 0;
 	code = (unsigned)(event & 0x7F) - 1;
 	raw_row = code / 10; raw_col = code % 10;
-	if (raw_row >= 8 || raw_col >= 10) return 0;
+	if (raw_row >= 7 || raw_col >= 8) return 0;
 	col = raw_row * 2 + (raw_col > 3);
 	row = (raw_col + 4) % 4;
 	if (row >= 4 || col >= 14) return 0;
-	if (row == 2 && col == 0) { fn = !(event & 0x80); return 0; }
-	if (row == 2 && col == 1) { shift = !(event & 0x80); return 0; }
-	if (row == 3 && col == 0) { ctrl = !(event & 0x80); return 0; }
+	if (row == 2 && col == 0) { fn = pressed; return 0; }
+	if (row == 2 && col == 1) { shift = pressed; return 0; }
+	if (row == 3 && col == 0) { ctrl = pressed; return 0; }
 	if (row == 3 && col == 1) return 0;
-	if (row == 3 && col == 2) { alt = !(event & 0x80); return 0; }
-	if (keys[row][col] < 4 || (event & 0x80)) return 0;
+	if (row == 3 && col == 2) { alt = pressed; return 0; }
+	if (keys[row][col] < 4 || !pressed) return 0;
 	*ch = shift ? shifted[row][col] : keys[row][col];
+	if (ctrl && *ch >= 'A' && *ch <= 'Z') *ch = (char)(*ch - 'A' + 'a');
 	if (ctrl && *ch >= 'a' && *ch <= 'z') *ch = (char)(*ch - 'a' + 1);
 	(void)fn; (void)alt;
 	return 1;
 }
-CP32_IRAM_EXT static void cp32_queue_console_key(char ch)
+/* SYSTIMER only posts a coalesced notification. TTY owns I2C, line
+ * processing and replies; no device transaction runs on an interrupt stack. */
+CP32_IRAM_EXT PUBLIC void cp32_tty_poll_tick(void)
 {
-	tty_t *tp = &tty_table[0];
-	if (tp->tty_incount == buflen(tp->tty_inbuf)) return;
-	*tp->tty_inhead++ = (u16_t)(unsigned char)ch;
-	if (tp->tty_inhead == bufend(tp->tty_inbuf)) tp->tty_inhead = tp->tty_inbuf;
-	tp->tty_incount++;
-	if (ch == '\n') tp->tty_eotct++;
-	if (tp->tty_inleft > 0) in_transfer(tp);
-	usbj_print("[TTY char=");
-	if (ch >= 0x20 && ch <= 0x7E) {
-		char shown[2];
-		shown[0] = ch; shown[1] = '\0';
-		usbj_print(shown);
-	} else {
-		usbj_print_hex32((uint32_t)(unsigned char)ch);
-	}
-	usbj_print("]\r\n");
+  if (!cp32_console_ready) return;
+  tty_table[0].tty_events = 1;
+  interrupt(TTY);
 }
 
-/* Cooperative poll used by the synthetic CP32 FS client while it is waiting
- * for its first byte.  The normal TTY task remains the owner of the queue. */
-CP32_IRAM_EXT PUBLIC void cp32_tty_poll_keyboard(void)
-{
-	unsigned char event;
-	char input;
-	/* Bit-banged I2C must never begin while servicing an interrupt. */
-	if (k_reenter != 0) return;
-	/* KEY_EVENT_A is valid only while the controller asserts active-low INT. */
-	if (!cardputer_keyboard_interrupt_asserted()) return;
-	if (cp32_read_keyboard_event(&event) <= 0) return;
-	if (cp32_cardputer_key(event, &input)) {
-		lock();
-		cp32_queue_console_key(input);
-		unlock();
-	}
-}
-
-CP32_IRAM_EXT PUBLIC int cp32_tty_read_char(char *out)
-{
-	tty_t *tp = &tty_table[0];
-	u16_t value;
-	if (out == (char *)0) return EINVAL;
-	lock();
-	if (tp->tty_incount == 0) {
-		unlock();
-		return EAGAIN;
-	}
-	value = *tp->tty_intail;
-	if (++tp->tty_intail == bufend(tp->tty_inbuf)) tp->tty_intail = tp->tty_inbuf;
-	tp->tty_incount--;
-	if (value & IN_EOT) tp->tty_eotct--;
-	unlock();
-	*out = (char)(value & IN_CHAR);
-	return 1;
-}
 #include "proc.h"
 
 /* Address of a tty structure. */
@@ -203,7 +158,7 @@ CP32_IRAM_EXT static void cp32_trace_tty_read(unsigned count)
 {
 	if (++cp32_tty_read_reports == 1 ||
 	    (cp32_tty_read_reports % 500) == 0) {
-		usbj_print("[TTY read count="); usbj_print_u32(count);
+		usbj_print("[TTY READ V46 count="); usbj_print_u32(count);
 		usbj_print(" replies="); usbj_print_u32(cp32_tty_read_reports);
 		usbj_print("]\r\n");
 	}
@@ -234,13 +189,16 @@ FORWARD _PROTOTYPE( void do_ioctl_compat, (tty_t *tp, message *m_ptr)	);
 #endif
 #endif
 
-/* Default attributes. */
+/* CP32 control-character indexes differ from the original MINIX header. */
 PRIVATE struct termios termios_defaults = {
   TINPUT_DEF, TOUTPUT_DEF, TCTRL_DEF, TLOCAL_DEF, TSPEED_DEF, TSPEED_DEF,
   {
-	TEOF_DEF, TEOL_DEF, TERASE_DEF, TINTR_DEF, TKILL_DEF, TMIN_DEF,
-	TQUIT_DEF, TTIME_DEF, TSUSP_DEF, TSTART_DEF, TSTOP_DEF,
-	TREPRINT_DEF, TLNEXT_DEF, TDISCARD_DEF,
+        [VEOF] = TEOF_DEF, [VEOL] = TEOL_DEF, [VERASE] = TERASE_DEF,
+        [VINTR] = TINTR_DEF, [VKILL] = TKILL_DEF, [VMIN] = TMIN_DEF,
+        [VQUIT] = TQUIT_DEF, [VTIME] = TTIME_DEF, [VSUSP] = TSUSP_DEF,
+        [VSTART] = TSTART_DEF, [VSTOP] = TSTOP_DEF,
+        [VREPRINT] = TREPRINT_DEF, [VLNEXT] = TLNEXT_DEF,
+        [VDISCARD] = TDISCARD_DEF,
   },
 };
 PRIVATE struct winsize winsize_defaults;	/* = all zeroes */
@@ -256,52 +214,22 @@ CP32_IRAM_EXT PUBLIC void tty_task()
   message tty_mess;		/* buffer for all incoming messages */
   register tty_t *tp;
   unsigned line;
-  unsigned char key_event;
 
   /* Initialize the terminal lines. */
   for (tp = FIRST_TTY; tp < END_TTY; tp++) tty_init(tp);
+  cp32_console_ready = 1;
 
   while (TRUE) {
 	/* Handle any events on any of the ttys. */
 	for (tp = FIRST_TTY; tp < END_TTY; tp++) {
 		if (tp->tty_events) handle_events(tp);
 	}
-    /* Keyboard polling is owned by the CP32 bring-up FS client until the
-     * production TTY IRQ wakeup path is enabled. */
-
-#if 0
-    /* Drain a bounded FIFO batch so rapid typing cannot overflow the TCA8418. */
-	{
-		unsigned drained = 0;
-		while (drained++ < 8 && cardputer_keyboard_interrupt_asserted()) {
-			if (cp32_read_keyboard_event(&key_event) <= 0) break;
-			{
-				char input;
-				if (cp32_cardputer_key(key_event, &input)) {
-					lock();
-					cp32_queue_console_key(input);
-					unlock();
-    }
-			}
-			#if CP32_VERBOSE_DIAGNOSTICS
-			usbj_print("[KBD session=238 event="); usbj_print_u32(key_event);
-			usbj_print("]\r\n");
-			#endif
-		}
-	}
-#endif
-	#if CP32_VERBOSE_DIAGNOSTICS
-	if (++cp32_kbd_poll_reports == 1 || (cp32_kbd_poll_reports % 10000) == 0) {
-		usbj_print("[KBD poll="); usbj_print_u32(cp32_kbd_poll_reports);
-		usbj_print("]\r\n");
-	}
-	#endif
 
 	if (receive(ANY, &tty_mess) != OK)
 		panic("TTY receive failed", NO_NUM);
 
 	/* A hardware interrupt is an invitation to check for events. */
-	if (tty_mess.m_type == HARD_INT) continue;
+	if (tty_mess.m_type == HARD_INT && tty_mess.m_source == HARDWARE) continue;
 
 	/* Check the minor device number. */
 	line = tty_mess.TTY_LINE;
@@ -808,58 +736,41 @@ tty_t *tp;			/* TTY to check for events. */
 /*===========================================================================*
  *				in_transfer				     *
  *===========================================================================*/
-CP32_IRAM_EXT PRIVATE void in_transfer(tp)
-register tty_t *tp;		/* pointer to terminal to read from */
+CP32_IRAM_EXT PRIVATE void in_transfer(tty_t *tp)
 {
 /* Transfer bytes from the input queue to a process reading from a terminal. */
 
   int ch;
   int count;
-  phys_bytes buf_phys, user_base;
+  phys_bytes buf_phys, destination;
   char buf[64], *bp;
-  static int cp32_xfer_reported;
 
   /* Anything to do? */
-  /* The CP32 bring-up FS client asks for one byte at a time.  It is not a
-   * canonical terminal consumer, so do not make it wait for a newline. */
-  if (tp->tty_inleft == 0 || tp->tty_incount == 0 ||
-      (tp->tty_inproc != FS_PROC_NR && tp->tty_eotct < tp->tty_min)) return;
+  if (tp->tty_inleft == 0 || tp->tty_eotct < tp->tty_min) return;
 
   buf_phys = vir2phys(buf);
-  /* CP32 uses flat SRAM addresses for the bring-up FS client.  tty_in_vir is
-   * already an absolute virtual address; adding it to the segment base would
-   * translate it twice and corrupt the user buffer. */
-  user_base = 0;
+  /* MINIX adds a segment base. CP32 maps the complete remaining flat
+   * destination once, before consuming any queued bytes. Never write through
+   * tty_in_vir directly: only numap's physical result is a copy destination. */
+  destination = numap(tp->tty_inproc, tp->tty_in_vir, tp->tty_inleft);
+  if (destination == 0) {
+	tty_reply(tp->tty_inrepcode, tp->tty_incaller, tp->tty_inproc, EFAULT);
+	tp->tty_inleft = tp->tty_incum = 0;
+	return;
+  }
   bp = buf;
-  while (tp->tty_inleft > 0 && tp->tty_incount > 0 &&
-      (tp->tty_eotct > 0 || tp->tty_inproc == FS_PROC_NR)) {
+  while (tp->tty_inleft > 0 && tp->tty_incount > 0 && tp->tty_eotct > 0) {
 	ch = *tp->tty_intail;
 
 	if (!(ch & IN_EOF)) {
 		/* One character to be delivered to the user. */
 		*bp = ch & IN_CHAR;
 		tp->tty_inleft--;
-		/* CP32 user buffers are flat SRAM addresses.  Keep the legacy
-		 * temporary-buffer accounting, but write the byte directly to the
-		 * validated destination so segmented phys_copy cannot drop it. */
-		*(volatile char *)(uintptr_t)tp->tty_in_vir = (char)(ch & IN_CHAR);
-		if (tp->tty_inproc == FS_PROC_NR)
-			cp32_tty_user_byte = (char)(ch & IN_CHAR);
-		if (!cp32_xfer_reported) {
-			cp32_xfer_reported = 1;
-			usbj_print("[TTY xfer dst=");
-			usbj_print_hex32((uint32_t)tp->tty_in_vir);
-			usbj_print(" ch=");
-			usbj_print_hex32((uint32_t)(ch & IN_CHAR));
-			usbj_print("]\r\n");
-		}
-		tp->tty_in_vir++;
-		tp->tty_incum++;
 		if (++bp == bufend(buf)) {
 			/* Temp buffer full, copy to user space. */
-					phys_copy(buf_phys, numap(tp->tty_inproc,
-												 tp->tty_in_vir, buflen(buf)),
-										(phys_bytes) buflen(buf));
+			phys_copy(buf_phys, destination,
+						(phys_bytes) buflen(buf));
+			destination += buflen(buf);
 			tp->tty_in_vir += buflen(buf);
 			tp->tty_incum += buflen(buf);
 			bp = buf;
@@ -880,8 +791,7 @@ register tty_t *tp;		/* pointer to terminal to read from */
   if (bp > buf) {
 	/* Leftover characters in the buffer. */
 	count = bp - buf;
-	phys_copy(buf_phys, numap(tp->tty_inproc, tp->tty_in_vir,
-										 (vir_bytes) count), (phys_bytes) count);
+	phys_copy(buf_phys, destination, (phys_bytes) count);
 	tp->tty_in_vir += count;
 	tp->tty_incum += count;
   }
@@ -1526,13 +1436,29 @@ tty_t *tp;
   /* Some functions need not be implemented at the device level. */
 }
 
+/* Removable task-context timing trace: include rendering and scheduled-out
+ * time, excluding time queued before TTY accepted the request. */
+CP32_IRAM_EXT static void cp32_trace_tty_write(unsigned bytes, uint32_t ticks)
+{
+  static unsigned reports;
+  if (++reports <= 8 || reports % 500 == 0) {
+    int saved_ps = lock_save();
+    usbj_print("[TTY WRITE V48 bytes="); usbj_print_u32(bytes);
+    usbj_print(" ticks="); usbj_print_u32(ticks);
+    usbj_print("]\r\n");
+    restore_lock(saved_ps);
+  }
+}
+
 /* MINIX cons_write's bounded copy/complete contract, with ST7789 output.
  * The caller remains blocked in IPC while TTY owns its copied output bytes. */
 CP32_IRAM_EXT PRIVATE void cp32_console_write(tty_t *tp)
 {
   char buffer[64], expanded[8];
   int result = OK;
+  uint32_t started;
   if (tp->tty_outleft == 0 || tp->tty_inhibited) return;
+  started = (uint32_t)get_uptime();
   cardputer_display_begin_batch();
   while (tp->tty_outleft > 0) {
     int count = tp->tty_outleft, i;
@@ -1556,16 +1482,54 @@ CP32_IRAM_EXT PRIVATE void cp32_console_write(tty_t *tp)
   cardputer_display_end_batch();
   if (cardputer_display_faulted()) result = EIO;
   if (result == OK) result = tp->tty_outcum;
+  cp32_trace_tty_write((unsigned)tp->tty_outcum,
+                       (uint32_t)get_uptime() - started);
   tp->tty_outleft = tp->tty_outcum = 0;
   tty_reply(tp->tty_outrepcode, tp->tty_outcaller, tp->tty_outproc, result);
 }
 
-/* The Cardputer console writes to LCD; input and UART remain separate. */
+/* Poll a bounded controller FIFO batch in TTY task context. The existing
+ * decoder supplies characters; MINIX in_process supplies editing and EOT/EOF. */
+CP32_IRAM_EXT PRIVATE void cp32_console_read(tty_t *tp)
+{
+  unsigned drained;
+  unsigned char event;
+  char ch;
+  for (drained = 0; drained < 8; drained++) {
+    if (!cardputer_keyboard_interrupt_asserted()) break;
+    if (cp32_read_keyboard_event(&event) <= 0) break;
+    if (!cp32_cardputer_key(event, &ch)) continue;
+    /* The physical Backspace key produces BS; the default MINIX erase is DEL.
+     * In raw mode preserve the original byte. */
+    if (ch == '\b' && (tp->tty_termios.c_lflag & ICANON))
+      ch = tp->tty_termios.c_cc[VERASE];
+    in_process(tp, &ch, 1);
+  }
+}
+
+CP32_IRAM_EXT PRIVATE void cp32_console_echo(tty_t *tp, int ch)
+{
+  char expanded[8];
+  int consumed = 1, produced = sizeof(expanded), i;
+  expanded[0] = (char)ch;
+  out_process(tp, expanded, expanded, expanded + sizeof(expanded),
+              &consumed, &produced);
+  if (ch == '\n') {
+    cardputer_display_defer_newline();
+    return;
+  }
+  cardputer_display_begin_batch();
+  for (i = 0; i < produced; i++) cardputer_display_putc(expanded[i]);
+  cardputer_display_end_batch();
+}
+
+/* The console owns both keyboard input and LCD output. */
 CP32_IRAM_EXT PUBLIC void scr_init(tp)
 tty_t *tp;
 {
-  tp->tty_devread = tty_devnop;
+  tp->tty_devread = cp32_console_read;
   tp->tty_devwrite = cp32_console_write;
+  tp->tty_echo = cp32_console_echo;
 }
 
 CP32_IRAM_EXT PUBLIC void rs_init(tp)

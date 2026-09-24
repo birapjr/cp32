@@ -1,0 +1,27 @@
+User-supplied image-50 hardware log excerpts.
+One successful disk diagnostic and one blank-superblock read are captured.
+No exception appears in the supplied log. Repeated disk cycles, a valid
+filesystem image, and IRQ 5000 are not included in this capture.
+
+[FEATURE MINIX-SUPER 50]1
+[TEST MINIX-SUPER 50]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[TTY line=disk]
+[RAM V49 op=3 result=512 n=1]
+[RAM V49 op=4 result=512 n=2]
+[RAM V49 op=3 result=512 n=3]
+[RAM V49 op=4 result=512 n=4]
+[RAM V49 op=3 result=512 n=5]
+[RAM IPC V49 result=0]
+[TTY WRITE V48 bytes=26 ticks=28]
+[TTY line=fsinfo]
+[RAM V49 op=3 result=24 n=6]
+No MINIX filesystem
+[TTY WRITE V48 bytes=23 ticks=25]
+[CTX kernel-running ticks=1394 heartbeat=1]
+[MM IPC V44 alloc-release-result=0]
+[TTY IPC V44 reply-result=0]
+[SYS IPC V44 result=0 uptime=2147]
+[CMD ls capacity=65536 formatted=0]
+[TTY WRITE V48 bytes=62 ticks=186]

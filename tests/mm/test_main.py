@@ -6,11 +6,16 @@ import subprocess
 import tempfile
 import sys
 sys.dont_write_bytecode = True
+ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'tests'))
 from test_idle_handoff import extract_function
-ROOT=Path(__file__).resolve().parents[1]
 NAMES=['cp32_mem_allocator_init','cp32_mem_alloc','cp32_mem_free',
        'cp32_mem_owned','numap','cp32_mm_source_valid','cp32_mm_handle_request','mm_task']
-bodies=[extract_function(ROOT/'src/kernel/mm.c',n) for n in NAMES]
+def source(name):
+    if name == 'numap': return ROOT/'src/kernel/system.c'
+    if name.startswith('cp32_mem_'): return ROOT/'src/mm/alloc.c'
+    return ROOT/'src/mm/main.c'
+bodies=[extract_function(source(n),n) for n in NAMES]
 PRELUDE=r'''
 #include <stdint.h>
 #include <stdio.h>

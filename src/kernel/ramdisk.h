@@ -22,5 +22,6 @@ CP32_IRAM_EXT int cp32_ramdisk_write_bytes(unsigned offset, const void *buffer, 
 CP32_IRAM_EXT int cp32_ramdisk_checksum(unsigned offset, unsigned length, unsigned *checksum);
 CP32_IRAM_EXT int cp32_ramdisk_format(void);
 CP32_IRAM_EXT int cp32_ramdisk_is_formatted(void);
+CP32_IRAM_EXT int cp32_minix_demo_init(void);
 
 #endif

@@ -157,12 +157,14 @@ void cardputer_display_clear(void){
   out(CS,1);
   x=y=0;
   for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=painted[row][col]=' ';
+  display_redraw_pending=0;
 }
 static void glyph_scaled(char c);
-/* Nested writes share one flush. Compare final text with painted cells so
- * scrolling never blanks the screen or retransmits unchanged characters. */
+/* Lay out the complete batch in textbuf before any pixel transfer. Pending
+ * echo-newline scrolling belongs to the next batch, so begin must retain it.
+ * At outer commit, paint each changed cell once at its final screen position. */
 void cardputer_display_begin_batch(void){
-  if (display_batch++ == 0) display_redraw_pending=0;
+  display_batch++;
 }
 void cardputer_display_end_batch(void){
   unsigned row,col,saved_x,saved_y;
@@ -178,7 +180,7 @@ void cardputer_display_end_batch(void){
   x=saved_x; y=saved_y;
 }
 static void glyph_scaled(char c){
-  static const uint8_t f[26][5]={{14,17,16,17,14},{30,17,30,17,30},{14,17,16,17,14},{30,17,17,17,30},{31,16,30,16,31},{31,16,30,16,16},{14,16,23,17,14},{17,17,31,17,17},{14,4,4,4,14},{7,2,2,18,12},{17,18,28,18,17},{16,16,16,16,31},{17,27,21,17,17},{17,25,21,19,17},{14,17,17,17,14},{30,17,30,16,16},{14,17,17,21,14},{30,17,30,18,17},{15,16,14,1,30},{31,4,4,1,30},{17,17,17,17,14},{17,17,17,10,4},{17,17,21,27,17},{17,10,4,10,17},{17,10,4,4,4},{31,2,4,8,31}};
+  static const uint8_t f[26][5]={{14,17,31,17,17},{30,17,30,17,30},{14,17,16,17,14},{30,17,17,17,30},{31,16,30,16,31},{31,16,30,16,16},{14,16,23,17,14},{17,17,31,17,17},{14,4,4,4,14},{7,2,2,18,12},{17,18,28,18,17},{16,16,16,16,31},{17,27,21,17,17},{17,25,21,19,17},{14,17,17,17,14},{30,17,30,16,16},{14,17,17,21,14},{30,17,30,18,17},{15,16,14,1,30},{31,4,4,1,30},{17,17,17,17,14},{17,17,17,10,4},{17,17,21,27,17},{17,10,4,10,17},{17,10,4,4,4},{31,2,4,8,31}};
   static const uint8_t d[10][5]={{14,17,17,17,14},{4,12,4,4,14},{14,1,6,8,31},{30,1,14,1,30},{2,6,10,31,2},{31,16,30,1,30},{14,16,30,17,14},{31,1,2,4,4},{14,17,14,17,14},{14,17,15,1,14}};
   static const uint8_t l[26][5]={{0,14,1,15,15},{16,16,30,17,30},{0,14,16,16,14},{1,1,15,17,15},{0,14,31,16,14},{6,9,28,8,8},{0,15,17,15,1},{16,16,30,17,17},{4,0,12,4,14},{2,0,6,2,18},{16,18,28,18,17},{12,4,4,4,14},{0,26,21,17,17},{0,30,17,17,17},{0,14,17,17,14},{0,30,17,30,16},{0,15,17,15,1},{0,22,25,16,16},{0,15,28,3,30},{8,8,28,8,7},{0,17,17,19,13},{0,17,17,10,4},{0,17,21,21,10},{0,17,10,4,10},{0,17,17,15,1},{0,31,2,4,31}};
   uint8_t r[5]; unsigned i,row,col,sx,sy;
@@ -192,6 +194,7 @@ static void glyph_scaled(char c){
   else if(c=='_') { r[0]=0; r[1]=0; r[2]=0; r[3]=0; r[4]=62; }
   else if(c=='/') { r[0]=2; r[1]=4; r[2]=8; r[3]=16; r[4]=32; }
   else if(c==':') { r[0]=0; r[1]=8; r[2]=0; r[3]=8; r[4]=0; }
+  else if(c=='.') { r[0]=0; r[1]=0; r[2]=0; r[3]=0; r[4]=4; }
   else if(c=='=') { r[0]=0; r[1]=31; r[2]=0; r[3]=31; r[4]=0; }
   else if(c=='$') { r[0]=4; r[1]=30; r[2]=5; r[3]=30; r[4]=4; }
   else for(i=0;i<5;i++) r[i]=(c==' ')?0:(uint8_t)(0x11^(c*13u+i*7u));
@@ -201,7 +204,8 @@ static void glyph_scaled(char c){
       px((col<7 && (r[row]&(1u<<(6-col)))) ? 0xFFFF : 0x0000);
   out(CS,1);
 }
-void cardputer_display_putc(char c){
+/* This layout pass does not send pixels, even when several rows scroll. */
+static void cardputer_display_layout_char(char c){
   unsigned row,col;
   if(!ready||spi_fault)return;
   if(c=='\r')return;
@@ -212,23 +216,33 @@ void cardputer_display_putc(char c){
       textbuf[row][col]=textbuf[row+1][col];
     for(col=0;col<16;col++) textbuf[11][col]=' ';
     x=0; y=121;
-    if(display_batch){display_redraw_pending=1;return;}
-    cardputer_display_begin_batch();
     display_redraw_pending=1;
-    cardputer_display_end_batch();
     return;
   }
-  if(c=='\b'){if(x>=15)x-=15;return;}
+  if(c=='\b'){
+    if(x>=15)x-=15;
+    else if(y>=11){y-=11;x=225;}
+    return;
+  }
   /* Delay wrap until the next printable character; newline after a full
    * line advances exactly once. Scrolling must update textbuf too. */
-  if(x>=240) cardputer_display_putc('\n');
+  if(x>=240) cardputer_display_layout_char('\n');
   row=y/11; col=x/15;
   if(row<12 && col<16) textbuf[row][col]=c;
-  if(!display_redraw_pending && row<12 && col<16 && painted[row][col]!=c){
-    glyph_scaled(c);
-    painted[row][col]=c;
-  }
+  if(row<12 && col<16) display_redraw_pending=1;
   x+=15;
+}
+void cardputer_display_putc(char c){
+  unsigned standalone=(display_batch==0);
+  if(standalone) cardputer_display_begin_batch();
+  cardputer_display_layout_char(c);
+  if(standalone) cardputer_display_end_batch();
+}
+/* Enter echo advances logical state immediately but does not repaint a
+ * whole scroll just before the command response. The next write/echo commits
+ * that scroll together with its own layout; no batch is held across IPC. */
+void cardputer_display_defer_newline(void){
+  cardputer_display_layout_char('\n');
 }
 void cardputer_display_write(const char *s){
   cardputer_display_begin_batch();

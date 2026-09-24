@@ -31,6 +31,10 @@ static char output[2048];
 static int used,depth,replies,status,fault,copies,maxcopy;
 static const char *allowed;
 static unsigned allowed_size;
+static uint32_t get_uptime(void) { return 0; }
+static void cp32_trace_tty_write(unsigned bytes,uint32_t ticks) {
+  (void)bytes; (void)ticks;
+}
 static phys_bytes numap(int endpoint,vir_bytes address,unsigned n) {
   if(endpoint!=1 || address<(uintptr_t)allowed || address-(uintptr_t)allowed>allowed_size ||
      n>allowed_size-(address-(uintptr_t)allowed)) return 0;

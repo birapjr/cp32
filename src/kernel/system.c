@@ -1120,7 +1120,70 @@ vir_bytes bytes;		/* # of bytes to be copied */
 /*==========================================================================*
  *				numap					    *
  *==========================================================================*/
-// numap is now implemented in mm.c
+/* MINIX keeps process-address translation in kernel/system.c.
+ * CP32 retains flat-SRAM kernel-stack validation and checked mapped copies. */
+/*
+ * numap: translate virtual address to physical address.
+ * Returns 0 if address is out of bounds for the process.
+ */
+CP32_IRAM_EXT PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
+{
+    /* proc_nr is a MINIX process number, not a raw proc[] index. */
+    struct proc *rp;
+    int i;
+
+    if (!isokprocn(proc_nr) || len == 0 || len - 1 > (vir_bytes)-1 - vir)
+        return 0;
+    rp = proc_addr(proc_nr);
+    if (rp == NIL_PROC || (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR) ||
+        rp->p_nr != proc_nr || (rp->p_flags & P_SLOT_FREE)) {
+        return 0;
+    }
+
+    /* Kernel tasks pass IPC buffers on their kernel stacks.  Those buffers
+     * are already physical flat addresses on ESP32-S3 and do not fit the
+     * synthetic MINIX segment map used for user processes. */
+    if (istaskp(rp) && (uint64_t)vir >= 0x3FC00000ULL &&
+        (uint64_t)vir + len <= 0x3FD00000ULL)
+        return (phys_bytes)vir;
+
+    for (i = 0; i < NR_SEGS; i++) {
+        uint64_t base = rp->p_map[i].mem_vir;
+        uint64_t size = (uint64_t)rp->p_map[i].mem_len << CLICK_SHIFT;
+        uint64_t offset;
+        uint64_t phys;
+        if ((uint64_t)vir < base) continue;
+        offset = (uint64_t)vir - base;
+        if (offset > size || (uint64_t)len > size - offset) continue;
+        phys = ((uint64_t)rp->p_map[i].mem_phys << CLICK_SHIFT) + offset;
+        if (phys > (phys_bytes)-1 || len - 1 > (phys_bytes)-1 - phys)
+            continue;
+        return (phys_bytes)phys;
+    }
+    return 0;
+}
+
+/*
+ * mem_copy: copy data from one process to another.
+ * Uses numap to ensure both addresses are valid.
+ */
+CP32_IRAM_EXT PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len)
+{
+    phys_bytes src_phys = numap(src_proc, src_vir, len);
+    phys_bytes dst_phys = numap(dst_proc, dst_vir, len);
+
+    if (src_phys == 0 || dst_phys == 0) {
+        usbj_print("[MM E src="); usbj_print_u32((uint32_t)src_proc);
+        usbj_print(" dst="); usbj_print_u32((uint32_t)dst_proc);
+        usbj_print(" sp="); usbj_print_u32(src_phys);
+        usbj_print(" dp="); usbj_print_u32(dst_phys);
+        usbj_print("]\r\n");
+        return EFAULT;
+    }
+
+    phys_copy(src_phys, dst_phys, len);
+    return OK;
+}
 
 
 

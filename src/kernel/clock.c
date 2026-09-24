@@ -135,7 +135,8 @@ CP32_IRAM_EXT PUBLIC int cp32_irq_register(unsigned line, cp32_irq_handler_t han
   return 0;
 }
 
-/* Dispatch each asserted CPU line through its registered device handler. */
+/* IRQ entry supplies INTERRUPT & INTENABLE. Dispatch each enabled pending
+ * CPU line; keep enabled unregistered sources visible in unknown_count. */
 CP32_IRAM_EXT PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pending)
 {
   unsigned line;
@@ -159,7 +160,7 @@ CP32_IRAM_EXT PRIVATE void cp32_print_irq_status(void)
   int selected = proc_ptr != NIL_PROC ? proc_ptr->p_nr : 9999;
   int handed_off = cp32_irq_saved_owner != NIL_PROC &&
       proc_ptr != NIL_PROC && cp32_irq_saved_owner != proc_ptr;
-  usbj_print("[IRQ count="); usbj_print_u32(cp32_timer_irq_ticks);
+  usbj_print("[IRQ V68 count="); usbj_print_u32(cp32_timer_irq_ticks);
   usbj_print(" nest="); usbj_print_u32((uint32_t)k_reenter);
   usbj_print(" owner="); usbj_print_u32((uint32_t)owner);
   usbj_print(" selected="); usbj_print_u32((uint32_t)selected);
@@ -614,10 +615,8 @@ int irq;
 #endif
   }
 
-  /* The bring-up FS console polls the keyboard directly. Do not inject a
-   * synthetic TTY notification from the clock ISR until task-owned IPC
-   * receive/suspend is live; that notification can consume the IRQ return
-   * path and stop subsequent timer ticks. */
+  /* Periodic task wakeup for the polled Cardputer keyboard backend. */
+  cp32_tty_poll_tick();
 
   /* Step 3: Charge CPU time to the running process.
    * If interrupted inside a kernel handler (k_reenter != 0), charge HARDWARE.

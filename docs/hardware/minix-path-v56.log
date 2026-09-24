@@ -1,0 +1,27 @@
+User-supplied image-56 hardware log excerpts.
+Confirms root/subdirectory listing and relative nested file reads.
+Dot-dot/error-path tests and IRQ 5000 are not present in this capture.
+
+[FEATURE MINIX-PATH 56]1
+[TEST MINIX-PATH 56]
+[TTY line=ls]
+.
+..
+boot
+README
+[TTY WRITE V48 bytes=23 ticks=20]
+[TTY line=ls boot]
+.
+..
+README
+[TTY WRITE V48 bytes=17 ticks=14]
+[CTX kernel-running ticks=1357 heartbeat=1]
+[TTY line=cat boot/README]
+CP32 MINIX V2 RAM filesystem.
+Read-only filesystem bring-up.
+[TTY WRITE V48 bytes=65 ticks=133]
+[CTX kernel-running ticks=2872 heartbeat=2]
+[TTY line=cat README]
+CP32 MINIX V2 RAM filesystem.
+Read-only filesystem bring-up.
+[TTY WRITE V48 bytes=65 ticks=135]

@@ -284,7 +284,12 @@ irq_level1:
     mov     a15, a1
     /* Classify the pending CPU interrupt bitmap in C.  The dispatcher owns
      * device routing; the timer is only one registered source. */
+    /* INTERRUPT includes masked CCOMPARE pending bits. Dispatch only enabled
+     * sources (ESP32-S3 TRM, interrupt matrix / INTENABLE). Registers are
+     * already saved; a4 is a call0 scratch register here. */
     rsr     a3, interrupt
+    rsr     a4, intenable
+    and     a3, a3, a4
     call0   cp32_irq_dispatch
     
 1:

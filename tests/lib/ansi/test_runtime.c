@@ -1,5 +1,9 @@
 #include <stdio.h>
-#include "../src/kernel/klib.c"
+#include "../../../src/lib/ansi/memcpy.c"
+#include "../../../src/lib/ansi/memset.c"
+#include "../../../src/lib/ansi/strcpy.c"
+#include "../../../src/lib/ansi/strcmp.c"
+#include "../../../src/lib/ansi/strtol.c"
 static int failures;
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL %s:%d\n", __FILE__, __LINE__); failures++; } } while (0)
 int main(void)

@@ -1,0 +1,28 @@
+User-supplied image-57 excerpts. Confirms root/subdirectory listing and
+rejection of a regular file as a directory. No MM request or IRQ 5000 is
+shown in this capture. Directory read failed: 8 is expected for ls on README.
+
+[FEATURE FS-LAYOUT 57]1
+[TEST FS-LAYOUT 57]
+[TTY line=ls]
+.
+..
+boot
+README
+[TTY WRITE V48 bytes=23 ticks=20]
+[TTY line=ls boot]
+.
+..
+README
+[TTY WRITE V48 bytes=17 ticks=14]
+[CTX kernel-running ticks=1407 heartbeat=1]
+[TTY line=ls /]
+.
+..
+boot
+README
+[TTY WRITE V48 bytes=23 ticks=57]
+[TTY line=ls /boot/README]
+Directory read failed: 8
+[TTY WRITE V48 bytes=28 ticks=119]
+[CTX kernel-running ticks=3087 heartbeat=2]
