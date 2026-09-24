@@ -20,21 +20,23 @@ CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the 
 
 ## Shell commands available
 
-| Command | Description |
-| ---     | --- |
-| ls | List directory contents |
-| cd | Change directory (use `-` for previous) |
-| cat | Display file contents |
-| tail | Display the last 10 lines of a file |
-| cmp | Compare two files for equality |
-| stat | Show file/directory metadata (inode, size, etc.) |
-| mm | Verify memory management (alloc/release IPC) |
-| disk | Check integrity of the RAM disk |
-| ipc | Test TTY device control (ioctl) |
-| sys | Query system status and uptime |
-| write | Test TTY output via IPC |
-| font | Show supported character set |
-
+| Command | Description                                      |
+| ---     | ---                                              |
+| ls      | List directory contents                          |
+| cd      | Change directory (use `-` for previous)          |
+| cat     | Display file contents                            |
+| tail    | Display the last 10 lines of a file              |
+| pwd     | Print current working directory                  |
+| cmp     | Compare two files for equality                   |
+| stat    | Show file/directory metadata (inode, size, etc.) |
+| mm      | Verify memory management (alloc/release IPC)     |
+| disk    | Check integrity of the RAM disk                  |
+| ipc     | Test TTY device control (ioctl)                  |
+| sys     | Query system status and uptime                   |
+| write   | Test TTY output via IPC                          |
+| font    | Show supported character set                     |
+| fsinfo  | Show filesystem information                      |
+| ramdisk | Show RAM disk capacity                           |
 
 ## Compiling source
 
