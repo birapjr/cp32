@@ -9,16 +9,48 @@
 #define CP32_IRAM_EXT
 #endif
 
+extern void cp32_hardware_reset(void);
+
+/* Cleared by CP32 on every reset. Standalone diagnostics never touch the
+ * USB FIFO, so shell/TTY/IRQ work cannot wait for a disconnected reader. */
+static int console_standalone;
+static int usbj_stalled;
+
 CP32_IRAM_EXT static void usbj_putc(char c) {
     volatile uint32_t t = 200000;
-    while (!(USBJ_EP1_CONF & USBJ_IN_EP_DATA_FREE))
-        if (!--t) return;
+    if (console_standalone) return;
+    while (!(USBJ_EP1_CONF & USBJ_IN_EP_DATA_FREE)) {
+        if (usbj_stalled) return;
+        if (!--t) {
+            /* One bounded wait after a disconnect, not one per byte. A
+             * draining FIFO below re-enables the normal USB output path. */
+            usbj_stalled = 1;
+            return;
+        }
+    }
+    usbj_stalled = 0;
     USBJ_EP1      = (uint8_t)c;
     USBJ_EP1_CONF |= USBJ_WR_DONE;
 }
 
 void usbj_print(const char *s) {
+    if (console_standalone) return;
     while (*s) usbj_putc(*s++);
+}
+
+CP32_IRAM_EXT void cp32_console_poll(void)
+{
+    /* Called from the normal idle path, never from an IRQ or a print.
+     * A fresh serial IN token means development output is requested.
+     * Wait for G0 release so reset cannot enter download mode. */
+    if (console_standalone && (USBJ_INT_RAW & USBJ_IN_TOKEN_REC) &&
+        (CP32_GPIO_IN & CP32_GO_MASK))
+        cp32_hardware_reset();
+}
+
+CP32_IRAM_EXT static void console_boot_marker(void)
+{
+    usbj_print("[BOOT V74 console=usb]\r\n");
 }
 
 void usbj_print_u32(uint32_t v) {
@@ -91,14 +123,18 @@ void print_diagnostics(void) {
     usbj_print("-- end dump --\r\n");
 }
 
-/* wait for USB to enumerate on the host side.
- * The USB Serial/JTAG peripheral needs ~2 seconds after reset before
- * the host CDC driver is ready to receive bytes. We split the wait into
- * 20 chunks of ~5.8 ms and feed every watchdog in each chunk so no WDT
- * fires during the wait — the ROM can re-arm the RTC WDT asynchronously
- * so we must keep actively disabling it here too. */
-void startup_usb_conn(void) {
-    for (volatile int i = 0; i < 20; i++) {
+/* MINIX cstart has a local console and no USB dependency. CP32 chooses its
+ * diagnostic sink before the first print, retaining the same main()/TTY
+ * startup for both choices. Keep interrupts disabled and watchdogs fed. */
+CP32_IRAM_EXT void startup_usb_conn(void) {
+    unsigned go_samples = 0;
+    CP32_GPIO_ENABLE_W1TC = CP32_GO_MASK;
+    CP32_GO_IO_MUX = (CP32_GO_IO_MUX &
+        ~(CP32_IO_MUX_PD | CP32_IO_MUX_FUNC_MASK)) |
+        CP32_IO_MUX_PU | CP32_IO_MUX_IE | CP32_IO_MUX_GPIO;
+    /* Ignore tokens left by the loader; only a live reader selects USB. */
+    USBJ_INT_CLR = USBJ_IN_TOKEN_REC;
+    for (;;) {
         /* Super WDT — re-latch disable every chunk */
         RTC_SWD_WPROTECT = SWD_UNLOCK_KEY;
         RTC_SWD_CONF     = SWD_DISABLE_BIT | SWD_FEED_BIT;
@@ -119,7 +155,18 @@ void startup_usb_conn(void) {
         TIMG1_WDTFEED     = 1;
         TIMG1_WDTWPROTECT = WDT_LOCK_KEY;
 
-        delay(100000); /* ~5.8 ms per chunk, 20 chunks = ~116 ms total */
+        delay(100000); /* Existing boot delay; nominally ~5.8 ms per sample. */
+        /* Prefer USB if both choices arrive together. This also prevents
+         * repeated resets if G0 is still held when the USB reader opens. */
+        if (USBJ_INT_RAW & USBJ_IN_TOKEN_REC) {
+            console_boot_marker();
+            return;
+        }
+        if (CP32_GPIO_IN & CP32_GO_MASK) go_samples = 0;
+        else if (++go_samples == 3) {
+            console_standalone = 1;
+            return;
+        }
     }
 }
 

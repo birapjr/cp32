@@ -58,17 +58,51 @@ The flash will send the code to `/dev/cu.usbmodem2101` serial port on MacOs, adj
 If the flash process do not work, put the Cardputer in `download mode` by pressing and holding the `Go` button before
 connection the data cacle to the Cardputer.
 
-## Debugging
+## Standalone startup with the Go button
 
-The initial kernel will output data to the serial port. This data can be seen with `screen` application.
+You can use the Cardputer shell without a computer or USB connection:
+
+1. Disconnect USB and turn on the Cardputer.
+2. After power-on, press and release the **Go (G0)** button at the top right.
+3. Wait for the display to show:
+
+   ```text
+   CP32 OS
+   $
+   ```
+
+4. Type commands using the Cardputer keyboard, for example `ls`, `cat readme`,
+   or `mm`.
+
+CP32 waits at startup until you press G0 or a USB serial reader connects.
+G0 selects standalone operation, which disables USB diagnostic output for
+that boot so the shell does not wait for a connected computer.
+
+Press G0 **after** power-on. Holding it while powering on selects the ROM
+firmware download mode. G0 selects startup; it is not a general-purpose
+reset button for a running shell.
+
+## USB development and kernel restart
+
+For development, connect the Cardputer with a USB data cable and open the
+serial console:
 
 ```shell
 screen /dev/cu.usbmodem2101 115200
 ```
 
-The current version has also a shell on the Cardputer display and keyboard is enabled, but for now the kernel need to be started with the 'screen' command. After the kernel loads, the display will be read when it shows:
+Adjust the device path for your computer. From the startup wait, a USB
+reader starts the kernel with diagnostics enabled.
 
-```shell
-CP32 OS
-$
-```
+To return to development from a running standalone shell:
+
+1. Release G0 and connect USB.
+2. Open `screen` using the command above.
+3. The USB reader triggers a full system reset. CP32 reloads the image and
+   starts kernel execution from the beginning, with a fresh shell and uptime.
+
+The restart occurs when the host requests serial data; some host drivers
+begin reading as soon as USB connects. A power-only connection does not
+request a restart. If the serial device re-enumerates during reset, reopen
+`screen`. Hardware USB reset and flashing remain available.
+

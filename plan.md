@@ -1729,3 +1729,55 @@ Identity: [FEATURE MINIX-FSTAT 73]1 and [TEST MINIX-FSTAT 73] immediately before
 idle. Hardware pending; no flash performed. Run tail readme, tail boot/indirect,
 tail boot/double, cmp readme boot/large/readme, disk, tail boot/double and mm.
 Expect existing output; the normal tail path now obtains metadata by descriptor.
+
+## G0 standalone console and USB development restart — image 74
+
+[x] Compare MINIX 2.0 cstart and console putk: startup prepares main and the
+local console does not depend on a host. CP32 retains the same startup,
+process/stack initialization, Cardputer TTY and shell paths for both modes.
+ESP32-S3-specific selection happens before the first diagnostic print.
+
+[x] Implement the boot gate accepting either a fresh USB serial EP1 IN token or
+three consecutive low GPIO0 samples. Configure only GPIO0 as a pulled-up
+input; discard loader-era IN status. An empty FIFO or USB SOF alone cannot
+select development mode. G0 selects a latched standalone mode in which
+USB diagnostics return without touching/waiting on the FIFO. Development
+output pays at most one bounded wait on a stalled FIFO and resumes when it
+drains. Hardware USB reset/flashing controls and USB pins stay unchanged.
+
+[x] Implement idle-path monitoring for a new USB serial reader in standalone mode.
+After G0 is released, write RTC OPTIONS0 SW_SYS_RST with interrupts locked:
+the ROM reloads the image and CP32 reinitializes state from its entry point.
+This is a system reset, not a call to main. Register definitions are based on
+Espressif ESP-IDF v5.5.3 ESP32-S3 usb_serial_jtag_reg.h, gpio_reg.h,
+io_mux_reg.h, rtc_cntl_reg.h and rtc_cntl_ll_reset_system; no IDF runtime/API
+is linked. Detection means host serial endpoint reads, not cable voltage.
+
+[x] Clean cross-build, all 25 host test scripts, image-layout and whitespace
+checks pass. New production-serial.c MMIO simulation covers stale events,
+FIFO-ready-without-reader, debounce, simultaneous USB/G0, watchdog service,
+10,000 standalone logging iterations, timeout suppression/recovery, G0-held
+reset deferral, and reset requests. Idle tests require polling without
+changing process ownership. ELF sections/segments and reset disassembly
+checked: _iram_end=0x40374314, _iram_ext_end=0x403842ec,
+_stack_top=0x3fcda920. Boot gate and console poll live in extended IRAM;
+reset writes 0x80000000 to 0x60008000 after lock().
+
+Identity: [BOOT V74 console=usb], [FEATURE GO-CONSOLE 74]1 and
+[TEST GO-CONSOLE 74] immediately before idle. Flashed with make flash and
+verified by esptool hash. Initial USB capture showed a live heartbeat
+(ticks=1106, heartbeat=1); it missed early boot output and does not validate
+the new reset path. Subsequent user feedback confirms G0 startup/reset works
+as expected. The supplied USB capture identifies [FEATURE GO-CONSOLE 74]1
+and [TEST GO-CONSOLE 74], valid data/BSS sentinels and aligned stack, all CORE
+checks equal to 1, keyboard initialization, repeated ls output, and
+[MM IPC V44 alloc-release-result=0]. This is user-reported G0/reset validation
+plus serial evidence of USB startup and shell operation; the capture alone
+does not identify the reset cause. Held-G0 reset deferral, charge-only behavior
+and the cat readme/sys test commands remain host-tested or undocumented on
+hardware, not independently confirmed by this log.
+
+Hardware procedure: disconnect USB, power-cycle, press/release G0 after
+power-on, run ls, cat readme and sys on the keyboard, then reconnect USB and
+open a reader. Expect a full fresh boot with image-74 markers, a reset shell
+and fresh uptime. A held G0 must delay the software reset until release.

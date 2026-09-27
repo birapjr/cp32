@@ -32,7 +32,7 @@ void start() {
     wdt_disable_all();
     wdt_feed_all();
 
-    /* Step 3 — wait for USB to enumerate on the host side. */
+    /* Step 3 — USB reader for development, or G0 for standalone shell. */
     startup_usb_conn();
 
     /* Step 4 — final disable pass then print diagnostics */
