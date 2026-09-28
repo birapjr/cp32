@@ -13,7 +13,7 @@ from test_idle_handoff import extract_function
 bodies = [extract_function(ROOT / 'src/kernel/memory.c', name)
           for name in ('cp32_mem_request', 'mem_task')]
 bodies += [extract_function(ROOT / 'src/kernel/cp32-shell.c', name)
-           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_uncached', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_tail_scan', 'cp32_shell_tail_start', 'cp32_shell_show', 'cp32_shell_cat', 'cp32_shell_tail', 'cp32_shell_ls', 'cp32_shell_stat', 'cp32_shell_cd', 'cp32_shell_cmp')]
+           for name in ('cp32_shell_disk_io', 'cp32_shell_disk_uncached', 'cp32_shell_disk_read', 'cp32_shell_disk_check', 'cp32_shell_tail_scan', 'cp32_shell_tail_start', 'cp32_shell_open_file', 'cp32_shell_wc', 'cp32_shell_show', 'cp32_shell_cat', 'cp32_shell_head', 'cp32_shell_tail', 'cp32_shell_ls', 'cp32_shell_stat', 'cp32_shell_cd', 'cp32_shell_cmp')]
 prelude = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +23,9 @@ prelude = r'''
 #include <limits.h>
 #include "ramdisk.h"
 #include "fs.h"
+#include "../lib/posix/dirent.h"
+extern int errno;
+long strtol(const char *,char **,int);
 #define PRIVATE static
 #define PUBLIC
 #define NO_NUM 0
@@ -306,6 +309,14 @@ int main(void) {
   assert(cp32_shell_disk_read(capacity-16,cache_seen,16)==16);
   assert(!memcmp(cache_seen,cache_saved,16));
   for(unsigned repeat=0;repeat<12;repeat++) {
+    console[0]=0; cp32_shell_ls("readme");
+    assert(!strcmp(console,"Directory read failed: 8\r\n"));
+    console[0]=0; cp32_shell_cat("boot");
+    assert(!strcmp(console,"Is a directory\r\n"));
+    console[0]=0; cp32_shell_tail("boot");
+    assert(!strcmp(console,"Is a directory\r\n"));
+    console[0]=0; cp32_shell_cmp("readme boot");
+    assert(!strcmp(console,"Compare failed: 6\r\n"));
     console[0]=0; cp32_shell_cmp("readme boot/large/readme");
     assert(!strcmp(console,"Files identical\r\n"));
     console[0]=0; cp32_shell_cmp("readme boot/indirect");
@@ -338,6 +349,139 @@ int main(void) {
     if(n) assert(cp32_ramdisk_write_bytes(8192,inputs[test],n)==0);
     console[0]=0; cp32_shell_tail("readme"); assert(!strcmp(console,outputs[test]));
   }
+  /* Restore the fixture before count/option tests on real file descriptors. */
+  assert(cp32_minix_demo_init()==0); cp32_cache_invalidate();
+  const char *tail_args[]={
+    "-n 1 boot/double", "-n -1 boot/double", "-c 3 boot/double",
+    "-n +2 readme", "-n +0 readme", "-c +1 readme",
+    "-n 0 readme", "-c -0 readme", "-n +999 readme", "-c +999 readme",
+    "-n 2147483647 readme", "-n -2147483648 readme",
+    "-c 2147483647 readme", "-- readme", "-n 1 -- readme",
+    " -n\t1\treadme", "-n 0 missing", "-c 0 boot"
+  };
+  const char *all_readme="CP32 MINIX V2 RAM filesystem.\r\nRead-only filesystem bring-up.\r\n";
+  const char *tail_expected[]={
+    "DOUBLE INDIRECT READ OK\r\n", "DOUBLE INDIRECT READ OK\r\n", "OK\r\n",
+    "Read-only filesystem bring-up.\r\n", all_readme, all_readme,
+    "", "", "", "", all_readme, all_readme, all_readme, all_readme,
+    "Read-only filesystem bring-up.\r\n", "Read-only filesystem bring-up.\r\n",
+    "File not found\r\n", "Is a directory\r\n"
+  };
+  for(unsigned i=0;i<sizeof(tail_args)/sizeof(tail_args[0]);i++) {
+    console[0]=0; cp32_shell_tail(tail_args[i]);
+    assert(!strcmp(console,tail_expected[i]));
+  }
+  const char *head_args[]={"readme", "-1 readme", "-n 1 readme",
+    "-2 readme", "-2147483647 readme", "-- readme", "-n 1 -- readme",
+    " -n\t1\treadme", "-1 missing", "-1 boot", "-1 readme/.."};
+  const char *head_expected[]={all_readme,"CP32 MINIX V2 RAM filesystem.\r\n",
+    "CP32 MINIX V2 RAM filesystem.\r\n",all_readme,all_readme,all_readme,
+    "CP32 MINIX V2 RAM filesystem.\r\n","CP32 MINIX V2 RAM filesystem.\r\n",
+    "File not found\r\n","Is a directory\r\n","Not a directory\r\n"};
+  for(unsigned i=0;i<sizeof(head_args)/sizeof(head_args[0]);i++) {
+    console[0]=0; cp32_shell_head(head_args[i]); assert(!strcmp(console,head_expected[i]));
+  }
+  const char *bad_head[]={"", "-n", "-1", "-0 readme", "-n 0 readme",
+    "-n -1 readme", "-n +1 readme", "-n 1x readme", "-2147483648 readme",
+    "-n 999999999999999999999999 readme", "-f readme", "--", "-n 1 -c 2 readme"};
+  for(unsigned repeat=0;repeat<12;repeat++) {
+    for(unsigned i=0;i<sizeof(bad_head)/sizeof(bad_head[0]);i++) {
+      console[0]=0; cp32_shell_head(bad_head[i]);
+      assert(!strcmp(console,"Usage: head [-N | -n N] [--] filename\r\n"));
+    }
+    console[0]=0; cp32_shell_head("readme"); assert(!strcmp(console,all_readme));
+  }
+  cp32_cache_invalidate(); requests=0;
+  console[0]=0; cp32_shell_head("-1 readme");
+  unsigned head_requests=requests;
+  for(unsigned failure=1;failure<=head_requests;failure++) {
+    cp32_cache_invalidate(); requests=0; fail_request=failure;
+    console[0]=0; cp32_shell_head("-1 readme");
+    assert(strstr(console,"File read failed: 4\r\n"));
+    fail_request=0;
+    console[0]=0; cp32_shell_head("readme"); assert(!strcmp(console,all_readme));
+  }
+  const char *wc_args[]={"readme","-l readme","-w readme","-c readme",
+    "-cw readme","-lll readme","-- readme"," -lc\t--\treadme"};
+  const char *wc_expected[]={"2 8 61 readme\r\n","2 readme\r\n","8 readme\r\n",
+    "61 readme\r\n","8 61 readme\r\n","2 readme\r\n","2 8 61 readme\r\n","2 61 readme\r\n"};
+  for(unsigned i=0;i<sizeof(wc_args)/sizeof(wc_args[0]);i++) {
+    console[0]=0; cp32_shell_wc(wc_args[i]); assert(!strcmp(console,wc_expected[i]));
+  }
+  const char *bad_wc[]={"","-","--","-x readme","-l","-l -c readme"};
+  for(unsigned repeat=0;repeat<12;repeat++) {
+    for(unsigned i=0;i<sizeof(bad_wc)/sizeof(bad_wc[0]);i++) {
+      console[0]=0; cp32_shell_wc(bad_wc[i]);
+      assert(!strcmp(console,"Usage: wc [-lwc] [--] filename\r\n"));
+    }
+    console[0]=0; cp32_shell_wc("readme"); assert(!strcmp(console,wc_expected[0]));
+    console[0]=0; cp32_shell_wc("boot"); assert(strstr(console,"Count failed:"));
+    console[0]=0; cp32_shell_wc("missing"); assert(strstr(console,"Count failed:"));
+  }
+  cp32_cache_invalidate(); requests=0;
+  console[0]=0; cp32_shell_wc("readme");
+  unsigned wc_requests=requests;
+  for(unsigned failure=1;failure<=wc_requests;failure++) {
+    cp32_cache_invalidate(); requests=0; fail_request=failure;
+    console[0]=0; cp32_shell_wc("readme");
+    assert(!strcmp(console,"Count failed: 4\r\n"));
+    fail_request=0;
+    console[0]=0; cp32_shell_wc("readme"); assert(!strcmp(console,wc_expected[0]));
+  }
+  const char *bad_tail[]={"", "-n", "-n 1", "-n x readme", "-n + readme",
+    "-n 1x readme", "-n 2147483648 readme", "-n -2147483649 readme",
+    "-c 99999999999999999999999999 readme", "-f readme", "--", "-n 1 -c 2 readme"};
+  for(unsigned repeat=0;repeat<12;repeat++) {
+    for(unsigned i=0;i<sizeof(bad_tail)/sizeof(bad_tail[0]);i++) {
+      console[0]=0; cp32_shell_tail(bad_tail[i]);
+      assert(!strcmp(console,"Usage: tail [-n count | -c count] [--] filename\r\n"));
+    }
+    console[0]=0; cp32_shell_tail("-n 1 readme");
+    assert(!strcmp(console,"Read-only filesystem bring-up.\r\n"));
+  }
+  cp32_cache_invalidate(); requests=0;
+  console[0]=0; cp32_shell_tail("-n +2 readme");
+  unsigned forward_requests=requests;
+  for(unsigned failure=1;failure<=forward_requests;failure++) {
+    cp32_cache_invalidate(); requests=0; fail_request=failure;
+    console[0]=0; cp32_shell_tail("-n +2 readme");
+    assert(strstr(console,"File read failed: 4\r\n"));
+    fail_request=0;
+    console[0]=0; cp32_shell_tail("-n +2 readme");
+    assert(!strcmp(console,"Read-only filesystem bring-up.\r\n"));
+  }
+  /* A requested line crossing the 64-byte scan window, without final LF. */
+  char longlines[151]; memset(longlines,'a',sizeof(longlines));
+  longlines[70]='\n'; longlines[140]='\n';
+  unsigned char newsize[4]={151,0,0,0};
+  assert(cp32_ramdisk_write_bytes(4232,newsize,4)==0);
+  assert(cp32_ramdisk_write_bytes(8192,longlines,151)==0); cp32_cache_invalidate();
+  console[0]=0; cp32_shell_tail("-n 1 readme"); assert(!strcmp(console,"aaaaaaaaaa\r\n"));
+  console[0]=0; cp32_shell_tail("-n +3 readme"); assert(!strcmp(console,"aaaaaaaaaa\r\n"));
+  console[0]=0; cp32_shell_tail("-c 1 readme"); assert(!strcmp(console,"a\r\n"));
+  console[0]=0; cp32_shell_wc("readme"); assert(!strcmp(console,"2 3 151 readme\r\n"));
+  char head_long[157];
+  memset(head_long,'a',70); memcpy(head_long+70,"\r\n",3);
+  console[0]=0; cp32_shell_head("-1 readme"); assert(!strcmp(console,head_long));
+  memset(head_long+72,'a',69); memcpy(head_long+141,"\r\n",2);
+  memset(head_long+143,'a',10); memcpy(head_long+153,"\r\n",3);
+  console[0]=0; cp32_shell_head("readme"); assert(!strcmp(console,head_long));
+  const char *twelve="1\n2\n3\n4\n5\n6\n7\n8\n9\na\nb\nc\n";
+  unsigned char twelve_size[4]={24,0,0,0};
+  assert(cp32_ramdisk_write_bytes(4232,twelve_size,4)==0);
+  assert(cp32_ramdisk_write_bytes(8192,twelve,24)==0); cp32_cache_invalidate();
+  console[0]=0; cp32_shell_head("readme");
+  assert(!strcmp(console,"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\na\r\n"));
+  unsigned char empty_size[4]={0,0,0,0};
+  assert(cp32_ramdisk_write_bytes(4232,empty_size,4)==0); cp32_cache_invalidate();
+  console[0]=0; cp32_shell_head("readme"); assert(!strcmp(console,""));
+  console[0]=0; cp32_shell_wc("readme"); assert(!strcmp(console,"0 0 0 readme\r\n"));
+  /* Raw NUL/high bytes are word data; all six ASCII whitespace delimiters. */
+  const unsigned char binary[]={0,255,' ', 'x','\t','y','\r','z','\v','a','\f','b','\n','c'};
+  unsigned char binary_size[4]={sizeof(binary),0,0,0};
+  assert(cp32_ramdisk_write_bytes(4232,binary_size,4)==0);
+  assert(cp32_ramdisk_write_bytes(8192,binary,sizeof(binary))==0); cp32_cache_invalidate();
+  console[0]=0; cp32_shell_wc("readme"); assert(!strcmp(console,"1 7 14 readme\r\n"));
   /* Restore the boot fixture after isolated edge cases. */
   assert(cp32_minix_demo_init()==0); cp32_cache_invalidate();
   console[0]=0; cp32_shell_cat("missing"); assert(!strcmp(console,"File not found\r\n"));
@@ -352,10 +496,16 @@ with tempfile.TemporaryDirectory(prefix='cp32-memory-task-') as folder:
                     '--image', str(p / 'demo.img'),
                     '--header', str(p / 'minix-demo.h')], check=True)
     (p / 'test.c').write_text(prelude + '\n'.join(bodies) + tests)
+    subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-fno-builtin',
+                    '-I'+str(ROOT/'src/include'),'-c',str(ROOT/'src/lib/ansi/strtol.c'),
+                    '-o',str(p/'strtol.o')],check=True)
     subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-Werror',
                     '-I' + str(ROOT / 'src/kernel'), '-I' + str(ROOT / 'src/fs'), '-I' + str(p), str(p / 'test.c'),
                     str(ROOT / 'src/kernel/ramdisk.c'),
                     *[str(ROOT / 'src/fs' / name) for name in
                       ('cache.c','super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c')],
+                    *[str(ROOT / 'src/lib/posix' / name) for name in ('opendir.c','readdir.c','closedir.c','rewinddir.c')],
+                    str(ROOT / 'src/lib/other/seekdir.c'), str(ROOT / 'src/lib/other/telldir.c'),
+                    str(p/'strtol.o'), str(ROOT/'src/lib/other/errno.c'),
                     str(ROOT / 'src/kernel/minix-demo.c'), '-o', str(p / 'test')], check=True)
     subprocess.run([str(p / 'test')], check=True)

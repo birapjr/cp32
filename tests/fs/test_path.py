@@ -574,7 +574,8 @@ with tempfile.TemporaryDirectory() as tmp:
         return count-1 if failure[0] else count
     for cycle in range(20):
         assert lib.cp32_fd_open(fd_reader,len(expanded),b'missing')==-5
-        assert lib.cp32_fd_open(fd_reader,len(expanded),b'boot')==-6
+        directory_fd=lib.cp32_fd_open(fd_reader,len(expanded),b'boot')
+        assert directory_fd==0 and lib.cp32_fd_close(directory_fd)==0
         fds=[lib.cp32_fd_open(fd_reader,len(expanded),b'readme') for _ in range(8)]
         assert fds==list(range(8))
         assert lib.cp32_fd_open(fd_reader,len(expanded),b'readme')==-10
@@ -681,3 +682,147 @@ with tempfile.TemporaryDirectory() as tmp:
     assert info.inode==5 and info.size==263*1024+len(DOUBLE)
     assert lib.cp32_fd_close(fd)==0
     print('Fstat: inode identity, shared lifetime, endian fields, no path lookup/offset changes, failure atomicity and sparse size pass')
+
+    lib.cp32_fd_readdir.argtypes=[C.c_int,C.POINTER(C.c_uint),C.c_void_p]
+    for order in ('<','>'):
+        data=bytearray(image if order=='<' else swapped_image(image))
+        fault=[None]
+        @Reader
+        def directory_reader(offset,out,count):
+            C.memmove(out,bytes(data[offset:offset+count]),count)
+            return count-1 if offset==fault[0] else count
+        fd=lib.cp32_fd_open(directory_reader,len(data),b'/')
+        alias=lib.cp32_fd_dup(fd)
+        independent=lib.cp32_fd_open(directory_reader,len(data),b'/')
+        assert (fd,alias,independent)==(0,1,2)
+        ino=C.c_uint(999); name=C.create_string_buffer(15)
+        assert lib.cp32_fd_fstat(alias,C.byref(info))==0
+        assert info.inode==1 and info.mode & 0o170000==0o040000
+        assert lib.cp32_fd_readdir(fd,C.byref(ino),name)==1 and name.value==b'.'
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==1 and name.value==b'..'
+        assert lib.cp32_fd_readdir(independent,C.byref(ino),name)==1 and name.value==b'.'
+        assert lib.cp32_fd_close(fd)==0
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==1 and name.value==b'boot'
+        assert lib.cp32_fd_seek(alias,0,0,None)==0
+        assert lib.cp32_fd_read(alias,buf,17)==17 and buf.raw[:17]==data[6144:6161]
+        C.memset(name,0x5a,15); ino.value=999
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==-3 # unaligned byte offset
+        assert name.raw==b'Z'*15 and ino.value==999
+        assert lib.cp32_fd_seek(alias,0,1,C.byref(pos))==0 and pos.value==17
+        assert lib.cp32_fd_seek(alias,48,0,None)==0
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==1 and name.value==b'readme'
+        before=name.raw; old=ino.value
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==0
+        assert name.raw==before and ino.value==old
+        assert lib.cp32_fd_seek(alias,4096,0,None)==0
+        assert lib.cp32_fd_read(alias,buf,16)==0
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==0
+        assert lib.cp32_fd_seek(alias,0,0,None)==0
+        # Skip a deleted entry then hit short I/O, invalid inode, bad name.
+        data[6144:6146]=b'\0\0'
+        for broken in ('io','inode','name'):
+            saved=bytes(data[6160:6176])
+            if broken=='io': fault[0]=6160
+            elif broken=='inode': struct.pack_into(order+'H',data,6160,0xffff)
+            else: data[6162]=ord('/')
+            C.memset(name,0x5a,15); ino.value=999
+            assert lib.cp32_fd_readdir(alias,C.byref(ino),name)=={'io':-4,'inode':-3,'name':-2}[broken]
+            assert name.raw==b'Z'*15 and ino.value==999
+            assert lib.cp32_fd_seek(alias,0,1,C.byref(pos))==0 and pos.value==0
+            data[6160:6176]=saved; fault[0]=None
+        assert lib.cp32_fd_readdir(alias,C.byref(ino),name)==1 and name.value==b'..'
+        for active in (alias,independent): assert lib.cp32_fd_close(active)==0
+        # Reused description must shed its directory type.
+        fd=lib.cp32_fd_open(directory_reader,len(data),b'readme')
+        assert lib.cp32_fd_readdir(fd,C.byref(ino),name)==-8
+        assert lib.cp32_fd_read(fd,buf,4)==4 and buf.raw[:4]==README[:4]
+        assert lib.cp32_fd_close(fd)==0
+        assert lib.cp32_fd_readdir(fd,C.byref(ino),name)==-9
+
+    data=bytearray(expanded); fault[0]=None
+    fd=lib.cp32_fd_open(directory_reader,len(data),b'boot/large')
+    assert fd==0
+    # Exercise production single-indirect mapping at the shared byte offset.
+    assert lib.cp32_fd_seek(fd,7*1024,0,None)==0
+    assert lib.cp32_fd_readdir(fd,C.byref(ino),name)==1 and name.value==b'readme'
+    for broken in ('io','hole'):
+        assert lib.cp32_fd_seek(fd,7*1024,0,None)==0
+        saved=bytes(data[28*1024:28*1024+4])
+        if broken=='io': fault[0]=29*1024
+        else: data[28*1024:28*1024+4]=b'\0'*4
+        C.memset(buf,0x5a,64); C.memset(name,0x5a,15); ino.value=999
+        error=-4 if broken=='io' else -3
+        assert lib.cp32_fd_read(fd,buf,16)==error and buf.raw==b'Z'*64
+        assert lib.cp32_fd_readdir(fd,C.byref(ino),name)==error
+        assert name.raw==b'Z'*15 and ino.value==999
+        assert lib.cp32_fd_seek(fd,0,1,C.byref(pos))==0 and pos.value==7*1024
+        data[28*1024:28*1024+4]=saved; fault[0]=None
+    assert lib.cp32_fd_close(fd)==0
+    print('Directory descriptors: shared/independent offsets, raw reads, fstat, seek, endian, deleted entries, indirect zones and atomic errors pass')
+
+    lib.cp32_fd_fcntl.argtypes=[C.c_int,C.c_int,C.c_long]
+    DUPFD,GETFD,SETFD,GETFL,SETFL=range(5)
+    CLOEXEC,APPEND,NONBLOCK=1,0o2000,0o4000
+    for pathname in (b'readme',b'boot'):
+        for cycle in range(12):
+            a=lib.cp32_fd_open(fd_reader,len(expanded),pathname)
+            independent=lib.cp32_fd_open(fd_reader,len(expanded),pathname)
+            assert (a,independent)==(0,1)
+            assert lib.cp32_fd_fcntl(a,GETFD,0)==0
+            assert lib.cp32_fd_fcntl(a,GETFL,0)==0
+            assert lib.cp32_fd_fcntl(a,SETFD,0xff)==0
+            assert lib.cp32_fd_fcntl(a,GETFD,0)==CLOEXEC
+            assert lib.cp32_fd_fcntl(a,SETFL,APPEND|NONBLOCK|3|0o100)==0
+            assert lib.cp32_fd_fcntl(a,GETFL,0)==APPEND|NONBLOCK
+            b=lib.cp32_fd_fcntl(a,DUPFD,4)
+            assert b==4 # leaves free descriptors 2 and 3 untouched
+            assert lib.cp32_fd_fcntl(a,DUPFD,4)==5 # never replaces occupied fd
+            assert lib.cp32_fd_fcntl(b,GETFD,0)==0
+            assert lib.cp32_fd_fcntl(b,GETFL,0)==APPEND|NONBLOCK
+            assert lib.cp32_fd_fcntl(independent,GETFL,0)==0
+            assert lib.cp32_fd_fcntl(b,SETFD,1)==0
+            assert lib.cp32_fd_fcntl(a,SETFD,0)==0
+            assert lib.cp32_fd_fcntl(b,GETFD,0)==1
+            assert lib.cp32_fd_fcntl(b,SETFL,NONBLOCK)==0
+            assert lib.cp32_fd_fcntl(a,GETFL,0)==NONBLOCK
+            assert lib.cp32_fd_seek(a,16,0,None)==0
+            assert lib.cp32_fd_seek(b,0,1,C.byref(pos))==0 and pos.value==16
+            assert lib.cp32_fd_fcntl(b,DUPFD,-1)==-3
+            assert lib.cp32_fd_fcntl(b,DUPFD,8)==-3
+            assert lib.cp32_fd_fcntl(b,DUPFD,0x100000000)==-3
+            assert lib.cp32_fd_fcntl(b,99,0)==-3
+            for cmd in (5,6,7): assert lib.cp32_fd_fcntl(b,cmd,0)==-2
+            assert lib.cp32_fd_fcntl(b,GETFD,0)==1
+            assert lib.cp32_fd_fcntl(b,GETFL,0)==NONBLOCK
+            assert lib.cp32_fd_seek(b,0,1,C.byref(pos))==0 and pos.value==16
+            # Self dup2 preserves descriptor-local flags; replacement clears them.
+            assert lib.cp32_fd_dup2(b,b)==b
+            assert lib.cp32_fd_fcntl(b,GETFD,0)==1
+            assert lib.cp32_fd_dup2(a,b)==b
+            assert lib.cp32_fd_fcntl(b,GETFD,0)==0
+            assert lib.cp32_fd_fcntl(a,SETFD,1)==0
+            normal=lib.cp32_fd_dup(a)
+            assert normal==2 and lib.cp32_fd_fcntl(normal,GETFD,0)==0
+            assert lib.cp32_fd_fcntl(normal,GETFL,0)==NONBLOCK
+            assert lib.cp32_fd_close(a)==0
+            assert lib.cp32_fd_fcntl(b,GETFL,0)==NONBLOCK
+            reused=lib.cp32_fd_open(fd_reader,len(expanded),pathname)
+            assert reused==0 and lib.cp32_fd_fcntl(reused,GETFD,0)==0
+            assert lib.cp32_fd_fcntl(reused,GETFL,0)==0
+            for active in (reused,independent,normal,b,5): assert lib.cp32_fd_close(active)==0
+        # Higher-bound exhaustion even when low descriptors are available.
+        a=lib.cp32_fd_open(fd_reader,len(expanded),pathname)
+        assert lib.cp32_fd_fcntl(a,DUPFD,7)==7
+        assert lib.cp32_fd_fcntl(a,DUPFD,7)==-10
+        assert lib.cp32_fd_fcntl(a,DUPFD,0)==1
+        for active in (a,1,7): assert lib.cp32_fd_close(active)==0
+        # Entire table full: a failed duplicate leaves flags and references intact.
+        fds=[lib.cp32_fd_open(fd_reader,len(expanded),pathname) for _ in range(8)]
+        assert fds==list(range(8))
+        assert lib.cp32_fd_fcntl(0,SETFD,1)==0
+        assert lib.cp32_fd_fcntl(0,DUPFD,0)==-10
+        assert lib.cp32_fd_fcntl(0,GETFD,0)==1
+        for active in fds: assert lib.cp32_fd_close(active)==0
+    for fd in (-1,0,8,0x7fffffff):
+        for cmd in range(9): assert lib.cp32_fd_fcntl(fd,cmd,-1)==-9
+    print('Fcntl: minimum-fd duplication, independent/shared flags, dup2, close/reuse, limits, invalid requests and both inode types pass')

@@ -1,0 +1,16 @@
+Selected excerpts from the user-provided image-80 capture (2026-09-28).
+User reports: all fine on LCD now.
+[FEATURE LCD-PLUS 80]1
+[TEST LCD-PLUS 80]
+[TTY line=font]
+plus:   +
+hyphen: -
+under:  _
+slash:  /
+equals: =
+dots: . ..
+case: Aa Cc
+[TTY WRITE V48 bytes=82 ticks=74]
+[TTY line=tail -n +2 readme]
+Read-only filesystem bring-up.
+[TTY WRITE V48 bytes=34 ticks=150]

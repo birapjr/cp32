@@ -12,6 +12,10 @@
 #include <minix/com.h>
 
 extern char _stack_bottom[];
+/* esp32s3.ld reserves runtime stacks through bottom + 0x13000. */
+#if LOW_USER > 2 || NR_TASKS > 12
+#error Update runtime stack reservation for the configured process count
+#endif
 extern void systimer_irq_start(void);
 extern void clock_task(void);
 extern void sys_task(void);
@@ -193,7 +197,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE GO-CONSOLE 74]");
+  usbj_print("[FEATURE LCD-BANG 88]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -313,7 +317,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST GO-CONSOLE 74]\r\n");
+  usbj_print("[TEST LCD-BANG 88]\r\n");
   kernel_idle_loop();
 }
 

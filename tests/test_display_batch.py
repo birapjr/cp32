@@ -208,6 +208,21 @@ int main(void) {
     unsigned code=(e&127)-1;
     if(code/10>=7 || code%10>=8) assert(cp32_cardputer_key(e,&key)==0);
   }
+  /* Plus is a centered cross, including black margins and the row gap. */
+  reset(); cardputer_display_putc('+');
+  assert(textbuf[0][0]=='+' && x==15 && y==0 && cells==1);
+  for(unsigned py=0;py<11;py++) for(unsigned px=0;px<15;px++) {
+    int stroke=(py<10 && px>=6 && px<8) ||
+               (py>=4 && py<6 && px>=2 && px<12);
+    assert(pixels[py*240+px]==(stroke ? 0xffff : 0));
+  }
+  /* Exclamation: vertical stem, separate dot, and black margins/row gap. */
+  reset(); cardputer_display_putc('!');
+  assert(textbuf[0][0]=='!' && x==15 && y==0 && cells==1);
+  for(unsigned py=0;py<11;py++) for(unsigned px=0;px<15;px++) {
+    int stroke=px>=6 && px<8 && (py<6 || (py>=8 && py<10));
+    assert(pixels[py*240+px]==(stroke ? 0xffff : 0));
+  }
   reset(); spi_fault=1; cardputer_display_write("hidden\n");
   assert(!display_batch && clears==0 && x==0 && y==0);
   printf("LCD model: zero scroll clears, %u versus %u cell writes, pixel/cursor/wrap/erasure checks passed\n",batchedcells,oldcells);

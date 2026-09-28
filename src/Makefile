@@ -14,15 +14,16 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
-MM_SRCS = main.c alloc.c
+C_SRCS = application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
+MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
 FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c utility.c
 FS_HEADERS = $(wildcard fs/*.h)
 ANSI_SRCS = memcpy.c memset.c strcpy.c strcmp.c strtol.c
-LIB_SRCS = lib/other/printk.c
+POSIX_SRCS = opendir.c readdir.c closedir.c rewinddir.c
+LIB_SRCS = lib/other/printk.c lib/other/seekdir.c lib/other/telldir.c lib/other/errno.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) $(patsubst %.c,$(BUILD_DIR)/fs/%.o,$(FS_SRCS)) $(patsubst %.c,$(BUILD_DIR)/mm/%.o,$(MM_SRCS))
-LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS)) $(patsubst %.c,$(BUILD_DIR)/lib/ansi/%.o,$(ANSI_SRCS))
+LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS)) $(patsubst %.c,$(BUILD_DIR)/lib/ansi/%.o,$(ANSI_SRCS)) $(patsubst %.c,$(BUILD_DIR)/lib/posix/%.o,$(POSIX_SRCS))
 
 TARGET  = cp32
 
@@ -55,6 +56,13 @@ tests:
 	exit $$status
 
 # Compile all .c files
+$(BUILD_DIR)/lib/posix/%.o: lib/posix/%.c lib/posix/dirent.h $(FS_HEADERS) | $(BUILD_DIR)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o $(BUILD_DIR)/cp32-shell.o: lib/posix/dirent.h
+$(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o: $(FS_HEADERS)
+
 $(BUILD_DIR)/lib/ansi/%.o: lib/ansi/%.c | $(BUILD_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -69,8 +77,8 @@ $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
-$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py | $(BUILD_DIR)
-	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@
+$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf | $(BUILD_DIR)
+	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf
 
 $(BUILD_DIR)/minix-demo.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/minix-demo.o: $(BUILD_DIR)/minix-demo.h
@@ -156,3 +164,12 @@ segments: $(BUILD_DIR)/$(TARGET).elf
 # Dump all section headers with addresses
 sections: $(BUILD_DIR)/$(TARGET).elf
 	xtensa-esp32s3-elf-readelf -S $(BUILD_DIR)/$(TARGET).elf
+
+# Separate trusted application artifact; never flashed by this target.
+.PHONY: hello
+hello: $(BUILD_DIR)/hello.elf
+$(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -nostdlib -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c -o $@
+
+$(BUILD_DIR)/application.o: kernel/application.h mm/image.h mm/exec.h apps/hello/abi.h
+$(BUILD_DIR)/cp32-shell.o: kernel/application.h mm/image.h mm/exec.h

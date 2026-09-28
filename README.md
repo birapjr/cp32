@@ -14,9 +14,10 @@ CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the 
 | TTY                   | Cardputer keyboard/LCD replace PC console. Canonical path accepted; raw/timed input, cancellation and signal behavior need hardware validation. Deferred newline waits for subsequent visible output. |
 | MEM                   | FS-only READ/WRITE/OPEN/CLOSE for RAM_DEV, full-buffer mapping and byte-count replies. No scattered I/O or raw memory devices. Host tests pass; one disk diagnostic and blank-superblock read pass on image-50 hardware. |
 | Superblock            | Explicit byte decoding avoids compiler layout/alignment assumptions. V2 magic 0x2468 in either byte order; validates capacity, metadata and bitmap sizes before publishing. Read-only recognition only; no mount or complete consistency check. |
-| Directories and files | Image 56 confirms nested listings/reads; image 57 preserves behavior in split translation units. Seven direct zones plus 256 single-indirect entries support regular files in both byte orders; directories remain direct-only. Double-indirect zones, non-ASCII names, cwd, symlinks, descriptors and permissions remain unsupported. |
+| Directories and files | Read-only MINIX V2 paths, cwd, metadata and shared file/directory descriptors. Regular files support direct, single- and double-indirect zones; directories support direct and single-indirect zones. `ls` uses directory descriptors in image 75 (root/boot listings confirmed on hardware). Writes, symlinks, permissions and a complete FS server remain unsupported. |
+| Descriptor controls   | Image 76 adds MINIX-style `fcntl` duplication and descriptor/status flags. `tail` uses the new duplication path, confirmed on image-76 hardware. Other flag operations are host-tested. Close-on-exec flags are stored for future exec support; record locking is unsupported. |
 | Shell                 | Kernel-linked command loop occupying FS endpoint, not a user shell. `ls` now reads disk entries. A real FS endpoint must replace this temporary arrangement. |
-| Library               | Existing freestanding implementations relocated unchanged. Xtensa call0 and section attributes retained; strtol range/error semantics remain incomplete. |
+| Library               | Freestanding helpers plus caller-owned MINIX directory streams (open/read/close/seek/tell/rewind). Image 77 confirms root/large-directory `ls` and regular-file rejection on hardware; seek/tell/rewind remain host-tested. Image 78 adds range-checked `strtol`/`strtoul` (conversion cases host-tested; boot/filesystem regression confirmed on hardware). Full libc/syscall ABI and per-process errno remain incomplete. |
 
 ## Shell commands available
 
@@ -25,7 +26,7 @@ CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the 
 | ls      | List directory contents                          |
 | cd      | Change directory (use `-` for previous)          |
 | cat     | Display file contents                            |
-| tail    | Display the last 10 lines of a file              |
+| tail    | Last 10 lines by default; `-n count` for lines, `-c count` for bytes |
 | pwd     | Print current working directory                  |
 | cmp     | Compare two files for equality                   |
 | stat    | Show file/directory metadata (inode, size, etc.) |
@@ -37,6 +38,51 @@ CP32 is a work-in-progress, bare-metal, Unix-like operating-system port for the 
 | font    | Show supported character set                     |
 | fsinfo  | Show filesystem information                      |
 | ramdisk | Show RAM disk capacity                           |
+
+### Word counts
+
+Image 82 adds `wc [-lwc] [--] filename` for one regular file:
+
+```text
+wc readme          # 2 8 61 readme
+wc -l readme       # 2 readme
+wc -wc readme      # 8 61 readme
+```
+
+Columns always follow line, word, byte order. Lines count newlines; words
+are separated by ASCII whitespace, including a final word without a newline.
+Bytes are counted before display formatting. Standard input and multiple-file
+totals are not yet supported. Image 82 is host-tested; hardware validation
+is pending.
+
+### Head lines
+
+Image 81 adds `head filename` (first ten lines), `head -1 filename`, and
+`head -n 1 filename`. Counts must be positive decimal numbers; `--` ends
+option parsing. For example, `head -1 readme` prints
+`CP32 MINIX V2 RAM filesystem.`
+
+This kernel-linked command supports one regular file, with the same text
+formatting as `cat`. Standard input, multiple-file headers and a standalone
+user executable are not yet implemented. Image 81 default and explicit counts are hardware-verified on `readme`.
+
+### Tail counts
+
+Image 79 adds MINIX-style counts to the kernel-linked shell:
+
+```text
+tail -n 1 boot/double
+tail -n +2 readme
+tail -c 3 boot/double
+```
+
+An unsigned or negative count selects the end of the file. `+N` starts at
+line/byte N, counting from 1; `+0` also starts at the beginning. A count of
+`0` without `+` produces no output. Use `--` before filenames beginning with
+`-`. Byte counts select file bytes before the existing display formatting.
+The command reads one regular file; follow mode, stdin and obsolete option
+syntax are not implemented. Image 79 line/byte counts and zero-output behavior are hardware-verified.
+Image 80 corrects the LCD `+` glyph, verified on hardware.
 
 ## Compiling source
 
@@ -106,3 +152,41 @@ begin reading as soon as USB connects. A power-only connection does not
 request a restart. If the serial device re-enumerates during reset, reopen
 `screen`. Hardware USB reset and flashing remain available.
 
+## Running applications: current status
+
+Shell commands are currently kernel-linked. Standalone application execution
+is not implemented yet. Image 83 adds the tested argument-stack builder as
+a loader prerequisite; it introduces no new shell command. See the
+[application execution roadmap](docs/application-execution.md) for the remaining
+loader, process lifecycle and runtime work.
+
+Build the separate hello executable with `make hello` in `src/`.
+Image 84 adds ELF validation and reserves an application memory slot.
+`build/hello.elf` is a development artifact; it is not yet packaged or runnable
+from the shell. The write/exit bridge and runtime loader are the next steps.
+
+Image 85 adds tested segment staging/BSS clearing and reserves all runtime
+task/server stacks against application overlap. `hello` remains unavailable
+until filesystem packaging and process startup/write/exit are connected.
+
+Image 86 packages the executable as `/boot/hello` in every normal build.
+Inspect it with `ls boot`, `stat boot/hello`, or `wc -c boot/hello` (916 bytes
+in this build). The `hello` execution command is still pending process startup
+and write/exit integration. Sparse disk provisioning preserves memory for it.
+
+### First hello launch — image 87 (hardware-verified)
+
+Run `hello` to load `/boot/hello` as a trusted foreground application.
+Hardware-verified output:
+
+```text
+Hello from a CP32 application!
+Hello exit=0
+```
+
+Try it twice, then `ls boot`, `disk`, and `mm`. This first launch path is not
+memory-protected and does not yet recover from application faults. The earlier
+image notes describe incremental milestones; image 87 adds the launch command.
+
+Image 88 adds the missing LCD `!` glyph; check it with `font` or `hello`.
+The glyph correction is host-tested and awaits LCD confirmation.

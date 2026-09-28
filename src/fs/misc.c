@@ -3,7 +3,8 @@
 
 CP32_IRAM_EXT int cp32_fd_dup(int fd)
 {
-  return cp32_fd_share(fd,-1);
+  /* MINIX libc dup is implemented using fcntl(F_DUPFD, 0). */
+  return cp32_fd_fcntl(fd,CP32_F_DUPFD,0);
 }
 
 CP32_IRAM_EXT int cp32_fd_dup2(int fd,int target)

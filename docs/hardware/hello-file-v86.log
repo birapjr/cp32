@@ -1,0 +1,16 @@
+Selected excerpts from user-provided image-86 capture.
+[FEATURE HELLO-FILE 86]1
+[TEST HELLO-FILE 86]
+[TTY line=ls boot]
+.
+..
+readme
+indirect
+double
+large
+hello
+[TTY line=stat boot/hello]
+file inode=7 size=916 links=1
+uid=0 gid=0 mtime=0
+[TTY line=wc -c boot/hello]
+916 boot/hello

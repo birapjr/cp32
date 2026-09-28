@@ -56,5 +56,21 @@ int main(void)
     (void)env_parse("TEST", "d", 0, &value, 0, 10);
     failures++;
   }
+  {
+    const char *overflow[]={"2147483648","-2147483649","999999999999999999999999999"};
+    unsigned i;
+    for(i=0;i<3;i++) {
+      env_name="TEST"; env_value=(char *)overflow[i]; value=123;
+      if(setjmp(panic_jmp)==0) {
+        (void)env_parse("TEST","d",0,&value,LONG_MIN,LONG_MAX);
+        failures++;
+      }
+      failures+=check(value==123);
+    }
+    env_value="2147483647";
+    failures+=check(env_parse("TEST","d",0,&value,LONG_MIN,LONG_MAX)==EP_SET && value==LONG_MAX);
+    env_value="-2147483648";
+    failures+=check(env_parse("TEST","d",0,&value,LONG_MIN,LONG_MAX)==EP_SET && value==LONG_MIN);
+  }
   return failures != 0;
 }

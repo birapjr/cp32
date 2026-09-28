@@ -3,7 +3,9 @@
 #include <sys/ioctl.h>
 #include "ramdisk.h"
 #include "../fs/fs.h"
+#include "../lib/posix/dirent.h"
 #include "tty.h"
+#include "application.h"
 #include <string.h>
 #include <minix/com.h>
 #include <minix/cp32_mm.h>
@@ -129,18 +131,22 @@ CP32_IRAM_EXT static void cp32_shell_fsinfo(void)
 
 CP32_IRAM_EXT static void cp32_shell_ls(const char *path)
 {
-  struct cp32_minix_dir dir;
-  unsigned inode;
-  char name[15];
+  struct cp32_dir dir=CP32_DIR_INIT;
+  struct cp32_dirent entry;
   char full[CP32_MINIX_PATH_MAX+1];
   int result = cp32_minix_abspath(cp32_shell_cwd,path,full);
-  if (!result) result = cp32_minix_dir_open(cp32_shell_disk_read,
-                                  cp32_ramdisk_capacity(), full, &dir);
+  if (!result) {
+    result=cp32_opendir(cp32_shell_disk_read,cp32_ramdisk_capacity(),full,&dir);
+  }
   if (result == 0) {
-    while ((result = cp32_minix_root_next(&dir, &inode, name)) > 0) {
-      cp32_shell_print(name);
+    while ((result = cp32_readdir(&dir, &entry)) > 0) {
+      cp32_shell_print(entry.name);
       cp32_shell_print("\r\n");
     }
+  }
+  if(dir.fd>=0) {
+    int closed=cp32_closedir(&dir);
+    if(result>=0 && closed<0) result=closed;
   }
   if (result < 0) {
     cp32_shell_print("Directory read failed: ");
@@ -176,9 +182,10 @@ CP32_IRAM_EXT static int cp32_shell_disk_check(void)
   return result;
 }
 
-/* Find the last ten lines with bounded backward windows. Reads may stop
+/* MINIX commands/simple/tail.c count semantics, using seekable regular files.
+ * Find the requested lines with bounded windows. Reads may stop
  * at zone boundaries, so fill each window before scanning it in reverse. */
-CP32_IRAM_EXT static int cp32_shell_tail_scan(int fd)
+CP32_IRAM_EXT static int cp32_shell_tail_scan(int fd,unsigned count,int bytes_mode,int from_start)
 {
   char bytes[64];
   unsigned size, end, start, length, have, lines = 0, i;
@@ -186,6 +193,25 @@ CP32_IRAM_EXT static int cp32_shell_tail_scan(int fd)
   int result=cp32_fd_fstat(fd,&info);
   if(result) return result;
   size=info.size;
+  if(bytes_mode) {
+    unsigned position=from_start ? (count ? count-1 : 0) : (count<size ? size-count : 0);
+    if(position>size) position=size;
+    return cp32_fd_seek(fd,position,0,0);
+  }
+  if(!from_start && !count) return cp32_fd_seek(fd,size,0,0);
+  if(from_start) {
+    unsigned remaining=count>0 ? count-1 : 0;
+    result=cp32_fd_seek(fd,0,0,0);
+    if(result || !remaining) return result;
+    start=0;
+    while((result=cp32_fd_read(fd,bytes,sizeof(bytes)))>0) {
+      for(i=0;i<(unsigned)result;i++)
+        if(bytes[i]=='\n' && --remaining==0)
+          return cp32_fd_seek(fd,start+i+1,0,0);
+      start+=(unsigned)result;
+    }
+    return result<0 ? result : cp32_fd_seek(fd,size,0,0);
+  }
   end=size;
   while (end) {
     start = end > sizeof(bytes) ? end - sizeof(bytes) : 0;
@@ -200,7 +226,7 @@ CP32_IRAM_EXT static int cp32_shell_tail_scan(int fd)
     }
     for (i = length; i > 0; i--) {
       unsigned position = start + i - 1;
-      if (bytes[i-1] == '\n' && position != size - 1 && ++lines == 10)
+      if (bytes[i-1] == '\n' && position != size - 1 && ++lines == count)
         return cp32_fd_seek(fd, position + 1, 0, 0);
     }
     end = start;
@@ -210,16 +236,130 @@ CP32_IRAM_EXT static int cp32_shell_tail_scan(int fd)
 
 /* Scan through an owned duplicate; shared offset positions the original
  * descriptor for output, while closing this reference keeps it open. */
-CP32_IRAM_EXT static int cp32_shell_tail_start(int fd)
+CP32_IRAM_EXT static int cp32_shell_tail_start(int fd,unsigned count,int bytes_mode,int from_start)
 {
   int scan=cp32_fd_dup(fd), result;
   if(scan<0) return scan;
-  result=cp32_shell_tail_scan(scan);
+  result=cp32_shell_tail_scan(scan,count,bytes_mode,from_start);
   cp32_fd_close(scan);
   return result;
 }
 
-CP32_IRAM_EXT static void cp32_shell_show(const char *name, int tail)
+/* cat/head/tail/cmp retain their regular-file policy even though FS descriptors
+ * now support read-only directories, as MINIX open does. */
+CP32_IRAM_EXT static int cp32_shell_open_file(const char *path)
+{
+  struct cp32_minix_stat info;
+  int fd=cp32_fd_open(cp32_shell_disk_read,cp32_ramdisk_capacity(),path);
+  int result;
+  if(fd<0) return fd;
+  result=cp32_fd_fstat(fd,&info);
+  if(!result && (info.mode & 0170000)==0040000) result=-CP32_FILE_IS_DIR;
+  if(result) { cp32_fd_close(fd); return result; }
+  return fd;
+}
+
+/* MINIX commands/simple/wc.c adapted to bounded descriptor reads.
+ * Count raw bytes, LF lines and ASCII-whitespace-delimited words. Count word
+ * starts, so EOF does not lose an unterminated word as in the old reference.
+ * The single regular file has a 32-bit size, which bounds every counter. */
+CP32_IRAM_EXT static void cp32_shell_wc(const char *args)
+{
+  char full[CP32_MINIX_PATH_MAX+1], bytes[64];
+  unsigned counts[3]={0,0,0}, flags=0, i;
+  int fd=-1, result, word=0, printed=0;
+  while(*args==' ' || *args=='\t') args++;
+  if(args[0]=='-' && args[1]!='-') {
+    args++;
+    while(*args && *args!=' ' && *args!='\t') {
+      if(*args=='l') flags|=1;
+      else if(*args=='w') flags|=2;
+      else if(*args=='c') flags|=4;
+      else goto usage;
+      args++;
+    }
+    if(!flags) goto usage;
+    while(*args==' ' || *args=='\t') args++;
+  }
+  if(args[0]=='-' && args[1]=='-' && (args[2]==' ' || args[2]=='\t')) {
+    args+=3;
+    while(*args==' ' || *args=='\t') args++;
+  } else if(args[0]=='-') goto usage;
+  if(!*args) goto usage;
+  if(!flags) flags=7;
+  result=cp32_minix_abspath(cp32_shell_cwd,args,full);
+  if(!result) {
+    fd=cp32_shell_open_file(full);
+    if(fd<0) result=fd;
+  }
+  if(!result) {
+    while((result=cp32_fd_read(fd,bytes,sizeof(bytes)))>0) {
+      counts[2]+=(unsigned)result;
+      for(i=0;i<(unsigned)result;i++) {
+        unsigned char c=(unsigned char)bytes[i];
+        int space=c==' ' || (c>='\t' && c<='\r');
+        if(c=='\n') counts[0]++;
+        if(!space && !word) counts[1]++;
+        word=!space;
+      }
+    }
+  }
+  if(fd>=0) cp32_fd_close(fd);
+  if(result<0) {
+    cp32_shell_print("Count failed: ");
+    cp32_shell_print_u32((unsigned)-result);
+    cp32_shell_print("\r\n");
+    return;
+  }
+  /* Compact columns fit the LCD; always line, word, byte order. Never
+   * publish partial counts if a read failed. */
+  for(i=0;i<3;i++) if(flags & (1U<<i)) {
+    if(printed) cp32_shell_print(" ");
+    cp32_shell_print_u32(counts[i]); printed=1;
+  }
+  cp32_shell_print(" "); cp32_shell_print(args); cp32_shell_print("\r\n");
+  return;
+usage:
+  cp32_shell_print("Usage: wc [-lwc] [--] filename\r\n");
+}
+
+CP32_IRAM_EXT static int cp32_shell_app_read(void *context,uint32_t offset,
+                                             unsigned char *buffer,unsigned count)
+{
+  int fd=*(int *)context;
+  if(cp32_fd_seek(fd,offset,0,0)) return -1;
+  return cp32_fd_read(fd,(char *)buffer,count)==(int)count ? 0 : -1;
+}
+CP32_IRAM_EXT static void cp32_shell_app_output(const char *buffer,unsigned count)
+{
+  char text[65];
+  unsigned n=0,i;
+  for(i=0;i<count;i++) {
+    unsigned char c=buffer[i];
+    if(n>61) { text[n]=0; cp32_shell_print(text); n=0; }
+    if(c=='\n') text[n++]='\r';
+    text[n++]=(c=='\n' || (c>=32 && c<=126)) ? c : '?';
+  }
+  text[n]=0; cp32_shell_print(text);
+}
+CP32_IRAM_EXT static void cp32_shell_hello(void)
+{
+  struct cp32_minix_stat info;
+  int status=0,result,fd=cp32_shell_open_file("/boot/hello");
+  if(fd<0) result=fd;
+  else {
+    result=cp32_fd_fstat(fd,&info);
+    if(!result) result=cp32_application_run(cp32_shell_app_read,&fd,info.size,
+                                          cp32_shell_app_output,&status);
+    cp32_fd_close(fd);
+  }
+  if(result) cp32_shell_print("Hello load failed\r\n");
+  else { cp32_shell_print("Hello exit="); cp32_shell_print_u32(status);
+         cp32_shell_print("\r\n"); }
+}
+
+/* mode: 0=whole file, 1=tail, 2=head (positive line count). */
+CP32_IRAM_EXT static void cp32_shell_show(const char *name,int mode,unsigned count,int bytes_mode,int from_start)
 {
   int fd=-1;
   char bytes[64], text[129];
@@ -228,10 +368,10 @@ CP32_IRAM_EXT static void cp32_shell_show(const char *name, int tail)
   char full[CP32_MINIX_PATH_MAX+1];
   result = cp32_minix_abspath(cp32_shell_cwd,name,full);
   if (!result) {
-    fd=cp32_fd_open(cp32_shell_disk_read,cp32_ramdisk_capacity(),full);
+    fd=cp32_shell_open_file(full);
     if(fd<0) result=fd;
   }
-  if (!result && tail) result = cp32_shell_tail_start(fd);
+  if (!result && mode==1) result = cp32_shell_tail_start(fd,count,bytes_mode,from_start);
   if (!result) {
     while ((result = cp32_fd_read(fd, bytes, sizeof(bytes))) > 0) {
       n = 0;
@@ -240,10 +380,12 @@ CP32_IRAM_EXT static void cp32_shell_show(const char *name, int tail)
         if (ch == '\n') { text[n++] = '\r'; text[n++] = '\n'; }
         else text[n++] = (ch >= 0x20 && ch <= 0x7e) ? ch : '?';
         newline = ch == '\n';
+        if(mode==2 && newline && --count==0) break;
       }
       text[n] = 0;
       cp32_shell_print(text);
       printed = 1;
+      if(mode==2 && !count) { result=0; break; }
     }
   }
   if(fd>=0) cp32_fd_close(fd);
@@ -263,12 +405,72 @@ CP32_IRAM_EXT static void cp32_shell_show(const char *name, int tail)
 
 CP32_IRAM_EXT static void cp32_shell_cat(const char *name)
 {
-  cp32_shell_show(name, 0);
+  cp32_shell_show(name,0,0,0,0);
 }
 
-CP32_IRAM_EXT static void cp32_shell_tail(const char *name)
+/* MINIX commands/simple/head.c: default ten lines and historical -N.
+ * Also accept -n N; retain positive counts and a single regular file.
+ * No stdio or heap is needed on the freestanding Xtensa target. */
+CP32_IRAM_EXT static void cp32_shell_head(const char *args)
 {
-  cp32_shell_show(name, 1);
+  unsigned count=10;
+  char *end;
+  long number;
+  while(*args==' ' || *args=='\t') args++;
+  if(args[0]=='-' && args[1]!='-') {
+    args++;
+    if(args[0]=='n' && (args[1]==' ' || args[1]=='\t')) {
+      args++;
+      while(*args==' ' || *args=='\t') args++;
+    }
+    if(*args<'0' || *args>'9') goto usage;
+    errno=0;
+    number=strtol(args,&end,10);
+    if(errno || number<=0 || (*end!=' ' && *end!='\t')) goto usage;
+    count=(unsigned)number;
+    args=end;
+    while(*args==' ' || *args=='\t') args++;
+  }
+  if(args[0]=='-' && args[1]=='-' && (args[2]==' ' || args[2]=='\t')) {
+    args+=3;
+    while(*args==' ' || *args=='\t') args++;
+  } else if(args[0]=='-') goto usage;
+  if(!*args) goto usage;
+  cp32_shell_show(args,2,count,0,0);
+  return;
+usage:
+  cp32_shell_print("Usage: head [-N | -n N] [--] filename\r\n");
+}
+
+CP32_IRAM_EXT static void cp32_shell_tail(const char *args)
+{
+  unsigned count=10;
+  int bytes_mode=0,from_start=0;
+  char *end;
+  long number;
+  while(*args==' ' || *args=='\t') args++;
+  if(args[0]=='-' && (args[1]=='n' || args[1]=='c') &&
+      (args[2]==' ' || args[2]=='\t')) {
+    bytes_mode=args[1]=='c';
+    args+=3;
+    while(*args==' ' || *args=='\t') args++;
+    from_start=*args=='+';
+    errno=0;
+    number=strtol(args,&end,10);
+    if(errno || end==args || (*end!=' ' && *end!='\t')) goto usage;
+    count=number<0 ? (unsigned)(-(number+1))+1U : (unsigned)number;
+    args=end;
+    while(*args==' ' || *args=='\t') args++;
+  }
+  if(args[0]=='-' && args[1]=='-' && (args[2]==' ' || args[2]=='\t')) {
+    args+=3;
+    while(*args==' ' || *args=='\t') args++;
+  } else if(args[0]=='-') goto usage;
+  if(!*args) goto usage;
+  cp32_shell_show(args,1,count,bytes_mode,from_start);
+  return;
+usage:
+  cp32_shell_print("Usage: tail [-n count | -c count] [--] filename\r\n");
 }
 
 /* Allocate/release via MM's real IPC service; never touch allocator state
@@ -364,7 +566,7 @@ CP32_IRAM_EXT static void cp32_shell_cmp(const char *args)
   for(i=0;i<2;i++) {
     result=cp32_minix_abspath(cp32_shell_cwd,names[i],full);
     if(result) goto done;
-    fd[i]=cp32_fd_open(cp32_shell_disk_read,cp32_ramdisk_capacity(),full);
+    fd[i]=cp32_shell_open_file(full);
     if(fd[i]<0) { result=fd[i]; goto done; }
   }
   for(;;) {
@@ -437,7 +639,11 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     usbj_print(" expected="); usbj_print_u32(sizeof(text) - 1);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
+  } else if (strcmp(line, "hello") == 0) {
+    cp32_shell_hello();
   } else if (strcmp(line, "font") == 0) {
+    cp32_shell_print("bang:   !\r\n");
+    cp32_shell_print("plus:   +\r\n");
     cp32_shell_print("hyphen: -\r\n");
     cp32_shell_print("under:  _\r\n");
     cp32_shell_print("slash:  /\r\n");
@@ -455,8 +661,16 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
   } else if (line[0] == 't' && line[1] == 'a' && line[2] == 'i' &&
              line[3] == 'l' && line[4] == ' ') {
     cp32_shell_tail(line + 5);
+  } else if (line[0]=='h' && line[1]=='e' && line[2]=='a' &&
+             line[3]=='d' && (line[4]==' ' || line[4]=='\t')) {
+    cp32_shell_head(line+5);
+  } else if (strcmp(line, "wc") == 0 ||
+             (line[0]=='w' && line[1]=='c' && (line[2]==' ' || line[2]=='\t'))) {
+    cp32_shell_wc(line[2] ? line+3 : "");
+  } else if (strcmp(line, "head") == 0) {
+    cp32_shell_head("");
   } else if (strcmp(line, "tail") == 0) {
-    cp32_shell_print("Usage: tail filename\r\n");
+    cp32_shell_tail("");
   } else if (line[0] == 's' && line[1] == 't' && line[2] == 'a' &&
              line[3] == 't' && line[4] == ' ') {
     cp32_shell_stat(line + 5);

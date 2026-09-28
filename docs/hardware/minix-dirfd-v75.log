@@ -1,0 +1,44 @@
+# Selected verbatim lines from the user-supplied image-75 serial capture.
+# Unrelated diagnostics and intervening lines omitted. Not a new local run.
+[FEATURE MINIX-DIRFD 75]1
+[KBD probe=1]
+[KBD init=1 stale=0 int=0 status=1 fifo=0]
+[TEST MINIX-DIRFD 75]
+[TTY line=ls]
+.
+..
+boot
+readme
+[TTY line=ls boot]
+.
+..
+readme
+indirect
+double
+large
+[TTY line=cat readme]
+CP32 MINIX V2 RAM filesystem.
+Read-only filesystem bring-up.
+[TTY line=mm]
+[MM IPC V44 alloc-release-result=0]
+[TTY line=disk]
+[RAM IPC V49 result=0]
+[TTY line=cd boot]
+[TTY line=ls]
+.
+..
+readme
+indirect
+double
+large
+[TTY line=tail double]
+Double indirect line 02
+Double indirect line 03
+Double indirect line 04
+Double indirect line 05
+Double indirect line 06
+Double indirect line 07
+Double indirect line 08
+Double indirect line 09
+Double indirect line 10
+DOUBLE INDIRECT READ OK
