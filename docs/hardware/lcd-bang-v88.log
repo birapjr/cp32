@@ -1,0 +1,95 @@
+ => CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x000F4206
+vector word 6: 0x000EE306
+checking call0 stack                    ...
+stack bottom:  0x3FCD0290
+stack pointer: 0x3FCD8270
+stack top:     0x3FCD8290
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/alloc.c -o build/mm/alloc.o
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/exec.c -o build/mm/exec.o
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/image.c -o build/mm/image.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/printk.c -o build/printk.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/seekdir.c -o build/seekdir.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/telldir.c -o build/telldir.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/errno.c -o build/errno.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/memcpy.c -o build/lib/ansi/memcpy.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/memset.c -o build/lib/ansi/memset.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/strcpy.c -o build/lib/ansi/strcpy.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/strcmp.c -o build/lib/ansi/strcmp.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/strtol.c -o build/lib/ansi/strtol.o
+mkdir -p build/lib/posix
+STABLE idle-entry                       ...
+[SCHED return-state owner=4294967287 flags=0 selected=4294967287 fs=4294967295]
+[RFE publish target=4294967287 current=4294967287 seq=1]
+[RFE target=4294967287 current=4294967287 seq=1 pc=0x40380190 ps=0x00000100]
+[SYSTIMER V44 n=1 before now=0x00000000:0x091D4B5E target=0x00000000:0x091D4A40 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=1 after now=0x00000000:0x091D4D63 target=0x00000000:0x09215E17 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x09215E17 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x40380190 sp=0x3FCD5290 psout=0x00000100 frame=1]
+[IRQ V68 count=1 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=0]
+[IPC count=1 op=2 src=132]
+[IPC V44 op=2 n=1 owner=4294967287 blocked=1 next=0 frame=1]
+[MM_TASK]
+[SCHED fs-selected pc=0x4037A81C sp=0x3FCE2290 nest=0]
+[TTY user-entry]
+[IPC blocked-resume=1 owner=4294967287 result=0]
+[IPC V44 op=3 n=1 owner=1 blocked=1 next=4294967293 frame=1]
+[CLOCK_TASK]
+[IPC V44 op=1 n=1 owner=4294967287 blocked=0 next=4294967287 frame=1]
+[SCHED fs-publish flags=0 pc=0x40373F6B sp=0x3FCE21C0 owner=1]
+[IRQ return-frame=1 owner=1]
+[CTX V44 FS-RETURN n=1 tick=2 pc=0x40373F6B sp=0x3FCE21C0 a0=0x403722A9 a15=0x3FCE21C0 sar=0x00000000 lcount=0x00000000 frame=1]
+[SYSTIMER V44 n=2 before now=0x00000000:0x09218486 target=0x00000000:0x09215E17 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=2 after now=0x00000000:0x0921868B target=0x00000000:0x0925973F conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x0925973F ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x40373F6B sp=0x3FCE21C0 psout=0x00000100 frame=1]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[TTY READ V46 reply=5 n=1]
+[TTY line=font]
+bang:   !
+plus:   +
+hyphen: -
+under:  _
+slash:  /
+equals: =
+dots: . ..
+case: Aa Cc
+[TTY WRITE V48 bytes=93 ticks=83]
+[TTY line=cd boot]
+[RAM V49 op=3 result=1024 n=1]
+[RAM V49 op=3 result=1024 n=2]
+[RAM V49 op=3 result=1024 n=3]
+[RAM V49 op=3 result=1024 n=4]
+[RAM V49 op=3 result=1024 n=5]
+[RAM V49 op=3 result=1024 n=6]
+[RAM V49 op=3 result=1024 n=7]
+[RAM V49 op=3 result=1024 n=8]
+[TTY WRITE V48 bytes=2 ticks=1]
+[CTX V44 FS-RETURN n=2 tick=927 pc=0x40373F6B sp=0x3FCE21A0 a0=0x403722A9 a15=0x3FCE21A0 sar=0x00000002 lcount=0x00000000 frame=1]
+[TTY line=hello]
+Hello from a CP32 application!
+Hello exit=0
+[TTY WRITE V48 bytes=48 ticks=148]

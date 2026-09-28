@@ -40,6 +40,7 @@ struct proc {
 };
 static struct proc procs[4], *current_proc=procs+1, *bill_ptr;
 #define proc_addr(n) (procs+(n))
+static const char *args[]={"hello","one","two"};
 static int app_busy, services, syncs, publishes, reads, writes, replies, loading, stacking;
 static unsigned char stack[4096];
 static void panic(const char *s,int n) { (void)s;(void)n; assert(0); }
@@ -60,8 +61,8 @@ int cp32_image_load(cp32_image_reader r,void *c,uint32_t sz,unsigned char *t,
 }
 int cp32_exec_stack(unsigned char *b,unsigned cap,uint32_t base,unsigned argc,
  const char *const argv[],unsigned envc,const char *const envp[],uint32_t *sp) {
- (void)b;(void)envp; assert(cap==512 && base==CP32_APP_TOP-512 && argc==1 && !envc);
- assert(!strcmp(argv[0],"hello")); if(stacking) return -1; *sp=CP32_APP_TOP-32;return 0;
+ (void)b;(void)envp; assert(cap==512 && base==CP32_APP_TOP-512 && argc==3 && !envc);
+ assert(!strcmp(argv[0],"hello") && !strcmp(argv[1],"one") && !strcmp(argv[2],"two")); if(stacking) return -1; *sp=CP32_APP_TOP-32;return 0;
 }
 static int receive(int nr,message *m) {
  assert(nr==APP_NR); struct proc *p=procs+3; p->p_flags=RECEIVING;p->p_getfrom=1;
@@ -80,18 +81,18 @@ static void output(const char *p,unsigned n) {assert((uintptr_t)p==CP32_APP_DATA
 test=r'''
 int main(void) {
  int status=-10;procs[3].p_flags=P_SLOT_FREE;
- loading=1;assert(cp32_application_run(0,0,0,output,&status)==-2);
+ loading=1;assert(cp32_application_run(0,0,0,3,args,output,&status)==-2);
  assert(!app_busy && !publishes && status==-10 && procs[3].p_flags==P_SLOT_FREE);
- loading=0;stacking=1;assert(cp32_application_run(0,0,0,output,&status)==-1);
+ loading=0;stacking=1;assert(cp32_application_run(0,0,0,3,args,output,&status)==-1);
  assert(!app_busy && !publishes);stacking=0;
  for(int i=0;i<20;i++) {
    memset(stack,0xa5,sizeof(stack));
-   assert(!cp32_application_run(0,0,0,output,&status));assert(status==7);
+   assert(!cp32_application_run(0,0,0,3,args,output,&status));assert(status==7);
    assert(procs[3].p_flags==P_SLOT_FREE && procs[3].p_nr==3 && !app_busy);
    assert(bill_ptr==procs+2 && !procs[3].p_reg.pc);
  }
  assert(publishes==20 && syncs==20 && writes==20 && replies==60);
- current_proc=procs+2;assert(cp32_application_run(0,0,0,output,&status)==-1);
+ current_proc=procs+2;assert(cp32_application_run(0,0,0,3,args,output,&status)==-1);
  assert(publishes==20);
  puts("application: publish, bounded writes, blocked exit/reap, reload and failures pass");
 }

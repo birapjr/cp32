@@ -4,8 +4,15 @@ static const char greeting[]="Hello from a CP32 application!\n";
 static volatile unsigned started;
 int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_services *s)
 {
-  (void)argc; (void)argv; (void)envp;
+  unsigned i,n;
+  (void)envp;
   if(!s || s->version!=1 || !s->write || !s->exit || started) return 1;
   started=1;
-  return s->write(greeting,sizeof(greeting)-1)==(int)(sizeof(greeting)-1) ? 0 : 1;
+  if(s->write(greeting,sizeof(greeting)-1)!=(int)(sizeof(greeting)-1)) return 1;
+  for(i=1;i<argc;i++) {
+    for(n=0;argv[i][n];n++) {}
+    if(s->write("arg: ",5)!=5 || s->write(argv[i],n)!=(int)n ||
+       s->write("\n",1)!=1) return 1;
+  }
+  return 0;
 }

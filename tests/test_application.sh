@@ -2,3 +2,4 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python3 "$root/tests/kernel/test_application.py"
+python3 "$root/tests/kernel/test_hello_args.py"

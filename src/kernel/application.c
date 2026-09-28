@@ -36,15 +36,14 @@ CP32_IRAM_EXT static void application_exit(int status)
 static const struct cp32_app_services services={1,application_write,application_exit};
 
 CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
-    uint32_t size,cp32_app_output output,int *status)
+    uint32_t size,unsigned argc,const char *const argv[],cp32_app_output output,int *status)
 {
   struct cp32_image image;
   struct proc *child=proc_addr(APP_NR);
-  const char *argv[]={"hello"};
   uint32_t sp;
   message m;
   int result,saved;
-  if(!output || !status || current_proc!=proc_addr(FS_PROC_NR) || app_busy ||
+  if(!argc || !argv || !output || !status || current_proc!=proc_addr(FS_PROC_NR) || app_busy ||
      child->p_flags!=P_SLOT_FREE) return -1;
   app_busy=1;
   result=cp32_image_load(read,context,size,(unsigned char *)APP_TEXT_DATA,
@@ -53,7 +52,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);
   /* Limit arguments to the top 512 bytes, leaving >3K for C/IPC/IRQ frames. */
   result=cp32_exec_stack((unsigned char *)(CP32_APP_TOP-512),512,
-                        CP32_APP_TOP-512,1,argv,0,0,&sp);
+                        CP32_APP_TOP-512,argc,argv,0,0,&sp);
   if(result) { app_busy=0; return result; }
   /* Writes use the internal SRAM data alias, not flash/cache memory. */
   __asm__ volatile("memw\n\tisync" ::: "memory");

@@ -342,20 +342,41 @@ CP32_IRAM_EXT static void cp32_shell_app_output(const char *buffer,unsigned coun
   }
   text[n]=0; cp32_shell_print(text);
 }
-CP32_IRAM_EXT static void cp32_shell_hello(void)
+/* Minimal whitespace tokenization; the shell line itself is bounded to 63
+ * bytes. No quoting/expansion yet. argv[0] is the invoked command name. */
+CP32_IRAM_EXT static void cp32_shell_hello(const char *args)
 {
   struct cp32_minix_stat info;
-  int status=0,result,fd=cp32_shell_open_file("/boot/hello");
+  char copy[64], *p;
+  const char *argv[9];
+  unsigned argc=1,n=0;
+  int status=0,result,fd;
+  argv[0]="hello";
+  while(args[n] && n<sizeof(copy)-1) { copy[n]=args[n]; n++; }
+  if(args[n]) goto usage;
+  copy[n]=0; p=copy;
+  while(*p) {
+    while(*p==' ' || *p=='\t') p++;
+    if(!*p) break;
+    if(argc==9) goto usage;
+    argv[argc++]=p;
+    while(*p && *p!=' ' && *p!='\t') p++;
+    if(*p) *p++=0;
+  }
+  fd=cp32_shell_open_file("/boot/hello");
   if(fd<0) result=fd;
   else {
     result=cp32_fd_fstat(fd,&info);
     if(!result) result=cp32_application_run(cp32_shell_app_read,&fd,info.size,
-                                          cp32_shell_app_output,&status);
+                                          argc,argv,cp32_shell_app_output,&status);
     cp32_fd_close(fd);
   }
   if(result) cp32_shell_print("Hello load failed\r\n");
   else { cp32_shell_print("Hello exit="); cp32_shell_print_u32(status);
          cp32_shell_print("\r\n"); }
+  return;
+usage:
+  cp32_shell_print("Usage: hello [up to 8 arguments]\r\n");
 }
 
 /* mode: 0=whole file, 1=tail, 2=head (positive line count). */
@@ -639,8 +660,9 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     usbj_print(" expected="); usbj_print_u32(sizeof(text) - 1);
     usbj_print("]\r\n");
     restore_lock(saved_ps);
-  } else if (strcmp(line, "hello") == 0) {
-    cp32_shell_hello();
+  } else if (strcmp(line, "hello") == 0 ||
+             (line[0]=='h' && line[1]=='e' && line[2]=='l' && line[3]=='l' && line[4]=='o' && (line[5]==' ' || line[5]=='\t'))) {
+    cp32_shell_hello(line[5] ? line+6 : "");
   } else if (strcmp(line, "font") == 0) {
     cp32_shell_print("bang:   !\r\n");
     cp32_shell_print("plus:   +\r\n");

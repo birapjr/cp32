@@ -134,3 +134,12 @@ The user capture confirms two successive hello greetings and exit=0 results,
 followed by successful disk and MM checks. The basic trusted launch/write/exit
 and shell-resume path is now hardware-verified; no general fault-isolation
 claim follows from this test. Image 88 fixes the reported LCD ! glyph only.
+
+## Image 89: argc/argv from the shell
+
+The launch API now takes argc/argv instead of constructing a fixed hello
+vector. Shell token storage stays alive while launch copies it into the child
+stack; no parent string pointers are exposed as argv in the application.
+hello prints arguments through its existing write callback. The existing
+512-byte stack-image cap, single-process slot and trusted execution scope
+are unchanged. No environment variables, quoting or expansion yet.

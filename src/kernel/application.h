@@ -4,5 +4,5 @@
 /* Trusted foreground application, one slot; called only by FS. */
 typedef void (*cp32_app_output)(const char *,unsigned);
 CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
-    uint32_t size,cp32_app_output output,int *status);
+    uint32_t size,unsigned argc,const char *const argv[],cp32_app_output output,int *status);
 #endif

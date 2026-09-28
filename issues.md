@@ -1794,3 +1794,29 @@ _stack_top=3fcd8290, _runtime_stack_end=3fce3290.
 
 [ ] LCD appearance pending: [FEATURE LCD-BANG 88]1 and [TEST LCD-BANG 88]
 immediately before idle. Built but not flashed. Run font or hello and check !.
+
+## Application arguments — image 89
+
+[x] Image-88 capture shows font samples, cd boot and successful hello/exit=0.
+Full capture: docs/hardware/lcd-bang-v88.log. LCD ! appearance is not provable
+from serial alone; no explicit visual confirmation was supplied.
+
+[x] Pass shell arguments through the production application API and existing
+MINIX-style argc/argv/envp stack builder. Replace the hardcoded one-element
+argv with caller-owned trusted vectors, copied before runnable publication.
+Preserve Xtensa crt0's register/stack contract and the 512-byte argument budget.
+Shell accepts up to eight whitespace-separated arguments within its existing
+63-byte line limit. No quoting/expansion. hello prints each received argument
+via the same bounded IPC write service; plain hello preserves its greeting.
+
+[x] Clean build and all 30 test scripts pass, including new shell parsing
+coverage for spaces/tabs, no args, maximum/too-many args, overlong input,
+load error/descriptor cleanup. Lifecycle tests verify passed vector contents;
+hello tests verify complete argument output. Prior stack relocation and ELF
+provisioning/loading tests continue to pass. hello.elf is now 1184 bytes.
+ELF endpoints: _iram_end=4037422c, _iram_ext_end=40386564,
+_runtime_stack_end=3fce3590, all below application reservations.
+
+[ ] Hardware pending: [FEATURE HELLO-ARGV 89]1 / [TEST HELLO-ARGV 89].
+Built but not flashed. Try hello one two: greeting, arg: one, arg: two,
+Hello exit=0. Then hello with no arguments and disk/mm regression checks.
