@@ -8,6 +8,16 @@
  */
 #include "kernel.h"
 
+void cp32_hardware_reset(void)
+{
+    /* ESP32-S3 rtc_cntl_ll_reset_system() uses this write. The ROM reloads
+     * the image, then CP32 rebuilds .bss, stacks and process state. Leave
+     * the fixed-function USB Serial/JTAG reset controls enabled. */
+    lock();
+    RTC_OPTIONS0 = RTC_SW_SYS_RST;
+    for (;;) { }
+}
+
 void cp32_hardware_init(void)
 {
     /* Match the first part of the ESP-IDF reset path: leave the CPU with no

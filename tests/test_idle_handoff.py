@@ -48,13 +48,14 @@ volatile int cp32_context_restore_gate;
 volatile int k_reenter;
 volatile uint32_t cp32_timer_irq_ticks;
 static jmp_buf exit_idle;
-static unsigned delays, restores;
+static unsigned delays, restores, console_polls;
 static uintptr_t running_stack;
 static struct proc *restore_owner, *restore_frame;
 
 void unlock(void) {}
 void status_line(const char *s, int state) { (void)s; (void)state; }
 void wdt_feed_all(void) {}
+void cp32_console_poll(void) { ++console_polls; }
 void usbj_print(const char *s) { (void)s; }
 void usbj_print_u32(uint32_t value) { (void)value; }
 void delay(unsigned count)
@@ -88,11 +89,11 @@ static int idle_keeps_owner(int owner_number, int paused)
     cp32_last_selected_fs = &fs; /* Retained from an earlier IRQ selection. */
     cp32_context_restore_gate = 1;
     k_reenter = 0;
-    delays = restores = 0;
+    delays = restores = console_polls = 0;
     restore_owner = restore_frame = NIL_PROC;
     running_stack = owner.p_reg.sp;
     if (setjmp(exit_idle) == 0) kernel_idle_loop();
-    if (restores != 0 || proc_ptr != &owner || current_proc != &owner ||
+    if (console_polls != 2 || restores != 0 || proc_ptr != &owner || current_proc != &owner ||
         running_stack != owner.p_reg.sp) {
         fprintf(stderr, "idle handoff regression: owner=%d restores=%u "
                 "restore owner=%d target=%d stack=%lx\n", owner_number, restores,

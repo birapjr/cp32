@@ -92,7 +92,11 @@ long min, max;		/* minimum and maximum values for the parameter */
 		case 'c':	radix =    0;	break;
 		default:	goto badenv;
 		}
+		errno = 0;
 		newpar = strtol(val, &end, radix);
+		/* Library errno is positive; kernel error constants are negative.
+		 * Reject any conversion error without relying on that sign. */
+		if (errno) break;
 
 		if (end == val) break;	/* not a number */
 		val = end;

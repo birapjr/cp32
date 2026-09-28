@@ -1,0 +1,25 @@
+# Selected verbatim lines from the user-supplied image-76 serial capture.
+# Intervening diagnostics omitted. Not a new local run.
+[FEATURE MINIX-FCNTL 76]1
+[TEST MINIX-FCNTL 76]
+[TTY line=tail boot/double]
+Double indirect line 02
+Double indirect line 03
+Double indirect line 04
+Double indirect line 05
+Double indirect line 06
+Double indirect line 07
+Double indirect line 08
+Double indirect line 09
+Double indirect line 10
+DOUBLE INDIRECT READ OK
+[TTY WRITE V48 bytes=252 ticks=148]
+[TTY line=ls boot/large]
+.
+..
+readme
+[TTY WRITE V48 bytes=17 ticks=106]
+[TTY line=disk]
+[RAM IPC V49 result=0]
+[TTY line=mm]
+[MM IPC V44 alloc-release-result=0]

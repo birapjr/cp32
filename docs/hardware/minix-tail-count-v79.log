@@ -1,0 +1,107 @@
+ => CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x000F3006
+vector word 6: 0x000ED106
+checking call0 stack                    ...
+stack bottom:  0x3FCD3690
+stack pointer: 0x3FCDB670
+stack top:     0x3FCDB690
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+init TASKS                              ...
+systemer irq start                      ...
+[FEATURE MINIX-TAIL-COUNT 79]1
+[KBD probe=1]
+[MM probe alloc=1 release=1 deny=1 zero=1 huge=1 adjacent=1 merge=1 owned=1 clear=1]
+[KBD init=1 stale=0 int=0 status=1 fifo=0]
+[RAMDISK capacity=65536]
+[LCD clear-done]
+[TTY user-ready nr=1 pc=0x40379C70 sp=0x3FCE5690 flags=0]
+[BOOT SYSTIMER V44 conf=0xC7000000 target=0x00000000 ena=0x00000001 raw=0x00000000]
+[TEST SCHEDULER 2]
+[CORE readyq=1]
+[CORE heldq=1]
+[CORE blockedowner=1]
+[CORE blockedframe=1]
+[CORE runtime=1]
+[CORE maps=1]
+[CORE flags=1]
+[CORE contexts=1]
+[CORE owners=1]
+[CORE ipcstate=1]
+[CORE ipcqueue=1]
+[CORE ipclinks=1]
+[CORE proctab=1]
+[CORE tasks=1]
+[CORE systask=1]
+[TEST MINIX-TAIL-COUNT 79]
+
+STABLE idle-entry                       ...
+[SCHED return-state owner=4294967287 flags=0 selected=4294967287 fs=4294967295]
+[RFE publish target=4294967287 current=4294967287 seq=1]
+[RFE target=4294967287 current=4294967287 seq=1 pc=0x4037F5F8 ps=0x00000100]
+[SYSTIMER V44 n=1 before now=0x00000000:0x092121C1 target=0x00000000:0x092120A3 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=1 after now=0x00000000:0x092123C6 target=0x00000000:0x0925347A conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x0925347A ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x4037F5F8 sp=0x3FCD8690 psout=0x00000100 frame=1]
+[IRQ V68 count=1 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=0]
+[IPC count=1 op=2 src=132]
+[IPC V44 op=2 n=1 owner=4294967287 blocked=1 next=0 frame=1]
+[MM_TASK]
+[SCHED fs-selected pc=0x40379C70 sp=0x3FCE5690 nest=0]
+[TTY user-entry]
+[IPC blocked-resume=1 owner=4294967287 result=0]
+[IPC V44 op=3 n=1 owner=1 blocked=1 next=4294967293 frame=1]
+[CLOCK_TASK]
+[IPC V44 op=1 n=1 owner=4294967287 blocked=0 next=4294967287 frame=1]
+[SYSTIMER V44 n=2 before now=0x00000000:0x09253C0C target=0x00000000:0x0925347A conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=2 after now=0x00000000:0x09253E12 target=0x00000000:0x09294EC5 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x09294EC5 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x40373F23 sp=0x3FCD8630 psout=0x00000100 frame=1]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[CTX kernel-running ticks=1352 heartbeat=1]
+[TTY READ V46 reply=22 n=1]
+[TTY line=tail -n 1 boot/double]
+[RAM V49 op=3 result=1024 n=1]
+[RAM V49 op=3 result=1024 n=2]
+[RAM V49 op=3 result=1024 n=3]
+[RAM V49 op=3 result=1024 n=4]
+[RAM V49 op=3 result=1024 n=5]
+[RAM V49 op=3 result=1024 n=6]
+[RAM V49 op=3 result=1024 n=7]
+[RAM V49 op=3 result=1024 n=8]
+DOUBLE INDIRECT READ OK
+[TTY WRITE V48 bytes=27 ticks=28]
+[SCHED fs-publish flags=0 pc=0x40373F23 sp=0x3FCE55A0 owner=1]
+[IRQ return-frame=1 owner=1]
+[CTX V44 FS-RETURN n=1 tick=1812 pc=0x40373F23 sp=0x3FCE55A0 a0=0x403722A9 a15=0x3FCE55A0 sar=0x0000000F lcount=0x00000000 frame=1]
+[CTX kernel-running ticks=2766 heartbeat=2]
+[TTY line=tail -n +2 readme]
+Read-only filesystem bring-up.
+[TTY WRITE V48 bytes=34 ticks=40]
+[CTX V44 FS-RETURN n=2 tick=3903 pc=0x40373F23 sp=0x3FCE55A0 a0=0x403722A9 a15=0x3FCE55A0 sar=0x00000003 lcount=0x00000000 frame=1]
+[CTX kernel-running ticks=4188 heartbeat=3]
+[IPC V44 op=2 n=5000 owner=4294967287 blocked=1 next=4294967289 frame=1]
+[RFE target=4294967287 current=4294967287 seq=5766 pc=0x40373F23 ps=0x00000110]
+[SYSTIMER V44 n=5000 before now=0x00000000:0x58B00AB9 target=0x00000000:0x58B00990 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=5000 after now=0x00000000:0x58B00CCA target=0x00000000:0x58B41D72 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x58B41D72 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x40373F23 sp=0x3FCD8630 psout=0x00000100 frame=1]
+[IRQ V68 count=5000 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=822]
+[CTX kernel-running ticks=5578 heartbeat=4]
+[TTY line=tail -c 3 boot/double]
+OK
+[TTY WRITE V48 bytes=6 ticks=209]
+[TTY line=tail -n 0 readme]
+[TTY WRITE V48 bytes=2 ticks=209]

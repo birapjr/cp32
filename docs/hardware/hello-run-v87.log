@@ -1,0 +1,25 @@
+Selected excerpts from the user-provided image-87 capture.
+User reports only the LCD exclamation glyph is incorrect.
+[FEATURE HELLO-RUN 87]1
+[TEST HELLO-RUN 87]
+[TTY line=cd boot]
+[TTY line=ls]
+.
+..
+readme
+indirect
+double
+large
+hello
+[TTY line=hello]
+Hello from a CP32 application!
+Hello exit=0
+[TTY WRITE V48 bytes=48 ticks=129]
+[TTY line=hello]
+Hello from a CP32 application!
+Hello exit=0
+[TTY WRITE V48 bytes=48 ticks=88]
+[TTY line=disk]
+[RAM IPC V49 result=0]
+[TTY line=mm]
+[MM IPC V44 alloc-release-result=0]

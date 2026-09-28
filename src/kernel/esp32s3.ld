@@ -145,6 +145,13 @@ SECTIONS {
         _stack_top = .;
     } > dram
 
+    /* main.c also initializes task/server SPs through bottom + 0x13000.
+       Keep the boot SP unchanged, but reserve the complete runtime extent. */
+    .task_stacks (NOLOAD) : ALIGN(16) {
+        . = _stack_bottom + 0x13000;
+        _runtime_stack_end = .;
+    } > dram
+
     /* --------------------------------------------------
        Discard C++ / ARM unwind tables
     -------------------------------------------------- */
@@ -162,8 +169,10 @@ SECTIONS {
         "ERROR: kernel code exceeds the 32 KiB CP32 loader window")
     ASSERT(_iram_ext_end <= 0x403E0000,
         "ERROR: extended IRAM/DIRAM overflow")
-    ASSERT(_stack_top <= 0x3FD00000,
-        "ERROR: DRAM overflow — reduce heap or stack")
+    /* The fixed application text alias starts at DRAM 0x3fce8000.
+       Reserve 16K code, 12K data and 4K stack above the kernel. */
+    ASSERT(_runtime_stack_end <= 0x3FCE8000,
+        "ERROR: kernel DRAM overlaps fixed application slot")
     ASSERT(_heap_end <= _stack_bottom,
         "ERROR: heap and stack overlap")
 }

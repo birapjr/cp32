@@ -25,6 +25,27 @@
 #define USBJ_WR_DONE          (1u << 0)
 #define USBJ_IN_EP_DATA_FREE  (1u << 1)
 
+/* ESP-IDF v5.5.3 ESP32-S3 usb_serial_jtag_reg.h: RAW +0x08,
+ * W1C +0x14, bit 8 records a host IN token for the serial endpoint.
+ * FIFO space alone does not establish that a host is reading. */
+#define USBJ_INT_RAW (*(volatile uint32_t*)(USB_SERIAL_JTAG_BASE + 0x08))
+#define USBJ_INT_CLR (*(volatile uint32_t*)(USB_SERIAL_JTAG_BASE + 0x14))
+#define USBJ_IN_TOKEN_REC (1u << 8)
+
+/* Cardputer-Adv G0 is active-low GPIO0. ESP-IDF v5.5.3 ESP32-S3
+ * gpio_reg.h / io_mux_reg.h: output-disable +0x28, input +0x3c,
+ * GPIO0 mux +0x04; pull-down bit 7, pull-up bit 8, input-enable bit 9,
+ * function bits 14:12 (GPIO function = 1). Only GPIO0 is changed. */
+#define CP32_GPIO_ENABLE_W1TC (*(volatile uint32_t*)0x60004028)
+#define CP32_GPIO_IN          (*(volatile uint32_t*)0x6000403C)
+#define CP32_GO_IO_MUX        (*(volatile uint32_t*)0x60009004)
+#define CP32_GO_MASK          (1u << 0)
+#define CP32_IO_MUX_PD        (1u << 7)
+#define CP32_IO_MUX_PU        (1u << 8)
+#define CP32_IO_MUX_IE        (1u << 9)
+#define CP32_IO_MUX_FUNC_MASK (7u << 12)
+#define CP32_IO_MUX_GPIO      (1u << 12)
+
 
 /* ── System clock ─────────────────────────────────────────────────────────────
  * These two registers select the CPU and system bus clock sources/dividers.
@@ -88,6 +109,9 @@
 
 /* RTC general options — not currently used but defined for completeness */
 #define RTC_OPTIONS0    (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x0000))
+/* rtc_cntl_reg.h / rtc_cntl_ll_reset_system(): full software system reset,
+ * not a jump back into C with live peripherals and stale initialized data. */
+#define RTC_SW_SYS_RST (1u << 31)
 
 /* RTC WDT registers */
 #define RTC_WDTCONFIG0  (*(volatile uint32_t*)(RTC_CNTL_BASE + 0x0098))

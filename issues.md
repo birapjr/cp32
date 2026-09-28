@@ -1245,3 +1245,578 @@ Identity: [FEATURE MINIX-FSTAT 73]1 and [TEST MINIX-FSTAT 73] immediately before
 idle. Hardware pending; no flash performed. Run tail readme, tail boot/indirect,
 tail boot/double, cmp readme boot/large/readme, disk, tail boot/double and mm.
 Expect existing output; the normal tail path now obtains metadata by descriptor.
+
+## G0 standalone console and USB development restart — image 74
+
+[x] Compare MINIX 2.0 cstart and console putk: startup prepares main and the
+local console does not depend on a host. CP32 retains the same startup,
+process/stack initialization, Cardputer TTY and shell paths for both modes.
+ESP32-S3-specific selection happens before the first diagnostic print.
+
+[x] Implement the boot gate accepting either a fresh USB serial EP1 IN token or
+three consecutive low GPIO0 samples. Configure only GPIO0 as a pulled-up
+input; discard loader-era IN status. An empty FIFO or USB SOF alone cannot
+select development mode. G0 selects a latched standalone mode in which
+USB diagnostics return without touching/waiting on the FIFO. Development
+output pays at most one bounded wait on a stalled FIFO and resumes when it
+drains. Hardware USB reset/flashing controls and USB pins stay unchanged.
+
+[x] Implement idle-path monitoring for a new USB serial reader in standalone mode.
+After G0 is released, write RTC OPTIONS0 SW_SYS_RST with interrupts locked:
+the ROM reloads the image and CP32 reinitializes state from its entry point.
+This is a system reset, not a call to main. Register definitions are based on
+Espressif ESP-IDF v5.5.3 ESP32-S3 usb_serial_jtag_reg.h, gpio_reg.h,
+io_mux_reg.h, rtc_cntl_reg.h and rtc_cntl_ll_reset_system; no IDF runtime/API
+is linked. Detection means host serial endpoint reads, not cable voltage.
+
+[x] Clean cross-build, all 25 host test scripts, image-layout and whitespace
+checks pass. New production-serial.c MMIO simulation covers stale events,
+FIFO-ready-without-reader, debounce, simultaneous USB/G0, watchdog service,
+10,000 standalone logging iterations, timeout suppression/recovery, G0-held
+reset deferral, and reset requests. Idle tests require polling without
+changing process ownership. ELF sections/segments and reset disassembly
+checked: _iram_end=0x40374314, _iram_ext_end=0x403842ec,
+_stack_top=0x3fcda920. Boot gate and console poll live in extended IRAM;
+reset writes 0x80000000 to 0x60008000 after lock().
+
+Identity: [BOOT V74 console=usb], [FEATURE GO-CONSOLE 74]1 and
+[TEST GO-CONSOLE 74] immediately before idle. Flashed with make flash and
+verified by esptool hash. Initial USB capture showed a live heartbeat
+(ticks=1106, heartbeat=1); it missed early boot output and does not validate
+the new reset path. Subsequent user feedback confirms G0 startup/reset works
+as expected. The supplied USB capture identifies [FEATURE GO-CONSOLE 74]1
+and [TEST GO-CONSOLE 74], valid data/BSS sentinels and aligned stack, all CORE
+checks equal to 1, keyboard initialization, repeated ls output, and
+[MM IPC V44 alloc-release-result=0]. This is user-reported G0/reset validation
+plus serial evidence of USB startup and shell operation; the capture alone
+does not identify the reset cause. Held-G0 reset deferral, charge-only behavior
+and the cat readme/sys test commands remain host-tested or undocumented on
+hardware, not independently confirmed by this log.
+
+Hardware procedure: disconnect USB, power-cycle, press/release G0 after
+power-on, run ls, cat readme and sys on the keyboard, then reconnect USB and
+open a reader. Expect a full fresh boot with image-74 markers, a reset shell
+and fresh uptime. A held G0 must delay the software reset until release.
+
+## Read-only directory descriptors — image 75
+
+[x] Compare MINIX fs/open.c:common_open, fs/read.c:read_write and libc
+_opendir/_readdir. MINIX permits read-only directory opens and shares byte
+offsets through filp references. CP32 now supports directories in its bounded
+single-client descriptor table alongside regular files. No new user syscall
+ABI or full libc DIR stream is claimed. Xtensa still uses explicit endian
+byte decoding, bounded stack objects and internal extended IRAM.
+
+[x] Reuse validated directory inode/mapping state for descriptor read, seek,
+fstat and dup lifetime. cp32_fd_readdir shares the byte offset, rejects
+unaligned positions and regular files, skips deleted entries and preserves
+offsets/outputs on errors. Raw directory reads reject missing indirect data
+zones instead of returning sparse zeros. Existing single-indirect directory
+and console-safe filename limits remain. The standalone file-handle API
+keeps its regular-file-only contract.
+
+[x] Route normal shell ls through open/readdir/close. cat, tail and cmp use
+a regular-file check and close rejected descriptors. Existing command output
+is preserved; no manual probe or extra diagnostic path was introduced.
+
+[x] Clean cross-build, all 25 host scripts, ELF/image and whitespace checks
+pass. New tests exercise both byte orders, shared and independent directory
+offsets, fstat, raw reads and unaligned iterator rejection, seek/EOF, deleted
+entries, malformed entries, short I/O, single-indirect reads and hole rejection,
+close/reuse, plus repeated shell ls/cat/tail/cmp success/error cleanup.
+_iram_end=0x40374314, _iram_ext_end=0x40384648, _stack_top=0x3fcdaca0.
+cp32_fd_open=0x40381cdc and cp32_fd_readdir=0x40382050 are in extended IRAM,
+as are the shell ls and regular-file open helper, with literals/callees
+resolved to internal SRAM. The low IRAM endpoint is unchanged from image 74.
+
+[x] User-flashed image 75 hardware capture confirms markers
+[FEATURE MINIX-DIRFD 75]1 and [TEST MINIX-DIRFD 75], valid sentinels/aligned
+stack, all CORE checks equal to 1, root/boot listings, cat readme, cd boot
+followed by another listing, double-indirect tail, MM alloc/release result=0
+and RAM disk result=0. Selected serial evidence is saved in
+docs/hardware/minix-dirfd-v75.log. No exception appears in the supplied log.
+
+[ ] Remaining image-75 hardware coverage: ls boot/large, directory error
+cases, cmp and prolonged descriptor reuse are not shown in this capture.
+They remain host-tested. G0/USB restart was not retested in this capture.
+
+## MINIX descriptor controls / fcntl — image 76
+
+[x] Port MINIX misc.c:do_fcntl / filedes.c:get_fd(start) semantics for
+F_DUPFD, F_GETFD, F_SETFD, F_GETFL and F_SETFL. Constants match MINIX 2.0
+include/fcntl.h with CP32 prefixes. Table mutation stays in CP32 filedes.c;
+misc.c:cp32_fd_dup now uses F_DUPFD with minimum 0, as MINIX libc dup does.
+The normal tail command reaches this path through its owned scan duplicate.
+No manual probe or new shell command is needed.
+
+[x] Descriptor flags are separate from shared open-description status flags.
+F_DUPFD selects the lowest free descriptor at/above the supplied minimum and
+never replaces an occupied descriptor. Duplicates share offsets/status and
+start with CLOEXEC clear; dup2 self preserves flags, replacement clears them.
+Open/close/reuse reset descriptor flags, and a new description starts O_RDONLY.
+F_SETFL accepts only APPEND/NONBLOCK, preserving read-only access. These flags
+are metadata for the currently supported regular files/directories; no write,
+pipe, blocking-device or executable-loader functionality is claimed. CLOEXEC
+is stored only: no exec lifecycle exists to consume it. Record-lock requests
+explicitly report unsupported; unknown commands and bad arguments are rejected.
+
+[x] Preserve the architecture-independent MINIX distinction between per-fd
+and per-filp state using bounded static arrays, without changing existing
+file/message/process layouts. Code and literals remain in internal SRAM.
+Clean warning-free cross-build, all 25 host scripts and ELF/image/whitespace
+checks pass. Tests cover minimum descriptor bounds and occupied slots,
+high-bound/full-table exhaustion, shared vs independent flags, ignored flag
+bits, dup/dup2 self and replacement, shared seek offsets, close/reuse over
+12 cycles for regular files and directories, and invalid request/fd precedence.
+Existing shell/MEM tests exercise tail through the new production F_DUPFD path.
+_iram_end=0x40374314, _iram_ext_end=0x40384778, _stack_top=0x3fcdae30.
+cp32_fd_fcntl=0x4038229c, cp32_fd_dup=0x40381c50, and the tail caller are in
+extended IRAM. The low IRAM endpoint is unchanged.
+
+[x] User-flashed image-76 serial capture confirms markers
+[FEATURE MINIX-FCNTL 76]1 and [TEST MINIX-FCNTL 76], valid data/BSS sentinels,
+aligned stack and all CORE checks equal to 1. tail boot/double prints the
+expected last ten lines ending DOUBLE INDIRECT READ OK through the production
+F_DUPFD path. ls boot/large lists dot, dot-dot and readme through the indirect
+directory path. RAM disk and MM alloc/release both report result=0. No exception
+appears in the supplied capture. Selected evidence is saved in
+docs/hardware/minix-fcntl-v76.log.
+
+[ ] Remaining hardware coverage: repeated tail/descriptor reuse, other tail
+paths, cmp and flag operations beyond the normal F_DUPFD path are not shown
+in this capture; their coverage remains host-side. No exec or record-locking
+support is claimed. Flashing remains reserved for the user.
+
+## MINIX directory-stream library — image 77
+
+[x] Port the responsibilities of MINIX lib/posix/_opendir.c, _readdir.c,
+_closedir.c, _rewinddir.c and lib/other/_seekdir.c, telldir.c into matching
+CP32 library directories. cp32_opendir/readdir/closedir own the descriptor;
+seekdir/telldir/rewinddir manage its logical byte position. Opening validates
+the descriptor with fstat, sets CLOEXEC and NONBLOCK through fcntl, and closes
+on every failure before publishing the stream. The flags do not add an exec
+lifecycle or blocking-device support.
+
+[x] Adapt MINIX's malloc-backed buffered DIR to a caller-owned, explicitly
+initialized CP32 stream with no read-ahead allocation. Valid telldir positions
+are aligned byte offsets; invalid/overflowing seeks preserve the position.
+The supported MINIX V2 fixed 14-byte names still use FS endian/allocation/name
+validation. FLEX directories and the POSIX DIR/errno/user-syscall ABI remain
+outside this change. A stream must not be copied or its owned fd manipulated
+externally. Error/EOF leaves the caller's entry unchanged; successful close
+invalidates the stream, so repeated close cannot close a reused descriptor.
+
+[x] Move normal shell ls onto opendir/readdir/closedir. Directory flags now
+run through the production fcntl path as well as host tests. Preserve listing
+text, failure reporting and all prior filesystem/keyboard/USB functionality.
+Add library sources and header dependencies to the existing bare-metal Makefile;
+no runtime migration, process/frame layout change or diagnostic probe.
+
+[x] Clean warning-free cross-build, all 26 host test scripts, ELF/image and
+whitespace checks pass. The new tests compile the production library and FS,
+cover both byte orders, two independent streams, flags, full-table exhaustion,
+failed/repeated opens, double-close with fd reuse, EOF/output preservation,
+seek/tell/rewind including invalid offsets, and indirect entries after deleted
+slots. Inject short I/O at every disk read in opendir (including fstat) and
+prove all eight descriptors remain available afterward. Existing shell/MEM
+regressions test production ls and error cleanup on the new stream path.
+_iram_end=0x40374314, _iram_ext_end=0x403849fc, _stack_top=0x3fcdb0d0.
+All six library routines and shell ls are in extended IRAM with internal-SRAM
+literals/callees; low IRAM remains unchanged. opendir=0x403846e0,
+readdir=0x403847d8, closedir=0x40384854.
+
+[x] User-flashed image-77 hardware capture saved verbatim in
+docs/hardware/minix-dirstream-v77.log. Markers [FEATURE MINIX-DIRSTREAM 77]1
+and [TEST MINIX-DIRSTREAM 77] identify the image. Data/BSS sentinels and stack
+alignment pass, and all CORE checks report 1. Root ls and ls boot/large return
+the expected entries through the stream library. ls readme reports the expected
+directory error 8. Subsequent tail boot/double prints the last ten lines ending
+DOUBLE INDIRECT READ OK; disk and MM checks both return 0. IRQ count reaches
+5000 with unknown=0 and clock-msgs=713. No exception appears in this capture.
+
+[ ] Remaining hardware coverage: repeated listings/descriptor exhaustion,
+ls missing and seek/tell/rewind are not exercised in this capture. They remain
+host-tested only. Passing commands after ls readme show continued operation,
+not proof of leak-free prolonged reuse. Flashing remains the user's responsibility.
+
+## Range-safe numeric conversion — image 78
+
+[x] Compare MINIX lib/ansi/strtol.c and lib/other/errno.c. Complete the CP32
+strtol range/error behavior and add its already-declared strtoul counterpart.
+Both use a shared unsigned cutoff/remainder parser for bases 2..36 and base-0
+inference. Preserve ASCII whitespace/sign handling, stop at the first invalid
+digit, continue consuming digits after overflow, saturate at the appropriate
+signed/unsigned limit and report ERANGE. Invalid bases report EINVAL. No-digit
+conversion leaves endptr at the original input. A hexadecimal prefix requires
+a following hex digit; bare 0x consumes only its valid leading zero. This
+intentionally avoids the reference implementation's permissive bare-prefix
+edge behavior and signed-overflow assumptions.
+
+[x] Preserve ESP32-S3/MINIX 32-bit long limits using the project limits header,
+including during 64-bit host tests. Negative unsigned conversions wrap at
+ULONG_MAX; LONG_MIN is returned without overflowing signed negation. Successful
+conversion preserves errno. Add the freestanding errno storage declared by the
+existing header. This is shared kernel-library state for current boot-time
+callers, not per-process/TLS errno or a completed user libc ABI. No hosted
+ctype, allocation, IDF API or hardware behavior is introduced.
+
+[x] Harden the existing kernel env_parse path: clear errno before conversion
+and reject conversion errors before publishing a parameter, even when its
+allowed maximum is LONG_MAX. Check errno as nonzero because library errno
+values are positive while kernel error constants use MINIX's negative convention.
+The environment-parser tests now link CP32's real strtol instead of the host's.
+No manual runtime probe or shell command was added.
+
+[x] Clean warning-free cross-build, all 26 host scripts, ELF/image and
+whitespace checks pass. Conversion tests run with undefined-behavior sanitizer
+and cover signed/unsigned boundaries in all bases 2..36, over/underflow,
+leading zeros, long overflow strings, whitespace/sign/no-digit cases, invalid
+bases, incomplete hex prefixes, endptr and stale errno. Kernel tests prove
+boundary values work and overflow cannot be accepted or overwrite the result.
+_iram_end=0x403741e4, _iram_ext_end=0x40384c78, _stack_top=0x3fcdb350.
+strtol=0x4038494c, strtoul=0x403849a8 and their helpers are in extended IRAM;
+errno is in BSS at 0x3fcb3344. Low IRAM shrinks because strtol moves into the
+ordinary-runtime region; all literals/callees remain internal SRAM.
+
+[x] User-flashed image-78 hardware regression passes in the supplied capture.
+[FEATURE MINIX-STRTOL 78]1 and [TEST MINIX-STRTOL 78] identify the image.
+Data/BSS sentinels and stack alignment pass; all CORE checks report 1.
+ls boot/large returns the expected entries, tail boot/double prints the last
+ten lines ending DOUBLE INDIRECT READ OK, and disk/MM both return result=0.
+No exception appears. CLOCK_TASK text is split by interrupt diagnostics;
+subsequent CLOCK receipt markers show continued operation. Selected evidence
+is saved in docs/hardware/minix-strtol-v78.log.
+
+Numeric conversion boundaries and environment error handling remain host-tested
+only; these commands validate the image regression, not those conversion paths.
+Flashing remains reserved for the user.
+
+## MINIX tail line/byte counts — image 79
+
+[x] Port regular-file count semantics from MINIX commands/simple/tail.c:
+-n count selects lines, -c count selects bytes; unsigned/negative counts
+select the end and +N selects the start (1-based, historical +0 equals +1).
+Unsigned/negative zero selects EOF. The existing bare filename defaults to
+the last ten lines. Support -- before an option-like filename. Reject malformed
+counts, unsupported options and signed-long overflow without opening a file.
+Follow mode, standard input, obsolete syntax and a separate user executable
+remain outside this kernel-linked command implementation.
+
+[x] Use the production strtol from image 78, checking errno without depending
+on the kernel/library error-sign convention. Handle LONG_MIN magnitude without
+signed overflow. Use bounded 64-byte forward/backward reads and direct seeks
+for byte counts; clamp byte positions at EOF. Preserve the fstat/dup/fcntl and
+shared-offset scan path, descriptor cleanup, and normal output formatting.
+Xtensa freestanding constraints require no stdio stream, dynamic line buffer,
+large stack object or hosted utility runtime. Existing no-option behavior is
+unchanged, including final-newline handling.
+
+[x] Clean warning-free cross-build, all 26 host scripts, ELF/image and
+whitespace checks pass. Shell/MEM tests link the actual target-width CP32
+strtol/errno and exercise signed line/byte counts, +0/+N, zero, counts beyond
+EOF, LONG_MIN/LONG_MAX, malformed/overflow counts, --, whitespace, default
+behavior, missing-file/directory errors, and unterminated lines spanning
+64-byte windows. Repeated invalid options and fault injection at every read
+in the forward-line path are followed by successful commands to check cleanup.
+_iram_end=0x403741e4, _iram_ext_end=0x40384f90, _stack_top=0x3fcdb690.
+Tail parsing/scanning and strtol remain in extended IRAM; the low IRAM
+endpoint is unchanged. No diagnostic-only trigger or probe was introduced.
+
+[x] User-flashed image 79 confirms tail -n 1 boot/double, tail -n +2
+readme, tail -c 3 boot/double and tail -n 0 readme return the expected
+output. Startup and CORE checks pass, with no exception in the capture.
+Full evidence: docs/hardware/minix-tail-count-v79.log. Overflow rejection
+and the remaining count boundaries are host-tested only. The user reports
+an incorrect LCD plus glyph; serial input and +2 parsing work correctly.
+
+## LCD plus glyph — image 80
+
+[x] Add the missing + bitmap to glyph_scaled; previously it used the
+fallback pattern. MINIX console.c out_char stores printable character codes
+for the PC display font; CP32 rasterizes characters on the SPI LCD instead.
+Preserve the character byte, cell size, cursor movement and batched painting.
+The existing font command now includes a plus sample.
+
+[x] Add an independent pixel-model regression for the cross, black margins
+and row gap. Clean warning-free build and all 26 host test scripts pass;
+ELF sections and segments inspected. _iram_end=0x40374208,
+_iram_ext_end=0x40384f9c, _stack_top=0x3fcdb690.
+
+[x] User-flashed image 80 verified on 2026-09-28: user confirms the LCD
+plus is correct; font prints all samples and tail -n +2 readme prints the
+expected second line. Startup and all CORE checks pass; no exception appears.
+Selected evidence: docs/hardware/lcd-plus-v80.log.
+
+## MINIX head — image 81
+
+[x] Port first-line selection from minix-2.0.0/src/commands/simple/head.c:
+default ten lines and historical -N positive decimal count. Also accept -n N
+and -- for consistency with the shell's tail interface. Reject missing,
+zero, signed, malformed and overflowing counts before opening files.
+Only one regular file is supported; stdin, multiple-file headers and a
+standalone user executable remain unported.
+
+[x] Reuse descriptor ownership and the cat/tail display path with a head
+mode. Stop output at the requested newline or EOF; never issue another read
+after reaching the limit. Existing 64-byte reads may read ahead within the
+last chunk, but the command closes its private descriptor. Preserve bounded
+stack use, error cleanup and existing text sanitization/CRLF formatting.
+Unlike MINIX's stdio implementation, Xtensa uses freestanding kernel-linked
+helpers, without FILE streams, allocation or a hosted runtime.
+
+[x] Clean warning-free cross-build and all 26 host test scripts pass. Tests
+cover default ten-line cutoff, both count syntaxes, whitespace/--, long
+lines across 64-byte reads, unterminated and empty files, counts beyond EOF,
+invalid/overflow counts, directory/path errors, repeated calls and injected
+read failures followed by successful commands. Existing cat/tail tests pass.
+ELF sections/segments inspected: _iram_end=0x40374208,
+_iram_ext_end=0x403851fc, _stack_top=0x3fcdb920;
+cp32_shell_head=0x40378ed8 in extended IRAM. Low IRAM endpoint unchanged.
+
+[x] User-flashed image 81 passes head readme, head -1 readme and
+head -n 2 readme with expected output. Startup/CORE checks pass; IRQ count
+5000 reports unknown=0 and clock-msgs=777, with no exception in the capture.
+Full evidence: docs/hardware/minix-head-v81.log. Default ten-line cutoff
+on longer files, invalid options and error cleanup remain host-tested only.
+
+## MINIX wc — image 82
+
+[x] Adapt minix-2.0.0/src/commands/simple/wc.c to the existing shell:
+wc [-lwc] [--] filename. Default output is lines, words, bytes and pathname;
+combined/repeated flags select columns in that fixed order. Compact spacing
+suits the LCD. One regular file only; stdin, multiple-file totals, separate
+option groups and a standalone user executable are not implemented.
+
+[x] Use bounded 64-byte descriptor reads, retaining word state between
+chunks. Count raw bytes before display sanitization, ASCII whitespace word
+boundaries, and LF lines. Intentional corrections to the MINIX 2 reference:
+count a final word without trailing whitespace, and do not count form feed
+as a line. All counters are unsigned 32-bit and bounded by file size.
+Xtensa uses no hosted stdio, dynamic allocation or large automatic buffer.
+Close the descriptor on all read outcomes; publish no partial counts on error.
+
+[x] Clean warning-free build and all 26 host scripts pass, including tests
+for option combinations/order, repeated flags, --, empty files, missing paths,
+directories, malformed options, long words spanning chunks, unterminated
+words, all six whitespace bytes, NUL/high bytes and injected read failures
+followed by successful commands. ELF sections/segments inspected:
+_iram_end=0x40374208, _iram_ext_end=0x40385598, _stack_top=0x3fcdbd00.
+cp32_shell_wc=0x40378c9c is in extended IRAM; low IRAM endpoint unchanged.
+
+[x] User image-82 capture confirms wc readme = 2 8 61, -l = 2,
+-wc = 8 61, boot/double = 11 lines and boot/indirect = 225 lines. ls boot
+also succeeds. IRQ 5000 reports unknown=0, clock-msgs=825; no exception.
+Full capture: docs/hardware/minix-wc-v82.log. Error cases remain host-tested.
+
+## Application execution foundation — image 83
+
+[x] Audit application prerequisites against MINIX mm/exec.c and crtso.s.
+Record the ordered loader/runtime/lifecycle work in docs/application-execution.md.
+MM has allocation/release only; commands still execute inside the kernel.
+
+[x] Add src/mm/exec.c stack staging helper: argc, argv NULL, envp NULL,
+32-bit little-endian relocated string pointers, 16-byte aligned SP, up to
+32 combined vector entries and a 4096-byte staging region. Bounded scans,
+address-overflow checks and a validation pass precede any writes. Trusted
+MM-owned vectors only, with documented non-aliasing requirements. This adapts
+MINIX stack pointer patching to Xtensa; it neither changes process state nor
+loads executable code. No diagnostic trigger or fake application was added.
+
+[x] New tests/mm host regression covers layout, relocation, empty vectors,
+alignment, malformed/null/oversized inputs, address wrap, unchanged buffers
+on error and writes restricted to the selected stack region. All 27 scripts
+and a clean cross-build pass. ELF sections/segments checked: _iram_end=0x40374208,
+_iram_ext_end=0x40385870, _stack_top=0x3fcdbfd0;
+cp32_exec_stack=0x40384f80 in extended IRAM.
+
+[ ] Execution integration and hardware validation remain pending. Identity
+[FEATURE EXEC-STACK 83]1 / [TEST EXEC-STACK 83] distinguishes this build.
+There is no new application command yet; boot and existing shell commands
+can provide regression evidence only. The stack builder is host-tested,
+not exercised by production execution. Flashing remains with the user.
+
+## Hello executable contract — image 84
+
+[x] Adapt MINIX mm/exec.c read_header responsibility to fixed Xtensa ELF32.
+Add MM image validator with exact-read callback and unchanged output on failure.
+Reject wrong architecture/format, malformed program headers, invalid flags,
+size/address/offset overflow, overlapping file payloads and invalid entry.
+No target memory is written and no process is made runnable.
+
+[x] Define one application slot using the existing D/IRAM mapping: RX code
+403d8000..403dc000 (data alias 3fce8000..3fcec000), data/BSS
+3fcec000..3fcef000, stack 3fcef000..3fcf0000. Kernel linker now asserts
+_stack_top <= 3fce8000. Runtime alias copying/execution remain unverified.
+
+[x] Add separate make hello target, call0 crt0 and hello C artifact. Entry
+uses the prior argc/argv/envp stack and a versioned trusted write/exit callback
+table. No kernel bridge or application launch exists yet. hello.elf has no
+undefined symbols; entry 403d8000, RX file/memory 156 bytes, RW file 32 bytes,
+RW memory 36 bytes (4 bytes BSS). Cross-disassembly confirms call0 entry flow.
+
+[x] Clean kernel/application build and all 28 test scripts pass. Validator
+runs against the actual hello ELF plus malformed/truncated/overflowing inputs
+and injected reader failures; host hello verifies greeting and initial BSS.
+ELF section/segment checks: _iram_end=40374208, _iram_ext_end=40385c80,
+_stack_top=3fcdc3e0; cp32_image_read=40385268 in extended IRAM.
+
+[ ] Hardware execution pending. Identity [FEATURE EXEC-IMAGE 84]1 and
+[TEST EXEC-IMAGE 84] immediately before idle. No new shell command; existing
+commands validate kernel regression only. Images 83/84 have no supplied
+hardware execution evidence. Built but not flashed. Next integrate segment
+copy/zeroing, package hello, and implement process startup/write/exit lifecycle.
+
+## Segment staging and runtime stack reservation — image 85
+
+[x] User image-84 capture confirms boot, all CORE checks, ls and ls boot.
+hello reports unknown, as expected before command/lifecycle integration.
+No exception appears. This is kernel regression evidence, not application
+execution evidence; the image validator was not invoked on hardware.
+
+[x] Implement cp32_image_load as the MINIX exec load_seg/BSS-zeroing stage.
+Validate the full metadata first, then clear and fill inactive 16K code and
+12K data buffers using bounded 64-byte reads. A payload read failure clears
+both regions; output metadata publishes only on success. Caller must own an
+inactive slot and stable, nonaliasing source. No target addresses, instruction
+synchronization or runnable process state are changed by this helper.
+
+[x] Correct image-84's incomplete kernel/application overlap assertion.
+main initializes task/server stacks beyond the 32K boot stack, through
+_stack_bottom + 0x13000 (LOW_USER=2). Reserve those bytes in .task_stacks,
+keep the boot SP unchanged, and assert _runtime_stack_end <= 0x3fce8000.
+Configuration guards require reservation review if process counts increase.
+The application slot has never been written by the production path.
+
+[x] Clean kernel/hello builds and all 28 host scripts pass. Real hello ELF
+and synthetic images are staged; verify payload bytes, zero BSS/tails,
+guard bytes, unchanged output on failure, each header/payload read failure,
+clearing after partial copy and successful reload. ELF inspection:
+_iram_end=40374208, _iram_ext_end=40385df4, _stack_top=3fcdc550,
+_runtime_stack_end=3fce7550, cp32_image_load=403855fc. Remaining gap to
+application code's data alias: 0xab0 bytes. Packaging must account for this
+small margin; the linker now rejects overlap with runtime stacks.
+
+[ ] Hardware validation pending for image 85, identified by
+[FEATURE EXEC-LOAD 85]1 and [TEST EXEC-LOAD 85]. Built but not flashed.
+No hello command yet: next implement filesystem packaging, inactive process
+ownership, instruction synchronization, write/exit bridges and return to shell.
+The load helper is host-tested only, not called by the production MM loop.
+
+## Packaged hello file — image 86
+
+[x] Package actual cross-linked hello.elf at /boot/hello, inode 7, mode
+0100555, direct zones beginning at 30. Retain existing filesystem entries,
+indirect fixtures and reserved final diagnostic sector. Reject empty or
+larger-than-seven-zone payloads. The default firmware make target now builds
+hello before generating the disk, avoiding stale or absent application bytes.
+
+[x] Link a compact stripped ELF with four-byte segment alignment (-n/-s),
+validated by the same production image parser. Current file size is 916 bytes;
+entry remains 403d8000, with 156 code bytes, 32 initialized data and 4 BSS.
+Use hello.map for symbols; kernel debug information remains enabled.
+
+[x] Encode boot disk as packed nonzero runs plus offset/length records.
+Provisioning resets the RAM disk then reconstructs runs. This preserves the
+exact disk bytes while removing zero gaps from kernel rodata. No heap size
+reduction or application-slot movement. MINIX directory/inode allocation
+rules follow the existing original V2 image generator.
+
+[x] Clean build and all 29 host scripts pass. New integration test exercises
+actual generated provisioning, normal FS descriptor reads/stat, byte-for-byte
+ELF comparison and image loading/BSS zeroing. Sparse round trips cover no
+application, one-byte and seven-zone payloads, plus oversized rejection.
+Real ELF integration requires the cross-built artifact; firmware build creates
+it automatically. _iram_end=40374208, _iram_ext_end=40385e44,
+_stack_top=3fcd7c40, _runtime_stack_end=3fce2c40. Kernel-to-application
+margin is now 0x53c0 bytes (21440), without reducing the heap.
+
+[ ] Hardware pending: [FEATURE HELLO-FILE 86]1 / [TEST HELLO-FILE 86].
+Built but not flashed. Run ls boot (now includes hello), stat boot/hello
+(916 bytes, regular inode 7), wc -c boot/hello (916 boot/hello), then disk
+and mm. hello is still not a launch command. Remaining next step: process
+ownership/context installation, runtime instruction alias copy/synchronization,
+write/exit bridge and shell wait/resume. No application execution is claimed.
+
+## First foreground hello execution — image 87
+
+[x] Image-86 hardware confirms /boot/hello listing, inode 7 size 916 and
+wc byte count 916. Startup/CORE checks pass; no exception appears. Selected
+evidence: docs/hardware/hello-file-v86.log.
+
+[x] Wire hello shell command to load /boot/hello through descriptors, copy
+segments into the reserved SRAM slot, zero stack, and build argc/argv/envp
+using only its top 512 bytes. Preserve >3K for C, IPC and interrupt frames.
+Use memw/isync before publishing the initial call0 context. Initialize all
+registers/bookkeeping, PC, aligned SP/a1/a15, PS=0x100 and service pointer.
+Application endpoint LOW_USER+1 is dedicated and must be free before launch.
+
+[x] Trusted write/exit callbacks use SENDREC to the waiting FS shell. FS
+bounds output to 256 bytes in the application data/stack region, formats it
+through normal serial/TTY output, and replies. Exit leaves the child blocked
+waiting for a reply; FS verifies that state, reaps the descriptor without
+resuming it, resets its billing target and returns to the prompt. Single
+foreground application only, no protected user ABI, general exec, fork, or
+application-fault containment. The next launch reloads and zeroes the slot.
+
+[x] Reference behavior: MINIX mm/exec.c load_seg/initial stack publication
+and exit/parent-wait responsibility adapted to the existing CP32 scheduler
+and IPC. ESP32-S3 SRAM aliases follow existing linker policy, corroborated by
+Espressif soc/esp32s3 memory_layout.c (same-order I/D buses). No ESP-IDF runtime
+introduced. Actual instruction execution/synchronization still needs hardware.
+
+[x] Clean build and all 30 test scripts pass. New production lifecycle model
+covers fresh-context publication, 20 launches/reaps, bounded output and invalid
+requests, load/stack failures, parent ownership and billing reset. ELF/loader,
+BSS/argument tests and existing scheduler/IPC suites also pass. Model stubs
+hardware boundaries and IPC delivery; it does not execute Xtensa instructions.
+_iram_end=40374208, _iram_ext_end=403863c0, _runtime_stack_end=3fce3280;
+cp32_application_run=40378048; services remain in internal SRAM.
+
+[x] Image 87 hardware: two hello launches print the greeting and exit=0,
+with the shell accepting subsequent commands; disk and MM return result=0.
+Startup and all CORE checks pass. This confirms the first trusted application
+load/start/write/exit path and repeated launch on this hardware. Selected
+capture: docs/hardware/hello-run-v87.log. The user reports the missing LCD !
+glyph; serial output is correct. Fault isolation/general exec remain absent.
+
+## LCD exclamation glyph — image 88
+
+[x] Add ! to glyph_scaled and the existing font command. MINIX console.c
+out_char passes printable character codes to the PC font; CP32 must render
+them in software on the LCD. Preserve character bytes, text-cell size,
+cursor/batching behavior and application output. Only the missing bitmap
+previously fell through to the fallback pattern.
+
+[x] Pixel-model regression checks the vertical stem, separated dot, margins
+and row gap. Clean warning-free build, all 30 test scripts and ELF layout
+checks pass. _iram_end=4037422c, _iram_ext_end=403863cc,
+_stack_top=3fcd8290, _runtime_stack_end=3fce3290.
+
+[ ] LCD appearance pending: [FEATURE LCD-BANG 88]1 and [TEST LCD-BANG 88]
+immediately before idle. Built but not flashed. Run font or hello and check !.
+
+## Application arguments — image 89
+
+[x] Image-88 capture shows font samples, cd boot and successful hello/exit=0.
+Full capture: docs/hardware/lcd-bang-v88.log. LCD ! appearance is not provable
+from serial alone; no explicit visual confirmation was supplied.
+
+[x] Pass shell arguments through the production application API and existing
+MINIX-style argc/argv/envp stack builder. Replace the hardcoded one-element
+argv with caller-owned trusted vectors, copied before runnable publication.
+Preserve Xtensa crt0's register/stack contract and the 512-byte argument budget.
+Shell accepts up to eight whitespace-separated arguments within its existing
+63-byte line limit. No quoting/expansion. hello prints each received argument
+via the same bounded IPC write service; plain hello preserves its greeting.
+
+[x] Clean build and all 30 test scripts pass, including new shell parsing
+coverage for spaces/tabs, no args, maximum/too-many args, overlong input,
+load error/descriptor cleanup. Lifecycle tests verify passed vector contents;
+hello tests verify complete argument output. Prior stack relocation and ELF
+provisioning/loading tests continue to pass. hello.elf is now 1184 bytes.
+ELF endpoints: _iram_end=4037422c, _iram_ext_end=40386564,
+_runtime_stack_end=3fce3590, all below application reservations.
+
+[ ] Hardware pending: [FEATURE HELLO-ARGV 89]1 / [TEST HELLO-ARGV 89].
+Built but not flashed. Try hello one two: greeting, arg: one, arg: two,
+Hello exit=0. Then hello with no arguments and disk/mm regression checks.

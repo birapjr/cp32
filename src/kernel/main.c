@@ -12,6 +12,10 @@
 #include <minix/com.h>
 
 extern char _stack_bottom[];
+/* esp32s3.ld reserves runtime stacks through bottom + 0x13000. */
+#if LOW_USER > 2 || NR_TASKS > 12
+#error Update runtime stack reservation for the configured process count
+#endif
 extern void systimer_irq_start(void);
 extern void clock_task(void);
 extern void sys_task(void);
@@ -80,6 +84,7 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
 
   for (;;) {
     wdt_feed_all();
+    cp32_console_poll();
     delay(100000);
     /* Only the IRQ/syscall return boundary may restore another task. This
      * loop also runs under LOW_USER: replaying a previous FS selection here
@@ -192,7 +197,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE MINIX-FSTAT 73]");
+  usbj_print("[FEATURE HELLO-ARGV 89]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -312,7 +317,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST MINIX-FSTAT 73]\r\n");
+  usbj_print("[TEST HELLO-ARGV 89]\r\n");
   kernel_idle_loop();
 }
 
