@@ -35,5 +35,21 @@ int main(void) {
   const char *empty[]={""};
   assert(!cp32_exec_stack(b,32,0x1000,0,0,1,empty,&sp));
   assert(!word(b) && !word(b+4) && word(b+8)==0x1010 && !word(b+12));
+  /* Production environment with the shell's maximum argument count. */
+  const char *av[]={"/boot/hello","one","two","three","four","five","six","seven","eight"};
+  const char *ev[]={"HOME=/","PATH=/boot","USER=root"};
+  assert(!cp32_exec_stack(b,512,0x3fcefe00,9,av,3,ev,&sp));
+  start=sp-0x3fcefe00;
+  assert(!word(b+start+40) && !word(b+start+56));
+  for(unsigned i=0;i<3;i++) {
+    uint32_t ptr=word(b+start+(11+i)*4);
+    assert(ptr>=sp && ptr<0x3fcf0000);
+    assert(!strcmp((char *)b+ptr-0x3fcefe00,ev[i]));
+    b[ptr-0x3fcefe00]='X';
+  }
+  /* Child changes affect its copy only; the next image gets fresh strings. */
+  assert(!strcmp(ev[0],"HOME=/"));
+  assert(!cp32_exec_stack(b,512,0x3fcefe00,9,av,3,ev,&sp));
+  assert(!strcmp((char *)b+word(b+start+44)-0x3fcefe00,"HOME=/"));
   puts("exec stack: layout, relocation, alignment, bounds and atomic rejection passed");
 }

@@ -13,10 +13,17 @@ hardware, without an ESP-IDF or Arduino runtime.
 - A read-only MINIX V2 filesystem on a 64 KiB RAM disk: directories, file
   reads, metadata, seeking and indirect blocks.
 - Memory allocation and device services through IPC.
-- A separately compiled application loaded from `/boot/hello`, with arguments,
-  output, exit status and return to the shell.
+- Separately compiled applications loaded from the filesystem, with arguments,
+  quoted arguments, environment, PID/parent queries, console input/output,
+  exit status and return to the shell. `hello`, pathname launch and `echo`
+  are hardware-verified.
+- Application heap services and allocation library: malloc/free, calloc,
+  realloc, resizing in place and explicit heap trimming.
 
-The latest hardware milestone is **HELLO-ARGV 89**. On the Cardputer, type:
+The latest hardware milestone is **APP-STDIO 105**: standard-stream input,
+empty lines and Backspace editing pass. The current build, **APP-LINE 106**,
+adds bounded line reading across buffer-sized fragments; hardware validation
+is pending. On the Cardputer, type:
 
 ```text
 $ hello um dois
@@ -49,9 +56,9 @@ make
 make tests
 ```
 
-The normal build also compiles `hello` and packages it in the boot filesystem.
-Outputs are `build/cp32.elf`, `build/cp32.bin` and `build/hello.elf`.
-Use `make hello` to build just the application.
+The normal build also compiles `hello` and `echo` and packages them in the boot filesystem.
+Outputs include `build/cp32.elf`, `build/cp32.bin`, `build/hello.elf` and
+`build/echo.elf`. Use `make hello` or `make echo` to build an application alone.
 
 To flash:
 
@@ -111,7 +118,21 @@ Paths may be absolute or relative to the current directory. Start with
 | `wc [-lwc] file` | Count lines, words and bytes; flags select columns in that order. |
 | `cmp file1 file2` | Report whether two files are identical. |
 | `stat path` | Show inode, size, links, owner IDs and modification time. |
+| `run path [arguments]` | Load an executable by absolute or current-directory-relative path; no PATH search. |
+| `echo [arguments]` | Run `/boot/echo` through external-command lookup. Bare external names use `/boot`; names containing `/` use their explicit path. Builtins take priority. |
 | `hello [arguments]` | Load `/boot/hello`, pass arguments and report its exit status. |
+| `hello --line` | Read and echo a full line through a bounded 16-byte buffer, including longer lines. |
+| `hello --io` | Read from standard input and write through standard output/error wrappers. |
+| `hello --read` | Prompt for a line on the keyboard, read through TTY and print it back. |
+| `hello --trim` | Check top-of-heap release, preservation of live blocks and allocation after trimming. |
+| `hello --resize` | Check resizing in place, live-neighbor preservation and reuse after shrinking. |
+| `hello --alloc` | Check calloc zeroing, realloc growth/shrink and preservation after failure. |
+| `hello --malloc` | Check aligned allocations, free/reuse and adjacent-block merging. |
+| `hello --heap` | Exercise heap growth, writing, bounds rejection, shrink and zeroed regrowth. |
+| `hello --ppid` | Print the launching shell PID (1). The shell is still kernel-linked; this is not a user init process. |
+| `hello --pid` | Print this application process ID. Repeated launches receive different IDs, starting at 100 after boot. |
+| `hello --env` | Show the initial application environment. These defaults are recreated on every launch. |
+| `hello --exit N` | Exit immediately with decimal status 0..65535; the shell reports its low eight bits (e.g. 263 becomes 7). |
 | `fsinfo` | Inspect the MINIX superblock and filesystem geometry. |
 | `ramdisk` | Show RAM disk capacity. |
 | `disk` | Exercise RAM-device IPC read/write, restoring the tested sector. |
@@ -132,7 +153,17 @@ tail -c 3 boot/double
 wc readme
 wc -wc readme
 stat boot/hello
+run /boot/hello one two
+run /boot/echo one two
+cd boot
+run echo again
 ```
+
+`run /boot/echo one two` should print `one two` followed by
+`Application exit=0`. `echo` currently prints arguments literally with a final
+newline; options such as `-n` are not implemented. `run` requires a regular
+file with at least one execute bit and a supported fixed-layout Xtensa ELF.
+This is a trusted-application policy, not full user/group permission handling.
 
 For `tail`, unsigned or negative counts select from the end; `+N` starts at
 line/byte N, counting from 1 (`+0` also starts at the beginning). Zero without
@@ -143,7 +174,7 @@ a final word without a newline is included.
 `head`, `tail` and `wc` accept `--` before a filename beginning with `-`.
 They operate on one regular file; standard input, multiple-file processing
 and tail follow mode are not implemented. File display sanitizes nonprintable
-bytes. The shell accepts up to 63 characters per command; `hello` accepts up
+bytes. The shell accepts up to 63 characters per command; `hello` and `run` accept up
 to eight arguments separated by whitespace. Quoting, expansion, pipelines
 and redirection are not implemented.
 
@@ -166,9 +197,17 @@ make map        # Symbols sorted by size
 make disasm     # Source-interleaved disassembly
 ```
 
-Linker maps are in `build/cp32.map` and `build/hello.map`.
-`make tests` runs the host suite; the latest review passed all 30 scripts.
+Linker maps are in `build/cp32.map` and `build/hello.map` / `build/echo.map`.
+`make tests` runs the host suite; the latest review passed all 33 scripts.
 Host tests do not replace hardware validation. After a new flash, try `hello`
 twice, `hello one two`, `ls boot`, `disk` and `mm`, and retain the USB output.
 
 [Issues and bring-up history](issues.md) · [Hardware captures](docs/hardware/)
+
+Application commands (`hello`, `run`, and direct external commands) accept
+single/double quotes, empty quoted arguments and backslash escapes:
+`hello "one two" ""` or `echo one\ two`. Unclosed quotes and trailing
+backslashes are rejected. No variable expansion, pipelines or multiline input
+is implemented. Other builtins retain their existing argument parsing.
+
+Applications are size-optimized (`-Os`); the kernel retains its existing `-O0` build.

@@ -328,8 +328,27 @@ CP32_IRAM_EXT static int cp32_shell_app_read(void *context,uint32_t offset,
 {
   int fd=*(int *)context;
   if(cp32_fd_seek(fd,offset,0,0)) return -1;
-  return cp32_fd_read(fd,(char *)buffer,count)==(int)count ? 0 : -1;
+  unsigned done=0;
+  while(done<count) {
+    int n=cp32_fd_read(fd,(char *)buffer+done,count-done);
+    if(n<=0 || (unsigned)n>count-done) return -1;
+    done+=(unsigned)n;
+  }
+  return 0;
 }
+CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count)
+{
+  char input[64];
+  int result;
+  if(count>sizeof(input)) return -1;
+  /* TTY copies into the FS caller's mapped stack, then FS copies into the
+   * already validated application buffer while that child remains blocked. */
+  cp32_shell_flush();
+  result=cp32_shell_tty_io(DEV_READ,input,count);
+  if(result>0 && (unsigned)result<=count) memcpy(buffer,input,result);
+  return result;
+}
+
 CP32_IRAM_EXT static void cp32_shell_app_output(const char *buffer,unsigned count)
 {
   char text[65];
@@ -342,41 +361,97 @@ CP32_IRAM_EXT static void cp32_shell_app_output(const char *buffer,unsigned coun
   }
   text[n]=0; cp32_shell_print(text);
 }
-/* Minimal whitespace tokenization; the shell line itself is bounded to 63
- * bytes. No quoting/expansion yet. argv[0] is the invoked command name. */
-CP32_IRAM_EXT static void cp32_shell_hello(const char *args)
+/* Application words are bounded by the 63-byte shell input line. */
+/* Bounded in-place word decoding, a subset of MINIX ash's quote removal.
+ * No expansion, operators or multiline continuation in this bootstrap shell.
+ * Output never grows; callers discard all words on a syntax/limit error. */
+CP32_IRAM_EXT static int cp32_shell_words(char *text,const char **argv,
+                                         unsigned capacity,unsigned *count)
+{
+  char *read=text,*write=text;
+  unsigned n=0;
+  while(*read) {
+    char quote=0;
+    while(*read==' ' || *read=='\t') read++;
+    if(!*read) break;
+    if(n==capacity) return -1;
+    argv[n++]=write;
+    while(*read && (quote || (*read!=' ' && *read!='\t'))) {
+      char c=*read++;
+      if(c==quote) { quote=0; continue; }
+      if(!quote && (c=='\'' || c=='"')) { quote=c; continue; }
+      if(c=='\\' && quote!='\'') {
+        if(!*read) return -2;
+        if(quote=='"' && *read!='"' && *read!='\\' &&
+           *read!='$' && *read!='`') { *write++=c; continue; }
+        c=*read++;
+      }
+      *write++=c;
+    }
+    if(quote) return -2;
+    /* Advance before writing NUL when read and write still coincide. */
+    while(*read==' ' || *read=='\t') read++;
+    *write++=0;
+  }
+  *count=n;
+  return 0;
+}
+
+CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
 {
   struct cp32_minix_stat info;
-  char copy[64], *p;
+  char copy[64], full[CP32_MINIX_PATH_MAX+1], *p;
   const char *argv[9];
-  unsigned argc=1,n=0;
+  int hello=mode==1;
+  unsigned argc=hello ? 1 : 0,n=0;
   int status=0,result,fd;
-  argv[0]="hello";
-  while(args[n] && n<sizeof(copy)-1) { copy[n]=args[n]; n++; }
+  if(hello) argv[0]="hello";
+  while(n<sizeof(copy)-1 && args[n]) { copy[n]=args[n]; n++; }
   if(args[n]) goto usage;
-  copy[n]=0; p=copy;
-  while(*p) {
-    while(*p==' ' || *p=='\t') p++;
-    if(!*p) break;
-    if(argc==9) goto usage;
-    argv[argc++]=p;
-    while(*p && *p!=' ' && *p!='\t') p++;
-    if(*p) *p++=0;
+  copy[n]=0;
+  result=cp32_shell_words(copy,argv+argc,9-argc,&n);
+  if(result==-2) { cp32_shell_print("Invalid command quoting\r\n"); return; }
+  if(result) goto usage;
+  argc+=n;
+  if(!argc || !argv[0][0]) goto usage;
+  /* MINIX shell lookup: slash bypasses PATH; builtins were handled first.
+   * The bootstrap environment currently has the single fixed PATH=/boot. */
+  p=(char *)argv[0];
+  while(*p && *p!='/') p++;
+  result=cp32_minix_abspath(mode==2 && !*p ? "/boot" : cp32_shell_cwd,
+                           hello ? "/boot/hello" : argv[0],full);
+  if(result) { cp32_shell_print("Invalid executable path\r\n"); return; }
+  fd=cp32_shell_open_file(full);
+  if(fd<0) {
+    cp32_shell_print(mode==2 ? "Command not found\r\n" : "Cannot open executable\r\n");
+    return;
   }
-  fd=cp32_shell_open_file("/boot/hello");
-  if(fd<0) result=fd;
-  else {
-    result=cp32_fd_fstat(fd,&info);
-    if(!result) result=cp32_application_run(cp32_shell_app_read,&fd,info.size,
-                                          argc,argv,cp32_shell_app_output,&status);
+  result=cp32_fd_fstat(fd,&info);
+  /* Trusted single-client policy until MM credentials exist. */
+  if(!result && !(info.mode & 0111)) {
     cp32_fd_close(fd);
+    cp32_shell_print("File is not executable\r\n");
+    return;
   }
-  if(result) cp32_shell_print("Hello load failed\r\n");
-  else { cp32_shell_print("Hello exit="); cp32_shell_print_u32(status);
-         cp32_shell_print("\r\n"); }
+  if(!result) result=cp32_application_run(cp32_shell_app_read,&fd,info.size,
+                                        argc,argv,cp32_shell_app_output,&status);
+  cp32_fd_close(fd);
+  if(result) cp32_shell_print(hello ? "Hello load failed\r\n" : "Application load failed\r\n");
+  else {
+    cp32_shell_print(hello ? "Hello exit=" : "Application exit=");
+    if(status<0) { cp32_shell_print("-"); cp32_shell_print_u32(0U-(unsigned)status); }
+    else cp32_shell_print_u32((unsigned)status);
+    cp32_shell_print("\r\n");
+  }
   return;
 usage:
-  cp32_shell_print("Usage: hello [up to 8 arguments]\r\n");
+  cp32_shell_print(hello ? "Usage: hello [up to 8 arguments]\r\n" :
+                          "Usage: run path [up to 8 arguments]\r\n");
+}
+
+CP32_IRAM_EXT static void cp32_shell_hello(const char *args)
+{
+  cp32_shell_launch(args,1);
 }
 
 /* mode: 0=whole file, 1=tail, 2=head (positive line count). */
@@ -663,7 +738,13 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
   } else if (strcmp(line, "hello") == 0 ||
              (line[0]=='h' && line[1]=='e' && line[2]=='l' && line[3]=='l' && line[4]=='o' && (line[5]==' ' || line[5]=='\t'))) {
     cp32_shell_hello(line[5] ? line+6 : "");
+  } else if (strcmp(line,"run")==0 ||
+             (line[0]=='r' && line[1]=='u' && line[2]=='n' &&
+              (line[3]==' ' || line[3]=='\t'))) {
+    cp32_shell_launch(line[3] ? line+4 : "",0);
   } else if (strcmp(line, "font") == 0) {
+    cp32_shell_print("quotes: \" '\r\n");
+    cp32_shell_print("back:   \\\r\n");
     cp32_shell_print("bang:   !\r\n");
     cp32_shell_print("plus:   +\r\n");
     cp32_shell_print("hyphen: -\r\n");
@@ -718,9 +799,7 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     cp32_shell_print_u32(cp32_ramdisk_capacity());
     cp32_shell_print("]\r\n");
   } else if (line[0] != '\0') {
-    cp32_shell_print("[CMD unknown=");
-    cp32_shell_print(line);
-    cp32_shell_print("]\r\n");
+    cp32_shell_launch(line,2);
   }
 }
 

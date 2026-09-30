@@ -143,3 +143,455 @@ stack; no parent string pointers are exposed as argv in the application.
 hello prints arguments through its existing write callback. The existing
 512-byte stack-image cap, single-process slot and trusted execution scope
 are unchanged. No environment variables, quoting or expansion yet.
+
+## Image 90: pathname launch and second executable
+
+`run path [arguments]` selects a file using the shell cwd, checks a regular-file
+execute bit and uses the existing ELF loader/process slot. It passes the typed
+pathname as argv[0] and derives the diagnostic process name from its basename.
+`hello` remains a shortcut to /boot/hello. The new /boot/echo is independently
+linked and prints literal arguments separated by spaces and a final newline.
+Both executables share the same fixed slot and run sequentially, never at once.
+
+All 30 host scripts pass; hardware validation is pending. This is still a trusted
+foreground runner, not the MINIX execve syscall or complete credential model.
+Missing files, execute-bit rejection and load errors return to the shell with
+descriptors closed. No PATH search, quoting, expansion or echo -n support yet.
+
+## Image 91: shared context initialization
+
+Image 90 is hardware-verified for sequential hello/echo launch and relative
+paths (docs/hardware/app-path-v90.log). Image 91 routes launch register setup
+through cp32_exec_frame, also used by legacy SYS_EXEC. The latter now rejects
+inappropriate callers/targets and discards obsolete blocked receive state
+before publishing the new frame. SYS_FORK's child result uses a2 rather than
+clobbering a1. General lifecycle/parent bookkeeping and legacy fork/exec service
+integration remain unfinished; those handlers have host tests, not hardware
+coverage. The working shell launch path remains the regression target.
+
+
+## APP-EXIT 92 — explicit termination and exit status (2026-09-29)
+
+Image 91 hardware result supplied by the user: CORE checks pass;
+`hello one two`, `run /boot/echo one two`, and `hello` exit successfully;
+`disk` and `mm` report result=0. This validates the shared frame initializer
+through the foreground launcher, not legacy SYS_EXEC/FORK.
+
+MINIX reference: src/mm/forkexit.c do_mm_exit/mm_exit suppresses the reply to
+an exiting child and retains an eight-bit exit status. CP32 keeps its existing
+trusted call0 callback/SENDREC bridge and fixed slot; the parent now reports
+status & 255, directly rather than as a POSIX wait word. The child remains
+blocked and is reaped before another image may reuse its slot.
+
+`hello --exit N` invokes the exit callback directly, without a greeting or
+return through main. Decimal 0..65535 is accepted; malformed/out-of-range
+arguments print usage and return 2. Ordinary hello arguments are unchanged.
+Host tests exercise explicit exit via a nonreturning modeled callback, parser
+boundaries, unsigned/signed status normalization and repeated production reaping.
+
+Hardware pending: [FEATURE APP-EXIT 92]1 / [TEST APP-EXIT 92].
+Try hello --exit 7, hello --exit 263 (both report 7), hello --exit 65535
+(reports 255), hello --exit 65536 (usage and 2), then hello, run /boot/echo ok,
+disk and mm. No flashing performed. Fault recovery, cancellation, general MM
+exit/wait, signals and resource ownership remain unfinished.
+
+Build validation: clean cross-build and all 31 host scripts pass, without
+compiler warnings. ELF section/segment checks pass: _iram_end=4037422c,
+_iram_ext_end=4038682c, _runtime_stack_end=3fce4000, below app alias 3fce8000.
+
+
+## APP-ENV 93 — initial application environment (2026-09-29)
+
+Image 92 hardware passed explicit exits 7, 263 -> 7, 65535 -> 255 and
+invalid 65536 -> usage/2, followed by hello, echo and disk/MM success.
+Full capture: docs/hardware/app-exit-v92.log.
+
+MINIX src/mm/exec.c installs arguments and environment in the new process
+stack. CP32 now supplies HOME=/, PATH=/boot and USER=root through its existing
+bounded stack builder. Xtensa crt0 already computes envp after argv's NULL
+and passes it as the third call0 C argument. Strings and vector entries are
+copied into application SRAM on every launch, rather than exposing pointers
+to the kernel's environment. The 512-byte startup budget and 16-byte stack
+alignment are preserved; remaining stack space is unchanged.
+
+hello --env prints the received environment. This is a fixed bootstrap policy,
+not mutable shell state, permission enforcement, PATH command search or full
+execve inheritance. Applications remain trusted and share address space.
+Tests cover loader environment selection, vector pointers/terminators, all
+nine permitted arguments, fresh copies after mutation, populated/empty envp,
+and existing exit/relaunch behavior.
+
+Hardware pending: [FEATURE APP-ENV 93]1 / [TEST APP-ENV 93]. Try hello --env,
+run /boot/hello --env, hello one two, hello --exit 7, hello --env, disk and mm.
+Expected environment: HOME=/, PATH=/boot, USER=root, followed by exit=0.
+Flashing remains with the user.
+
+Validation: clean build and all 31 host scripts pass without compiler warnings.
+ELF section/segment checks pass: _iram_end=4037422c, _iram_ext_end=40386830,
+_runtime_stack_end=3fce41e0, below the application alias at 3fce8000.
+
+
+## SHELL-EXEC 94 — direct external commands (2026-09-29)
+
+Image 93 hardware confirms hello --env and run /boot/hello --env receive
+HOME=/, PATH=/boot, USER=root, including relaunch after exit 7. Arguments and
+disk/MM checks pass. Full capture: docs/hardware/app-env-v93.log.
+
+MINIX reference: commands/ash/exec.c shellexec searches PATH for names without
+slashes and executes slash-containing names directly. CP32 now dispatches
+unmatched shell commands through its proven bounded foreground loader. Builtins
+retain priority; the fixed bootstrap PATH has one directory, /boot. Explicit
+run still resolves its argument against cwd. No environment mutation, general
+PATH list parsing, quoting, pipes or separate user shell is implied.
+
+The same ELF validation, execute-mode check, argument limits, blocking wait,
+exit and reap path are reused. No architecture/frame/assembly change: this is
+shell-side selection of the existing trusted call0 application path. Tests
+cover bare-name lookup from another cwd, relative/absolute slash paths,
+missing/nonexecutable errors and descriptor closure, alongside prior regressions.
+
+Hardware pending: [FEATURE SHELL-EXEC 94]1 / [TEST SHELL-EXEC 94].
+Try echo one two, /boot/hello --env, cd boot, ./echo again, cd /, nosuch,
+echo recovered, hello --exit 7, disk and mm. No flashing performed.
+
+Validation: clean build, all 31 host scripts and ELF section/segment checks
+pass, with no compiler warnings. _iram_end=4037422c, _iram_ext_end=4038687c,
+_runtime_stack_end=3fce4240 remain within their reserved regions.
+
+
+## SHELL-ARGV 95 — quoted application arguments (2026-09-29)
+
+Image 94 hardware passed echo, /boot/hello --env, ./echo after cd, unknown
+command recovery, exit 7 and disk/MM checks. Capture: docs/hardware/shell-exec-v94.log.
+
+MINIX reference: commands/ash/parser.c quote handling preserves quoted word
+boundaries and removes quoting syntax. CP32 implements bounded in-place word
+decoding for application launch only: single/double quotes, empty words,
+adjacent quoted/unquoted fragments and backslash escapes. In double quotes,
+backslash is removed before quote, backslash, dollar or backtick; otherwise it
+is literal. No expansions or command operators are added. Other builtins keep
+their existing parsers. Input remains 63 characters and at most eight app args.
+
+Invariant: decoding never grows its buffer, rejects syntax/argument overflow
+before opening a file, and passes ordinary strings through the existing SRAM
+stack-copy and call0 startup path. No kernel frame or hardware changes.
+Host tests cover spaces, empty strings, concatenation, escapes, malformed input,
+argument exhaustion and rejection without a file open or process launch.
+
+Hardware pending: [FEATURE SHELL-ARGV 95]1 / [TEST SHELL-ARGV 95]. Try
+hello "one two" "", echo one\ two, hello 'unfinished, echo recovered,
+hello --env, disk and mm. Flashing remains with the user.
+
+Validation: clean build, all 31 host scripts and ELF section/segment checks
+pass. _iram_end=4037422c, _iram_ext_end=403869e0,
+_runtime_stack_end=3fce43c0 remain within reserved regions.
+
+
+## APP-PID 97 — process identity and short executable reads (2026-09-29)
+
+User confirms image 96 font looks correct on LCD. Serial capture confirms
+quoted/empty arguments, escapes and recovery after malformed input:
+docs/hardware/lcd-quotes-v96.log.
+
+MINIX mm/forkexit.c allocates PIDs separately from process slots, wraps at
+30000 and avoids live identities. CP32 now allocates 100..30000, skips live
+process PIDs, and publishes the chosen identity with the new frame under the
+scheduler lock. The reserved range avoids bootstrap process identities.
+There are no process groups yet; this remains one trusted foreground slot,
+not general fork, parent bookkeeping or waitpid.
+
+Application ABI v2 appends getpid after the unchanged write/exit table offsets.
+The callback validates the active child and obtains its PID through SENDREC;
+the parent responds from the live child metadata. hello --pid prints it.
+Bundled hello/echo accept v1/v2; old binaries that require exactly version 1
+must be rebuilt for the v2 service table. crt0 offsets and call0 ABI unchanged.
+
+The larger hello exposed short reads at filesystem block boundaries. Fix the
+shell's executable reader to accumulate positive reads, rejecting premature
+EOF/errors. The filesystem-to-ELF integration test now extracts this actual
+production reader rather than maintaining a duplicate. ELF bounds and failed
+load cleanup are preserved.
+
+Host tests cover collision avoidance, repeated fresh identities, wrap at
+30000, getpid responses in the production launch loop, hello PID formatting,
+and actual multi-block ELF loading. Hardware pending: [FEATURE APP-PID 97]1 /
+[TEST APP-PID 97]. Try hello --pid twice (100,101 after a fresh boot),
+echo ok, hello --pid (103), hello --env, hello --exit 7, disk and mm.
+Other successful application launches also consume PIDs. No flashing performed.
+
+Validation: clean build, all 31 host test scripts and ELF section/segment
+checks pass without compiler warnings. _iram_end=40374298,
+_iram_ext_end=40386b64, _runtime_stack_end=3fce47d0 remain in reserved regions.
+
+
+## APP-PARENT 98 — bootstrap parent identity (2026-09-29)
+
+Image 97 hardware confirms PID 100,101, echo using 102, then PID 103,
+exit 7 and disk/MM success. Capture: docs/hardware/app-pid-v97.log.
+
+MINIX mm/getset.c GETPID returns process PID plus the parent's PID from its
+MM parent relationship. CP32's shell is still the kernel-linked FS process;
+assign it bootstrap PID 1, leaving IPC endpoint numbers unchanged. Capture
+its positive PID in the foreground launch activation before loading. That
+activation survives the wait and is discarded on return/reap, avoiding stale
+parent identity on the reused child slot. This is not an MM parent table,
+init process, reparenting, orphan handling or general waitpid.
+
+ABI v3 appends getppid after getpid, preserving prior field offsets and crt0.
+The callback checks active child ownership and uses SENDREC; its response is
+the captured parent PID. hello --ppid displays the value. Bundled applications
+accept v1..v3; previously compiled versions with strict version checks require
+rebuilding. No process structure/assembly/register-frame layout changes.
+
+Host checks cover getppid replies across repeated child slots, application
+formatting, legacy PID/exit services and filesystem loading. Hardware pending:
+[FEATURE APP-PARENT 98]1 / [TEST APP-PARENT 98]. After boot run hello --pid,
+hello --ppid, echo ok, hello --ppid, hello --pid, disk and mm. Expected first
+PID 100, PPID always 1 and final PID 104. No flashing performed.
+
+Validation: clean build and all 31 host scripts pass without compiler
+warnings. ELF section/segment checks pass: _iram_end=403742ac,
+_iram_ext_end=40386be4, _runtime_stack_end=3fce49a0.
+
+
+## APP-HEAP 99 — bounded per-application sbrk (2026-09-29)
+
+Image 98 hardware confirms PPID=1, successful application execution and disk/MM
+checks. PIDs 101 and 105 are correct: initial hello --pip consumed PID 100.
+Capture: docs/hardware/app-parent-v98.log.
+
+MINIX mm/break.c validates data growth against stack space. CP32 uses its
+fixed 12 KiB data region: heap begins at the 16-byte-aligned end of ELF data/BSS
+and may grow up to CP32_APP_STACK, never into the separate 4 KiB stack. ABI v4
+appends sbrk(int); returns the old break or (void *)-1, with sbrk(0) querying it.
+The callback checks active-child ownership and requests changes through IPC.
+Each launch gets a fresh break; failed changes leave it unchanged. Positive
+growth is zeroed, including after shrinking. Signed-minimum negative increments
+and oversized positive increments are handled without overflow.
+
+No changes to flat memory protection or proc/frame layouts: applications remain
+trusted and the entire reserved data window is mapped. This is not malloc/free,
+general MM brk syscall dispatch, dynamic address-space allocation or fork.
+Bundled apps accept ABI 1..4; older strict-version binaries need rebuilding.
+
+hello --heap checks growth, zeroes, writes, oversized request rejection,
+shrink, below-floor rejection and zeroed regrowth. Host tests exercise break
+boundaries, INT_MIN, unchanged-on-failure, zeroing extent, repeated launch
+reset and application behavior. Hardware pending: [FEATURE APP-HEAP 99]1 /
+[TEST APP-HEAP 99]. Try hello --heap twice, hello --pid, hello --ppid,
+hello --env, echo ok, disk and mm. Expect Heap grow/shrink OK and exit=0.
+No flashing performed.
+
+Validation: clean build and all 31 host test scripts pass without compiler
+warnings. ELF section/segment checks pass: _iram_end=403742ac,
+_iram_ext_end=40386d38, _runtime_stack_end=3fce4e90, below app alias 3fce8000.
+
+
+## APP-MALLOC 100 — application allocation library (2026-09-29)
+
+Image 99 hardware confirms two Heap grow/shrink OK results, PID/PPID,
+environment, echo and disk/MM checks. Capture: docs/hardware/app-heap-v99.log.
+
+MINIX lib/ansi/malloc.c grows through sbrk, tracks slots and merges free slots.
+CP32's small bootstrap adaptation lives in apps/lib/heap.c: initialize once
+with cp32_heap_init(services), then cp32_malloc(unsigned)/cp32_free(void *).
+It uses first-fit, 16-byte payload alignment, split blocks and adjacent free
+block coalescing. Metadata and payload live in application SRAM and reset on
+image reload. Zero size, overflow and exhaustion return NULL; free(NULL) is
+harmless. Reused bytes are unspecified. No kernel ABI bump or process/frame
+change; the library uses the hardware-tested ABI-v4 sbrk callback.
+
+The allocator requires exclusive ownership of sbrk after initialization and
+is single-threaded. Freed blocks remain reusable rather than shrinking the
+break; process-slot reload reclaims the whole region. No calloc/realloc,
+errno, standard libc symbol replacement or protected heap is claimed.
+
+hello --malloc exercises allocation, writes, preservation of a neighboring
+live block, free/reuse, merge and oversized request rejection. Host tests
+also cover splitting, alignment, exhaustion, interleaved frees and large
+allocation from merged space without further growth, under UBSan.
+
+Hardware pending: [FEATURE APP-MALLOC 100]1 / [TEST APP-MALLOC 100]. Run
+hello --malloc twice, hello --heap, hello --pid, hello --ppid, echo ok,
+disk and mm. Expect Malloc/free OK and exit=0. No flashing performed.
+
+Validation: clean build, all 32 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386d38,
+_runtime_stack_end=3fce57c0 remain below the reserved application alias.
+
+
+## APP-REALLOC 101 — calloc/realloc (2026-09-30)
+
+Image 100 hardware confirms repeated Malloc/free OK, heap, identity, echo
+and disk/MM checks. Capture: docs/hardware/app-malloc-v100.log.
+
+MINIX lib/ansi/malloc.c realloc preserves contents, allocates for NULL and
+frees for zero size; calloc.c clears allocated bytes. Add cp32_calloc and
+cp32_realloc to the application library. Multiplication overflow is rejected;
+calloc clears reused memory. Realloc keeps capacity when shrinking and uses
+allocate/copy/free when growing. Failure leaves the original allocation and
+contents intact. No in-place growth optimization or errno yet. ABI v4, SRAM
+bounds and kernel interfaces stay unchanged.
+
+hello --alloc exercises zeroing, growth, prefix preservation, oversized
+failure, shrink, zero-size free and reused zeroed memory. Host allocator tests
+cover multiplication overflow, exhaustion preservation, adjacent live data,
+NULL allocation and zero-size behavior. Applications now compile with -Os:
+unoptimized hello exceeded the existing 7168-byte RAM fixture capacity. Kernel
+remains -O0; both generated optimized ELF files are validated/loaded by tests.
+
+Hardware pending: [FEATURE APP-REALLOC 101]1 / [TEST APP-REALLOC 101]. Try
+hello --alloc twice, hello --malloc, hello --heap, hello --pid, hello --ppid,
+echo ok, disk and mm. Expect Calloc/realloc OK and exit=0. Flashing remains
+with the user; optimized application execution needs hardware confirmation.
+
+Validation: clean build, all 32 host scripts and ELF section/segment checks
+pass without compiler warnings. hello.elf=4400 bytes, echo.elf=1012 bytes.
+_iram_end=403742ac, _iram_ext_end=40386d38, _runtime_stack_end=3fce5240.
+
+
+## APP-RESIZE 102 — allocator resizing in place (2026-09-30)
+
+Image 101 hardware confirms repeated calloc/realloc checks, malloc/free,
+sbrk, identity, echo and disk/MM checks with size-optimized applications.
+Capture: docs/hardware/app-realloc-v101.log.
+
+MINIX lib/ansi/malloc.c realloc consumes adjacent free space and splits excess
+space into a free tail. Add these behaviors to cp32_realloc: retain address on
+growth when the next free block satisfies the full request, and split useful
+space on shrink. Freed tails coalesce through the existing free implementation.
+If the neighbor is insufficient, leave it intact while trying the existing
+allocate/copy/free fallback, preserving the original allocation on failure.
+No kernel ABI, frame, mapping or heap-boundary change.
+
+Host tests check original contents, live neighbor data, unchanged heap break
+and tail reuse. hello --resize performs the same visible application check.
+Hardware pending: [FEATURE APP-RESIZE 102]1 / [TEST APP-RESIZE 102]. Try
+hello --resize twice, hello --alloc, hello --malloc, hello --heap, echo ok,
+disk and mm. Expect Resize in place OK and exit=0. Not flashed.
+
+Validation: clean build, all 32 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386d38,
+_runtime_stack_end=3fce5520 remain within reserved regions.
+
+
+## APP-TRIM 103 — return free heap tail (2026-09-30)
+
+Image 102 hardware confirms two Resize in place OK results, calloc/realloc,
+heap, echo and disk/MM checks. hello -malloc was an ordinary argument (single
+dash), not a malloc test. Capture: docs/hardware/app-resize-v102.log.
+
+MINIX malloc maintains a top-of-heap boundary via brk; CP32 adds an explicit
+cp32_heap_trim extension over the existing bounded sbrk service. It returns
+a free last block, including its header, verifies the current break and
+unlinks metadata only after shrink succeeds. Live last blocks are untouched;
+failed shrink retains the list and contents. Return value is bytes released,
+zero if nothing can be released, or -1 on failure. free still retains blocks
+until trim is requested. The fixed address reservation is not released to
+other processes; only this application's logical break shrinks.
+
+No kernel ABI, map or frame changes. Host tests cover failed shrink, full
+trim, live-prefix preservation and allocation after trim. hello --trim checks
+the same behavior via real IPC/sbrk on hardware.
+
+Hardware pending: [FEATURE APP-TRIM 103]1 / [TEST APP-TRIM 103]. Run hello
+--trim twice, hello --resize, hello --alloc, hello --malloc, echo ok, disk and
+mm. Expect Heap trim OK and exit=0. Not flashed.
+
+Validation: clean build, all 32 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386d38,
+_runtime_stack_end=3fce57f0 remain within reserved regions.
+
+
+## APP-TRIM 103 hardware confirmation (2026-09-30)
+
+User capture docs/hardware/app-trim-v103.log confirms two Heap trim OK runs,
+Resize in place OK, Calloc/realloc OK, Malloc/free OK and echo, all exit=0.
+Disk and MM report result=0; CORE checks pass and IRQ count 5000 reports
+unknown=0. This validates the planned image-103 hardware sequence. It does
+not establish general fork/wait, fault isolation or per-process FS support.
+Documentation-only update; firmware and image marker unchanged. No flashing.
+
+
+## APP-READ 104 — foreground application console input (2026-09-30)
+
+MINIX fs/device.c handles DEV_READ with immediate replies or SUSPEND/REVIVE.
+CP32 now bridges an application read callback through the foreground parent
+and the existing TTY protocol. ABI v5 appends read(char *,unsigned), max 64
+bytes; the parent validates the full application buffer before servicing it.
+Zero-length reads return zero without touching TTY. Input uses FS stack
+staging because the TTY request carries the FS endpoint/map, then copies to
+the blocked child's buffer. Flush pending application output before waiting.
+No process layout or assembly changes. This is canonical console input only,
+not file descriptors, arbitrary file reads or a general FS server.
+
+hello --read prints a prompt, reads up to 64 bytes and writes the result.
+Bundled apps accept ABI versions 1..5; strict older binaries need rebuilding.
+Host checks cover count/range rejection, valid read replies, FS staging,
+short read copying, error propagation, prompt flush ordering and application
+output. Existing TTY tests cover suspend/revive and canonical editing.
+
+Hardware pending: [FEATURE APP-READ 104]1 / [TEST APP-READ 104]. Run hello
+--read, type test then Enter; expect Read: test and exit=0. Repeat with an
+empty line and a line edited using Backspace. Then hello --alloc, echo ok,
+disk and mm. No flashing performed.
+
+Validation: clean build, all 32 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386e80,
+_runtime_stack_end=3fce5a60 remain within reserved regions.
+
+
+## APP-STDIO 105 — standard-stream wrappers (2026-09-30)
+
+Image 104 confirms normal and empty console reads and return to the shell;
+user explicitly confirms Backspace editing. Allocator, echo and disk/MM checks
+pass. Capture: docs/hardware/app-read-v104.log.
+
+MINIX lib/posix/_read.c and _write.c provide descriptor-based byte-count APIs.
+CP32's bootstrap io library now exposes cp32_io_init, cp32_read and cp32_write
+for standard stream numbers only: 0 reads TTY, 1/2 write the same TTY.
+Read returns at most 64 bytes, preserving canonical short reads. Write splits
+requests into callback-sized chunks, collects short writes, stops on zero
+progress, and returns transferred bytes if a later callback fails. Invalid
+streams, null nonempty buffers, oversized requests or invalid callback counts
+are rejected. Zero-length valid requests are no-ops. ABI remains v5.
+
+This is not general FS descriptors, errno, FILE buffering, printf or a full
+POSIX syscall implementation. hello --io prompts, reads through fd 0 and
+writes through 1/2, then verifies wrong-direction stream rejection. Host tests
+cover 600-byte output, partial/error/zero transfers, EOF and count bounds.
+
+Hardware pending: [FEATURE APP-STDIO 105]1 / [TEST APP-STDIO 105]. Run
+hello --io, type a line then Enter; expect Read: followed by that line and
+exit=0. Repeat with an empty line and Backspace editing. Then hello --alloc,
+echo ok, disk and mm. No flashing performed.
+
+Validation: clean build, all 33 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386e80,
+_runtime_stack_end=3fce5e30 remain within reserved regions.
+
+
+## APP-LINE 106 — bounded line input (2026-09-30)
+
+Image 105 hardware confirms --io input, empty lines, allocator and device
+regressions; user confirms Backspace editing. Capture: docs/hardware/app-stdio-v105.log.
+README now summarizes the implemented application runtime and validated status,
+while retaining build, debug, flash, standalone startup and shell instructions.
+
+MINIX lib/stdio/fgets.c bounds input, retains newline and NUL-terminates.
+CP32 adds cp32_readline over standard input, returning fragment length, zero
+at EOF or -1 on error; partial error output remains terminated. Capacity must
+be at least two. Byte-at-a-time reads avoid consuming the following line;
+excess characters remain in the existing TTY queue. No FILE buffering or full
+fgets ABI is claimed. Existing ABI v5 and kernel services remain unchanged.
+
+hello --line consumes fragments through a 16-byte buffer until newline/EOF.
+Host tests cover long-line fragmentation, subsequent lines, empty lines, EOF,
+partial error, tiny buffers and the application loop. Hardware pending:
+[FEATURE APP-LINE 106]1 / [TEST APP-LINE 106]. Run hello --line, enter a line
+longer than 15 characters, then repeat with empty input and Backspace editing.
+Then echo ok, hello --alloc, disk and mm. No flashing performed.
+
+Validation: clean build, all 33 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386e80,
+_runtime_stack_end=3fce6030 remain within reserved regions.
