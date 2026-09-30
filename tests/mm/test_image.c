@@ -56,7 +56,7 @@ int main(int argc,char **argv) {
     FILE *f=fopen(argv[1],"rb"); assert(f);
     size=fread(file,1,sizeof(file),f); assert(feof(f)); fclose(f);
     assert(!cp32_image_read(reader,0,size,&image));
-    printf("hello ELF validated: entry=%08x text=%u data=%u bss=%u\n",
+    printf("application ELF validated: entry=%08x text=%u data=%u bss=%u\n",
       image.entry,image.text.filesz,image.data.filesz,image.data.memsz-image.data.filesz);
     test_load();
     return 0;

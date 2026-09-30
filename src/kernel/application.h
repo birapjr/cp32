@@ -5,4 +5,6 @@
 typedef void (*cp32_app_output)(const char *,unsigned);
 CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     uint32_t size,unsigned argc,const char *const argv[],cp32_app_output output,int *status);
+/* FS-owned foreground console bridge; returns byte count or error. */
+CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count);
 #endif

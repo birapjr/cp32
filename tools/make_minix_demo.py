@@ -18,7 +18,7 @@ INDIRECT = b''.join(
 
 DOUBLE = b''.join(f'Double indirect line {i:02d}\n'.encode() for i in range(1,11)) + b'DOUBLE INDIRECT READ OK\n'
 
-def build_image(include_indirect=False, hello=None):
+def build_image(include_indirect=False, hello=None, echo=None):
     """Keep a minimal parser fixture; CLI firmware always includes INDIRECT."""
     disk = bytearray(65536)
     disk[1024:1048] = struct.pack('<6HIHHI', 32, 0, 1, 1, 6, 0,
@@ -82,21 +82,24 @@ def build_image(include_indirect=False, hello=None):
         directory(21,[(6,'.'),(2,'..')])
         struct.pack_into('<I',disk,28*1024,29)
         directory(29,[(3,'readme')])
-    if hello is not None:
-        if not include_indirect or not hello or len(hello)>7*1024:
-            raise ValueError('hello requires full fixture and 1..7168 bytes')
-        # Inode 7 and direct zones 30..36; keep diagnostic zone 63 untouched.
-        zones=(len(hello)+1023)//1024
-        inode(2,0o40755,3,112,7)
-        directory(7,[(2,'.'),(1,'..'),(3,'readme'),(4,'indirect'),
-                     (5,'double'),(6,'large'),(7,'hello')])
-        disk[4480:4544]=struct.pack('<4H4I10I',0o100555,1,0,0,
-            len(hello),0,0,0,*range(30,30+zones),*([0]*(10-zones)))
-        disk[2048] |= 1<<7
-        for zone in range(30,30+zones):
+    entries=[(2,'.'),(1,'..'),(3,'readme'),(4,'indirect'),(5,'double'),(6,'large')]
+    for number,name,payload,first in ((7,'hello',hello,30),(8,'echo',echo,37)):
+        if payload is None:
+            continue
+        if not include_indirect or not payload or len(payload)>7*1024:
+            raise ValueError('application requires full fixture and 1..7168 bytes')
+        zones=(len(payload)+1023)//1024
+        entries.append((number,name))
+        inode(2,0o40755,3,len(entries)*16,7)
+        directory(7,entries)
+        offset=4096+(number-1)*64
+        disk[offset:offset+64]=struct.pack('<4H4I10I',0o100555,1,0,0,
+            len(payload),0,0,0,*range(first,first+zones),*([0]*(10-zones)))
+        disk[2048+number//8] |= 1<<(number%8)
+        for zone in range(first,first+zones):
             bit=zone-5
             disk[3072+bit//8] |= 1<<(bit%8)
-        disk[30*1024:30*1024+len(hello)]=hello
+        disk[first*1024:first*1024+len(payload)]=payload
     return bytes(disk)
 
 def encode_runs(disk):
@@ -119,9 +122,11 @@ def main():
     parser.add_argument('--image', required=True)
     parser.add_argument('--header', required=True)
     parser.add_argument('--hello')
+    parser.add_argument('--echo')
     args = parser.parse_args()
     disk = build_image(include_indirect=True,
-                       hello=Path(args.hello).read_bytes() if args.hello else None)
+                       hello=Path(args.hello).read_bytes() if args.hello else None,
+                       echo=Path(args.echo).read_bytes() if args.echo else None)
     Path(args.image).write_bytes(disk)
     # Offset/length records plus packed data avoid firmware-sized zero gaps.
     runs=encode_runs(disk)

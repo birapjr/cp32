@@ -14,7 +14,7 @@ ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # Files
-C_SRCS = application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
+C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
 MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
 FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c utility.c
@@ -77,8 +77,8 @@ $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
-$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf | $(BUILD_DIR)
-	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf
+$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf | $(BUILD_DIR)
+	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf --echo $(BUILD_DIR)/echo.elf
 
 $(BUILD_DIR)/minix-demo.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/minix-demo.o: $(BUILD_DIR)/minix-demo.h
@@ -168,8 +168,13 @@ sections: $(BUILD_DIR)/$(TARGET).elf
 # Separate trusted application artifact; never flashed by this target.
 .PHONY: hello
 hello: $(BUILD_DIR)/hello.elf
-$(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -nostdlib -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c -o $@
+$(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/heap.h apps/lib/io.c apps/lib/io.h apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -nostdlib -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c -o $@
 
 $(BUILD_DIR)/application.o: kernel/application.h mm/image.h mm/exec.h apps/hello/abi.h
 $(BUILD_DIR)/cp32-shell.o: kernel/application.h mm/image.h mm/exec.h
+
+.PHONY: echo
+echo: $(BUILD_DIR)/echo.elf
+$(BUILD_DIR)/echo.elf: apps/hello/start.S apps/echo/echo.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -nostdlib -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/echo.map apps/hello/start.S apps/echo/echo.c -o $@

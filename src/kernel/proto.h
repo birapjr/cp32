@@ -33,6 +33,9 @@ _PROTOTYPE( char *k_getenv, (char *name)				);
 /* printk.c */
 _PROTOTYPE( void printk, (const char *fmt, ...)			);
 
+/* context.c: no memory-map or runnable-state changes. */
+_PROTOTYPE( int cp32_exec_frame, (struct proc *rp, reg_t pc, reg_t sp, reg_t argument) );
+
 /* proc.c */
 _PROTOTYPE( void interrupt, (int task)					);
 _PROTOTYPE( int lock_mini_send, (struct proc *caller_ptr, int dest, message *m_ptr));

@@ -239,7 +239,7 @@ register message *m_ptr;	/* pointer to request message */
   sigemptyset(&rpc->p_pending);
   rpc->p_pendcount = 0;
   rpc->p_pid = m_ptr->PID;	/* install child's pid */
-  rpc->p_reg.a[1] = 0;        /* child sees pid = 0 to know it is child */
+  rpc->p_reg.a[2] = 0;        /* call0 return value; a1 remains the stack */
 
 
   rpc->user_time = 0;		/* set all the accounting times to 0 */
@@ -346,11 +346,21 @@ register message *m_ptr;	/* pointer to request message */
 #define NLEN (sizeof(rp->p_name)-1)
 
   if (!isoksusern(m_ptr->PROC1)) return E_BAD_PROC;
-  /* PROC2 field is used as flag to indicate process is being traced */
-  if (m_ptr->PROC2) cause_sig(m_ptr->PROC1, SIGTRAP);
+  if (m_ptr->m_source != MM_PROC_NR) return EACCES;
   sp = (reg_t) m_ptr->STACK_PTR;
   rp = proc_addr(m_ptr->PROC1);
-  rp->p_reg.sp = sp;		/* set the stack pointer */
+  if (rp->p_flags & (P_SLOT_FREE | SENDING)) return E_BAD_PROC;
+  /* Exec replaces a blocked receive; reject a runnable target so it cannot
+   * execute a half-installed context if an IRQ preempts this SYS handler. */
+  if (!(rp->p_flags & RECEIVING)) return EINVAL;
+  if (cp32_exec_frame(rp,(reg_t)m_ptr->IP_PTR,sp,0) != OK) return EINVAL;
+  rp->p_blocked_frame_valid = FALSE;
+  rp->p_blocked_frame_result = 0;
+  rp->p_blocked_frame_pc = rp->p_blocked_frame_psw = rp->p_blocked_frame_sp = 0;
+  rp->p_messbuf = (message *)0;
+  rp->p_getfrom = ANY;
+  /* PROC2 indicates tracing. Retain MM's signal policy. */
+  if (m_ptr->PROC2) cause_sig(m_ptr->PROC1, SIGTRAP);
 #if (CHIP == M68000)
   rp->p_splow = sp;		/* set the stack pointer low water */
 #ifdef FPP
@@ -358,19 +368,20 @@ register message *m_ptr;	/* pointer to request message */
   fpp_new_state(rp);
 #endif
 #endif
-  rp->p_reg.pc = (reg_t) m_ptr->IP_PTR;	/* set pc */
   rp->p_alarm = 0;		/* reset alarm timer */
-  rp->p_flags &= ~RECEIVING;	/* MM does not reply to EXEC call */
-  if (rp->p_flags == 0) lock_ready(rp);
 
   /* Save command name for debugging, ps(1) output, etc. */
   phys_name = numap(m_ptr->m_source, (vir_bytes) m_ptr->NAME_PTR,
 							(vir_bytes) NLEN);
   if (phys_name != 0) {
 	phys_copy(phys_name, vir2phys(rp->p_name), (phys_bytes) NLEN);
-	for (np = rp->p_name; (*np & BYTE) >= ' '; np++) {}
+	rp->p_name[NLEN] = 0;
+	for (np = rp->p_name; np < rp->p_name + NLEN && (*np & BYTE) >= ' '; np++) {}
 	*np = 0;
   }
+  /* Publish only after the complete frame, bookkeeping and name are set. */
+  rp->p_flags &= ~RECEIVING;
+  if (rp->p_flags == 0) lock_ready(rp);
   return(OK);
 }
 
