@@ -4,15 +4,45 @@
 static const char greeting[]="Hello from a CP32 application!\n";
 /* Keep BSS in the fixture so the eventual loader must zero it. */
 static volatile unsigned started;
+static __attribute__((noinline)) int option(unsigned argc,char **argv,const char *name)
+{
+  unsigned i=0;
+  if(argc!=2) return 0;
+  while(name[i] && name[i]==argv[1][i]) i++;
+  return !name[i] && !argv[1][i];
+}
 int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_services *s)
 {
   unsigned i,n;
 
-  if(!s || (s->version<1 || s->version>5) || !s->write || !s->exit || started) return 1;
+  if(!s || (s->version<1 || s->version>7) || !s->write || !s->exit || started) return 1;
   started=1;
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='l' && argv[1][3]=='i' && argv[1][4]=='n' &&
-     argv[1][5]=='e' && !argv[1][6]) {
+  if(option(argc,argv,"--files")) {
+    int fd[4],k;char a[8],b[8];
+    if(cp32_io_init(s))return 1;
+    for(k=0;k<4;k++)if((fd[k]=cp32_open("/readme"))!=k+3)return 1;
+    if(cp32_open("/readme")!=-1 || cp32_errno!=CP32_EMFILE)return 1;
+    if(cp32_read(fd[0],a,5)!=5 || cp32_read(fd[1],b,5)!=5)return 1;
+    for(k=0;k<5;k++)if(a[k]!=b[k])return 1;
+    if(cp32_lseek(fd[0],0,1)!=5 || cp32_lseek(fd[1],0,1)!=5 ||
+       cp32_lseek(fd[0],-1,2)!=60 || cp32_read(fd[0],a,8)!=1 || a[0]!='\n' ||
+       cp32_read(fd[0],a,8)!=0)return 1;
+    if(cp32_close(fd[0]) || cp32_close(fd[0])!=-1 || cp32_errno!=CP32_EBADF)return 1;
+    if(cp32_open("/missing")!=-1 || cp32_errno!=CP32_ENOENT)return 1;
+    if(cp32_open("/boot")!=-1 || cp32_errno!=CP32_EISDIR)return 1;
+    /* Deliberately leave three handles to exercise normal-exit cleanup. */
+    return cp32_write(1,"File API OK\n",12)==12 ? 0 : 1;
+  }
+  if(option(argc,argv,"--errno")) {
+    char byte;
+    if(cp32_io_init(s)) return 1;
+    if(cp32_read(1,&byte,1)!=-1 || cp32_errno!=CP32_EBADF ||
+       cp32_write(1,0,1)!=-1 || cp32_errno!=CP32_EFAULT ||
+       cp32_readline(&byte,1)!=-1 || cp32_errno!=CP32_EINVAL ||
+       cp32_write(1,0,0)!=0 || cp32_errno!=CP32_EINVAL) return 1;
+    return cp32_write(1,"I/O errno OK\n",13)==13 ? 0 : 1;
+  }
+  if(option(argc,argv,"--line")) {
     char line[16];int count;
     if(cp32_io_init(s) || cp32_write(1,"Line: ",6)!=6) return 1;
     do {
@@ -22,8 +52,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     } while(count && line[count-1]!='\n');
     return 0;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='i' && argv[1][3]=='o' && !argv[1][4]) {
+  if(option(argc,argv,"--io")) {
     char line[64];int count;
     if(cp32_io_init(s) || cp32_write(1,"Standard input: ",16)!=16) return 1;
     count=cp32_read(0,line,sizeof(line));
@@ -32,9 +61,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     if(cp32_read(1,line,1)!=-1 || cp32_write(0,line,1)!=-1) return 1;
     return 0;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='r' && argv[1][3]=='e' && argv[1][4]=='a' &&
-     argv[1][5]=='d' && !argv[1][6]) {
+  if(option(argc,argv,"--read")) {
     char line[64];int count;
     if(s->version<5 || !s->read) return 1;
     if(s->write("Type a line: ",13)!=13) return 1;
@@ -43,9 +70,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     if(s->write("Read: ",6)!=6 || s->write(line,(unsigned)count)!=count) return 1;
     return 0;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='t' && argv[1][3]=='r' && argv[1][4]=='i' &&
-     argv[1][5]=='m' && !argv[1][6]) {
+  if(option(argc,argv,"--trim")) {
     void *base,*a,*b,*top;
     if(cp32_heap_init(s)) return 1;
     base=s->sbrk(0);a=cp32_malloc(32);top=s->sbrk(0);b=cp32_malloc(64);
@@ -58,9 +83,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     if(cp32_heap_trim()<=0 || s->sbrk(0)!=base) return 1;
     return s->write("Heap trim OK\n",13)==13 ? 0 : 1;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='r' && argv[1][3]=='e' && argv[1][4]=='s' &&
-     argv[1][5]=='i' && argv[1][6]=='z' && argv[1][7]=='e' && !argv[1][8]) {
+  if(option(argc,argv,"--resize")) {
     unsigned char *a,*b,*c; void *top;
     if(cp32_heap_init(s)) return 1;
     a=cp32_malloc(32); b=cp32_malloc(96); c=cp32_malloc(32);
@@ -76,9 +99,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     return s->write("Resize in place OK\n",sizeof("Resize in place OK\n")-1)==
       (int)(sizeof("Resize in place OK\n")-1) ? 0 : 1;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='a' && argv[1][3]=='l' && argv[1][4]=='l' &&
-     argv[1][5]=='o' && argv[1][6]=='c' && !argv[1][7]) {
+  if(option(argc,argv,"--alloc")) {
     unsigned char *a,*b;
     if(cp32_heap_init(s)) return 1;
     a=cp32_calloc(4,8);
@@ -96,9 +117,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     cp32_free(a);
     return s->write("Calloc/realloc OK\n",sizeof("Calloc/realloc OK\n")-1)==(int)(sizeof("Calloc/realloc OK\n")-1) ? 0 : 1;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='m' && argv[1][3]=='a' && argv[1][4]=='l' &&
-     argv[1][5]=='l' && argv[1][6]=='o' && argv[1][7]=='c' && !argv[1][8]) {
+  if(option(argc,argv,"--malloc")) {
     unsigned char *a,*b,*c;
     if(cp32_heap_init(s)) return 1;
     a=cp32_malloc(32); b=cp32_malloc(48);
@@ -114,9 +133,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     cp32_free(c);
     return s->write("Malloc/free OK\n",15)==15 ? 0 : 1;
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='h' && argv[1][3]=='e' && argv[1][4]=='a' &&
-     argv[1][5]=='p' && !argv[1][6]) {
+  if(option(argc,argv,"--heap")) {
     unsigned char *base;
     if(s->version<4 || !s->sbrk) return 1;
     base=s->sbrk(0);
@@ -159,9 +176,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     s->exit((int)value);
     return 1; /* A broken service must not fall through to the greeting. */
   }
-  if(argc==2 && argv[1][0]=='-' && argv[1][1]=='-' &&
-     argv[1][2]=='e' && argv[1][3]=='n' && argv[1][4]=='v' &&
-     argv[1][5]==0) {
+  if(option(argc,argv,"--env")) {
     for(i=0;envp && envp[i];i++) {
       for(n=0;envp[i][n];n++) {}
       if(s->write(envp[i],n)!=(int)n || s->write("\n",1)!=1) return 1;

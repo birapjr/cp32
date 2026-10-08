@@ -77,8 +77,8 @@ $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
-$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf | $(BUILD_DIR)
-	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf --echo $(BUILD_DIR)/echo.elf
+$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf $(BUILD_DIR)/cat.elf $(BUILD_DIR)/wc.elf $(BUILD_DIR)/ls.elf | $(BUILD_DIR)
+	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf --echo $(BUILD_DIR)/echo.elf --cat $(BUILD_DIR)/cat.elf --wc $(BUILD_DIR)/wc.elf --ls $(BUILD_DIR)/ls.elf
 
 $(BUILD_DIR)/minix-demo.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/minix-demo.o: $(BUILD_DIR)/minix-demo.h
@@ -168,8 +168,8 @@ sections: $(BUILD_DIR)/$(TARGET).elf
 # Separate trusted application artifact; never flashed by this target.
 .PHONY: hello
 hello: $(BUILD_DIR)/hello.elf
-$(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/heap.h apps/lib/io.c apps/lib/io.h apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Os -nostdlib -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c -o $@
+$(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/heap.h apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c lib/ansi/memcpy.c -o $@
 
 $(BUILD_DIR)/application.o: kernel/application.h mm/image.h mm/exec.h apps/hello/abi.h
 $(BUILD_DIR)/cp32-shell.o: kernel/application.h mm/image.h mm/exec.h
@@ -177,4 +177,19 @@ $(BUILD_DIR)/cp32-shell.o: kernel/application.h mm/image.h mm/exec.h
 .PHONY: echo
 echo: $(BUILD_DIR)/echo.elf
 $(BUILD_DIR)/echo.elf: apps/hello/start.S apps/echo/echo.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Os -nostdlib -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/echo.map apps/hello/start.S apps/echo/echo.c -o $@
+	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/echo.map apps/hello/start.S apps/echo/echo.c -o $@
+
+.PHONY: cat
+cat: $(BUILD_DIR)/cat.elf
+$(BUILD_DIR)/cat.elf: apps/hello/start.S apps/cat/cat.c apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/cat.map apps/hello/start.S apps/cat/cat.c apps/lib/io.c lib/ansi/memcpy.c -o $@
+
+.PHONY: wc
+wc: $(BUILD_DIR)/wc.elf
+$(BUILD_DIR)/wc.elf: apps/lib/output.h apps/lib/stream.h apps/hello/start.S apps/wc/wc.c apps/lib/output.c apps/lib/stream.c apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/wc.map apps/hello/start.S apps/wc/wc.c apps/lib/output.c apps/lib/stream.c apps/lib/io.c lib/ansi/memcpy.c -o $@
+
+.PHONY: ls
+ls: $(BUILD_DIR)/ls.elf
+$(BUILD_DIR)/ls.elf: apps/hello/start.S apps/ls/ls.c apps/lib/output.c apps/lib/output.h apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/ls.map apps/hello/start.S apps/ls/ls.c apps/lib/output.c apps/lib/io.c lib/ansi/memcpy.c -o $@

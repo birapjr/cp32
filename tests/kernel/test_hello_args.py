@@ -4,7 +4,7 @@ sys.dont_write_bytecode=True
 root=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(root/'tests'))
 from test_idle_handoff import extract_function
-code='\n'.join(extract_function(root/'src/kernel/cp32-shell.c',n) for n in ('cp32_shell_app_input','cp32_shell_words','cp32_shell_launch','cp32_shell_hello'))
+code='\n'.join(extract_function(root/'src/kernel/cp32-shell.c',n) for n in ('cp32_shell_app_input','cp32_shell_words','cp32_shell_redirect','cp32_shell_launch','cp32_shell_hello'))
 pre=r'''
 #include <assert.h>
 #include <stdint.h>
@@ -19,6 +19,8 @@ static const char *expected_path="/boot/hello", *expected_name="hello";
 static int denied,missing,statfail,exitcode;
 static int opens,closes,runs,expected,fail;
 static char printed[128];
+static int cp32_shell_input_fd=-1,redirected;
+static int cp32_fd_read(int fd,char *b,unsigned n){assert(fd==3 && n==64);memcpy(b,"file",4);return 4;}
 static int flushed,input_result=5;
 static void cp32_shell_flush(void) {flushed=1;}
 static int cp32_shell_tty_io(int op,char *buffer,int count) {
@@ -31,16 +33,18 @@ static int cp32_minix_abspath(const char *cwd,const char *p,char *out){
  if(p[0]=='/') strcpy(out,p); else snprintf(out,256,"%s/%s",cwd,p);
  return 0;
 }
-static int cp32_shell_open_file(const char *p){assert(!strcmp(p,expected_path));if(missing)return -1;opens++;return 2;}
+static int cp32_shell_open_file(const char *p){if(!strcmp(p,"/boot/readme")){opens++;return 3;}assert(!strcmp(p,expected_path));if(missing)return -1;opens++;return 2;}
 static int cp32_fd_fstat(int fd,struct cp32_minix_stat *s){assert(fd==2);s->size=100;s->mode=denied ? 0100444:0100555;return statfail;}
-static void cp32_fd_close(int fd){assert(fd==2);closes++;}
+static void cp32_fd_close(int fd){assert(fd==2 || fd==3);closes++;}
 static void cp32_shell_print(const char *p){strcat(printed,p);}
 static void cp32_shell_print_u32(unsigned n){char b[16];snprintf(b,sizeof(b),"%u",n);strcat(printed,b);}
+int cp32_shell_app_input(char *,unsigned);
 static int cp32_application_run(int read,void *ctx,uint32_t size,unsigned argc,
  const char *const argv[],int out,int *status) {
  (void)read;(void)out;assert(*(int *)ctx==2 && size==100 && argc==(unsigned)expected);
  assert(!strcmp(argv[0],expected_name));
  if(argc==3) assert(!strcmp(argv[1],"one") && !strcmp(argv[2],"two"));
+ if(redirected) {char b[64];assert(cp32_shell_input_fd==3 && cp32_shell_app_input(b,64)==4 && !memcmp(b,"file",4));}
  runs++;*status=exitcode;return fail;
 }
 '''
@@ -109,6 +113,16 @@ int main(void){
  denied=1;printed[0]=0;cp32_shell_launch("/boot/echo",2);
  assert(!strcmp(printed,"File is not executable\r\n"));denied=0;
  strcpy(cp32_shell_cwd,"/boot");expected_name="echo";
+ const char *path;
+ strcpy(words,"echo '<' \\<");assert(!cp32_shell_redirect(words,&path) && !path);
+ strcpy(words,"echo < 'readme'");assert(!cp32_shell_redirect(words,&path) && !strcmp(path,"readme"));
+ strcpy(words,"echo << readme");assert(cp32_shell_redirect(words,&path)==-1);
+ strcpy(words,"echo <");assert(cp32_shell_redirect(words,&path)==-1);
+ strcpy(words,"echo < readme extra");assert(cp32_shell_redirect(words,&path)==-1);
+ redirected=1;printed[0]=0;cp32_shell_launch("echo < readme",0);
+ assert(!strcmp(printed,"Application exit=0\r\n") && cp32_shell_input_fd==-1 && opens==closes);
+ fail=-1;printed[0]=0;cp32_shell_launch("echo < readme",0);
+ assert(cp32_shell_input_fd==-1 && opens==closes);fail=0;redirected=0;
  printed[0]=0;exitcode=-7;cp32_shell_launch("echo",0);assert(!strcmp(printed,"Application exit=-7\r\n"));
 
 }

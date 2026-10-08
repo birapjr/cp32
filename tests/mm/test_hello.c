@@ -28,7 +28,11 @@ static int input(char *p,unsigned n) {assert(n==64);memcpy(p,"test\n",5);return 
 static unsigned line_at;
 static int line_input(char *p,unsigned n) {static const char text[]="a longer line than sixteen\n";assert(n==1);if(!text[line_at])return 0;*p=text[line_at++];return 1;}
 int main(int argc,char **argv) {
-  struct cp32_app_services services={1,output,quit,0,0,0,0};
+  struct cp32_app_services services={1,output,quit,0,0,0,0,0};
+  if(argc>1 && !strcmp(argv[1],"errno")) {
+    char *args[]={"hello","--errno",0};services.version=5;services.read=input;
+    assert(!app_main(2,args,0,&services));assert(!strcmp(captured,"I/O errno OK\n"));return 0;
+  }
   if(argc>1 && !strcmp(argv[1],"line")) {
     char *args[]={"hello","--line",0};services.version=5;services.read=line_input;
     assert(!app_main(2,args,0,&services));assert(!strcmp(captured,"Line: a longer line than sixteen\n"));return 0;
@@ -112,7 +116,7 @@ int main(int argc,char **argv) {
     return 0;
   }
   assert(app_main(0,0,0,0)==1);
-  services.version=6; assert(app_main(0,0,0,&services)==1);
+  services.version=8; assert(app_main(0,0,0,&services)==1);
   char *args[]={"hello","one","two",0};
   services.version=1; assert(!app_main(3,args,0,&services)); assert(writes==7);
   assert(!strcmp(captured,"Hello from a CP32 application!\narg: one\narg: two\n"));

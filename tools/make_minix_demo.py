@@ -18,7 +18,7 @@ INDIRECT = b''.join(
 
 DOUBLE = b''.join(f'Double indirect line {i:02d}\n'.encode() for i in range(1,11)) + b'DOUBLE INDIRECT READ OK\n'
 
-def build_image(include_indirect=False, hello=None, echo=None):
+def build_image(include_indirect=False, hello=None, echo=None, cat=None, wc=None, ls=None):
     """Keep a minimal parser fixture; CLI firmware always includes INDIRECT."""
     disk = bytearray(65536)
     disk[1024:1048] = struct.pack('<6HIHHI', 32, 0, 1, 1, 6, 0,
@@ -83,23 +83,36 @@ def build_image(include_indirect=False, hello=None, echo=None):
         struct.pack_into('<I',disk,28*1024,29)
         directory(29,[(3,'readme')])
     entries=[(2,'.'),(1,'..'),(3,'readme'),(4,'indirect'),(5,'double'),(6,'large')]
-    for number,name,payload,first in ((7,'hello',hello,30),(8,'echo',echo,37)):
+    next_zone = 30
+    for number,name,payload in ((7,'hello',hello),(8,'echo',echo),(9,'cat',cat),(10,'wc',wc),(11,'ls',ls)):
         if payload is None:
             continue
-        if not include_indirect or not payload or len(payload)>7*1024:
-            raise ValueError('application requires full fixture and 1..7168 bytes')
-        zones=(len(payload)+1023)//1024
+        if not include_indirect or not payload:
+            raise ValueError('application requires full fixture and nonempty payload')
+        count = (len(payload)+1023)//1024
+        # MINIX V2: seven direct zones, followed by 32-bit indirect entries.
+        # This small disk needs at most one single-indirect table per file.
+        required = count + (count > 7)
+        if next_zone + required > 63:
+            raise ValueError('applications exceed available MINIX image zones')
+        zones = list(range(next_zone, next_zone+count))
+        table = next_zone+count if count > 7 else 0
+        pointers = zones[:7] + [0] * max(0, 7-count) + [table, 0, 0]
+        if table:
+            for index, zone in enumerate(zones[7:]):
+                struct.pack_into('<I', disk, table*1024+index*4, zone)
         entries.append((number,name))
         inode(2,0o40755,3,len(entries)*16,7)
         directory(7,entries)
         offset=4096+(number-1)*64
         disk[offset:offset+64]=struct.pack('<4H4I10I',0o100555,1,0,0,
-            len(payload),0,0,0,*range(first,first+zones),*([0]*(10-zones)))
+            len(payload),0,0,0,*pointers)
         disk[2048+number//8] |= 1<<(number%8)
-        for zone in range(first,first+zones):
+        for zone in range(next_zone,next_zone+required):
             bit=zone-5
             disk[3072+bit//8] |= 1<<(bit%8)
-        disk[first*1024:first*1024+len(payload)]=payload
+        disk[next_zone*1024:next_zone*1024+len(payload)]=payload
+        next_zone += required
     return bytes(disk)
 
 def encode_runs(disk):
@@ -113,7 +126,13 @@ def encode_runs(disk):
         start=i
         while i<len(disk) and disk[i]!=0:
             i+=1
-        runs.append((start,disk[start:i]))
+        # Each run costs four metadata bytes. Include short zero gaps when
+        # cheaper than another record; reconstructed disk bytes are identical.
+        if runs and start-(runs[-1][0]+len(runs[-1][1]))<=4:
+            previous,_=runs.pop()
+            runs.append((previous,disk[previous:i]))
+        else:
+            runs.append((start,disk[start:i]))
     return runs
 
 
@@ -123,10 +142,16 @@ def main():
     parser.add_argument('--header', required=True)
     parser.add_argument('--hello')
     parser.add_argument('--echo')
+    parser.add_argument('--cat')
+    parser.add_argument('--wc')
+    parser.add_argument('--ls')
     args = parser.parse_args()
     disk = build_image(include_indirect=True,
                        hello=Path(args.hello).read_bytes() if args.hello else None,
-                       echo=Path(args.echo).read_bytes() if args.echo else None)
+                       echo=Path(args.echo).read_bytes() if args.echo else None,
+                       cat=Path(args.cat).read_bytes() if args.cat else None,
+                       wc=Path(args.wc).read_bytes() if args.wc else None,
+                       ls=Path(args.ls).read_bytes() if args.ls else None)
     Path(args.image).write_bytes(disk)
     # Offset/length records plus packed data avoid firmware-sized zero gaps.
     runs=encode_runs(disk)

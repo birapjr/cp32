@@ -10,7 +10,7 @@ static int write_text(const char *s,unsigned n) {
 }
 static void quit(int n) {(void)n;assert(0);}
 int main(int argc,char **argv) {
-  struct cp32_app_services services={5,write_text,quit,0,0,0,0};
+  struct cp32_app_services services={5,write_text,quit,0,0,0,0,0};
   char *args[]={"echo","one","two",0};
   if(argc>1 && !strcmp(argv[1],"empty")) {
     assert(!app_main(1,args,0,&services));assert(!strcmp(output,"\n"));

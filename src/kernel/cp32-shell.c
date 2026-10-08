@@ -6,12 +6,14 @@
 #include "../lib/posix/dirent.h"
 #include "tty.h"
 #include "application.h"
+#include "../apps/hello/abi.h"
 #include <string.h>
 #include <minix/com.h>
 #include <minix/cp32_mm.h>
 #include <minix/callnr.h>
 #include <errno.h>
 extern int _sendrec(int dest, message *m);
+static int cp32_shell_input_fd=-1;
 static char cp32_tty_line[64];
 static char cp32_shell_cwd[CP32_MINIX_PATH_MAX+1] = "/";
 static char cp32_shell_previous[CP32_MINIX_PATH_MAX+1];
@@ -344,9 +346,95 @@ CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count)
   /* TTY copies into the FS caller's mapped stack, then FS copies into the
    * already validated application buffer while that child remains blocked. */
   cp32_shell_flush();
-  result=cp32_shell_tty_io(DEV_READ,input,count);
+  result=cp32_shell_input_fd>=0 ? cp32_fd_read(cp32_shell_input_fd,input,count) :
+         cp32_shell_tty_io(DEV_READ,input,count);
   if(result>0 && (unsigned)result<=count) memcpy(buffer,input,result);
   return result;
+}
+
+/* Child fd 3..6 never exposes the shell's executable or redirected input fd.
+ * Store backing fd+1 so zero-initialized state is empty. */
+static int cp32_app_fds[CP32_APP_FILE_MAX];
+CP32_IRAM_EXT void cp32_shell_app_files_reset(void)
+{
+  unsigned i;
+  for(i=0;i<CP32_APP_FILE_MAX;i++) if(cp32_app_fds[i]) {
+    cp32_fd_close(cp32_app_fds[i]-1);cp32_app_fds[i]=0;
+  }
+}
+CP32_IRAM_EXT static int cp32_app_file_error(int r)
+{
+  switch(-r) {
+    case CP32_FILE_NOT_FOUND:return -2;
+    case CP32_FILE_IS_DIR:return -21;
+    case CP32_FILE_NOT_DIR:return -20;
+    case CP32_FILE_NAME:return -36;
+    case CP32_FILE_BAD_FD:return -9;
+    case CP32_FILE_LIMIT:return -24;
+    default:return -5;
+  }
+}
+/* Both records are nine 32-bit unsigned fields in the same declared order. */
+typedef char cp32_stat_layout_check[(sizeof(struct cp32_app_stat)==
+                                    sizeof(struct cp32_minix_stat)) ? 1 : -1];
+CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned arg)
+{
+  int r,slot;
+  unsigned position;
+  if(op==CP32_APP_STAT) {
+    char path[CP32_MINIX_PATH_MAX+1];
+    struct cp32_minix_stat info;
+    if(!*(char *)buffer)return -2;
+    r=cp32_minix_abspath(cp32_shell_cwd,buffer,path);
+    if(!r)r=cp32_minix_stat(cp32_shell_disk_read,cp32_ramdisk_capacity(),path,&info);
+    if(!r)memcpy((char *)buffer+256,&info,sizeof(info));
+    return r ? cp32_app_file_error(r) : 0;
+  }
+  if(op==CP32_APP_OPEN || op==CP32_APP_OPENDIR) {
+    char path[CP32_MINIX_PATH_MAX+1];
+    struct cp32_minix_stat info;
+    if(!*(char *)buffer)return -2;
+    for(slot=0;slot<CP32_APP_FILE_MAX;slot++)if(!cp32_app_fds[slot])break;
+    if(slot==CP32_APP_FILE_MAX)return -24;
+    r=cp32_minix_abspath(cp32_shell_cwd,buffer,path);
+    if(r)return cp32_app_file_error(r);
+    r=op==CP32_APP_OPENDIR ? cp32_fd_open(cp32_shell_disk_read,cp32_ramdisk_capacity(),path) :
+                           cp32_shell_open_file(path);
+    if(r<0)return cp32_app_file_error(r);
+    fd=r;r=cp32_fd_fstat(fd,&info);
+    if(!r && op==CP32_APP_OPENDIR && (info.mode & 0170000)!=0040000) {
+      cp32_fd_close(fd);return -20;
+    }
+    if(r || !(info.mode & 0444)) {
+      cp32_fd_close(fd);return r ? cp32_app_file_error(r) : -13;
+    }
+    cp32_app_fds[slot]=fd+1;return slot+3;
+  }
+  if(fd<3 || fd>=3+CP32_APP_FILE_MAX || !cp32_app_fds[fd-3])return -9;
+  slot=fd-3;fd=cp32_app_fds[slot]-1;
+  if(op==CP32_APP_FSTAT) {
+    struct cp32_minix_stat info;
+    r=cp32_fd_fstat(fd,&info);
+    if(!r)memcpy(buffer,&info,sizeof(info));
+  } else if(op==CP32_APP_READDIR) {
+    struct cp32_app_dirent entry;
+    memset(&entry,0,sizeof(entry));
+    r=cp32_fd_readdir(fd,&entry.inode,entry.name);
+    if(r==1)memcpy(buffer,&entry,sizeof(entry));
+  } else if(op==CP32_APP_CLOSE) {
+    r=cp32_fd_close(fd);
+    if(!r)cp32_app_fds[slot]=0;
+  } else if(op==CP32_APP_READ) {
+    char data[64];
+    if(arg>sizeof(data))return -22;
+    r=cp32_fd_read(fd,data,arg);
+    if(r>0)memcpy(buffer,data,r);
+  } else if(op>=CP32_APP_SEEK_SET && op<=CP32_APP_SEEK_END) {
+    r=cp32_fd_seek(fd,(int)arg,op-CP32_APP_SEEK_SET,&position);
+    if(!r)return position;
+    if(r==-CP32_SUPER_INVALID)return -22;
+  } else return -22;
+  return r<0 ? cp32_app_file_error(r) : r;
 }
 
 CP32_IRAM_EXT static void cp32_shell_app_output(const char *buffer,unsigned count)
@@ -397,11 +485,32 @@ CP32_IRAM_EXT static int cp32_shell_words(char *text,const char **argv,
   return 0;
 }
 
+/* One trailing input redirection; quoted/escaped '<' stays an argument. */
+CP32_IRAM_EXT static int cp32_shell_redirect(char *text,const char **path)
+{
+  char *p=text,*split=0,quote=0;
+  unsigned count;
+  *path=0;
+  for(;*p;p++) {
+    if(*p=='\\' && quote!='\'' && p[1]) {
+      if(!quote || p[1]=='"' || p[1]=='\\' || p[1]=='$' || p[1]=='`') p++;
+      continue;
+    }
+    if(quote) {if(*p==quote)quote=0;continue;}
+    if(*p=='\'' || *p=='"') {quote=*p;continue;}
+    if(*p=='<') {if(split)return -1;split=p;}
+  }
+  if(!split) return 0;
+  *split++=0;
+  if(cp32_shell_words(split,path,1,&count) || count!=1 || !(*path)[0]) return -1;
+  return 0;
+}
+
 CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
 {
   struct cp32_minix_stat info;
   char copy[64], full[CP32_MINIX_PATH_MAX+1], *p;
-  const char *argv[9];
+  const char *argv[9],*input_path;
   int hello=mode==1;
   unsigned argc=hello ? 1 : 0,n=0;
   int status=0,result,fd;
@@ -409,6 +518,9 @@ CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
   while(n<sizeof(copy)-1 && args[n]) { copy[n]=args[n]; n++; }
   if(args[n]) goto usage;
   copy[n]=0;
+  if(cp32_shell_redirect(copy,&input_path)) {
+    cp32_shell_print("Invalid input redirection\r\n");return;
+  }
   result=cp32_shell_words(copy,argv+argc,9-argc,&n);
   if(result==-2) { cp32_shell_print("Invalid command quoting\r\n"); return; }
   if(result) goto usage;
@@ -433,8 +545,16 @@ CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
     cp32_shell_print("File is not executable\r\n");
     return;
   }
+  if(!result && input_path) {
+    result=cp32_minix_abspath(cp32_shell_cwd,input_path,full);
+    if(!result) cp32_shell_input_fd=cp32_shell_open_file(full);
+    if(result || cp32_shell_input_fd<0) {
+      cp32_fd_close(fd);cp32_shell_print("Cannot open input\r\n");return;
+    }
+  }
   if(!result) result=cp32_application_run(cp32_shell_app_read,&fd,info.size,
                                         argc,argv,cp32_shell_app_output,&status);
+  if(cp32_shell_input_fd>=0) {cp32_fd_close(cp32_shell_input_fd);cp32_shell_input_fd=-1;}
   cp32_fd_close(fd);
   if(result) cp32_shell_print(hello ? "Hello load failed\r\n" : "Application load failed\r\n");
   else {
@@ -743,16 +863,7 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
               (line[3]==' ' || line[3]=='\t'))) {
     cp32_shell_launch(line[3] ? line+4 : "",0);
   } else if (strcmp(line, "font") == 0) {
-    cp32_shell_print("quotes: \" '\r\n");
-    cp32_shell_print("back:   \\\r\n");
-    cp32_shell_print("bang:   !\r\n");
-    cp32_shell_print("plus:   +\r\n");
-    cp32_shell_print("hyphen: -\r\n");
-    cp32_shell_print("under:  _\r\n");
-    cp32_shell_print("slash:  /\r\n");
-    cp32_shell_print("equals: =\r\n");
-    cp32_shell_print("dots: . ..\r\n");
-    cp32_shell_print("case: Aa Cc\r\n");
+    cp32_shell_print("< > [ ] { } ( ) | ? \" ' \\ ! + - _ / = . .. A a C c\r\n");
   } else if (strcmp(line, "ls") == 0) {
     cp32_shell_ls(".");
   } else if (line[0] == 'l' && line[1] == 's' && line[2] == ' ') {

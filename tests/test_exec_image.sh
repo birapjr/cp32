@@ -12,9 +12,13 @@ fi
 if [ -f "$root/src/build/echo.elf" ]; then
   "$work/test" "$root/src/build/echo.elf"
 fi
+if [ -f "$root/src/build/wc.elf" ]; then "$work/test" "$root/src/build/wc.elf"; fi
+if [ -f "$root/src/build/ls.elf" ]; then "$work/test" "$root/src/build/ls.elf"; fi
+if [ -f "$root/src/build/cat.elf" ]; then "$work/test" "$root/src/build/cat.elf"; fi
 cc -std=c99 -Wall -Wextra -Werror -I"$root/src/apps/hello" \
   "$root/tests/mm/test_hello.c" "$root/src/apps/hello/hello.c" "$root/src/apps/lib/heap.c" "$root/src/apps/lib/io.c" -o "$work/hello"
 "$work/hello"
+"$work/hello" errno
 "$work/hello" line
 "$work/hello" io
 "$work/hello" read
