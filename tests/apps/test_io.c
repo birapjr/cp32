@@ -19,7 +19,7 @@ static int input(char *p,unsigned n) {
  memcpy(p,"ok\n",3);return 3;
 }
 int main(void) {
- struct cp32_app_services s={5,output,0,0,0,0,input};char b[128];
+ struct cp32_app_services s={5,output,0,0,0,0,input,0};char b[128];
  assert(cp32_write(1,source,1)==-1 && cp32_io_init(0)==-1);
  assert(!cp32_io_init(&s) && cp32_io_init(&s)==-1);
  memset(source,'a',sizeof(source));
@@ -42,5 +42,12 @@ int main(void) {
  line="partial";at=0;fail_at=3;
  assert(cp32_readline(b,16)==-1 && !strcmp(b,"par"));
  assert(cp32_readline(b,1)==-1 && cp32_readline(0,16)==-1);
+ assert(cp32_read(2,b,1)==-1 && cp32_errno==CP32_EBADF);
+ assert(cp32_write(1,0,1)==-1 && cp32_errno==CP32_EFAULT);
+ assert(cp32_read(0,b,~0U)==-1 && cp32_errno==CP32_EINVAL);
+ assert(!cp32_write(1,0,0) && cp32_errno==CP32_EINVAL);
+ line=0;mode=1;
+ assert(cp32_read(0,b,64)==-1 && cp32_errno==CP32_EIO);
+ mode=2;assert(!cp32_read(0,b,64) && cp32_errno==CP32_EIO);
  return 0;
 }

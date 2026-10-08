@@ -595,3 +595,343 @@ Then echo ok, hello --alloc, disk and mm. No flashing performed.
 Validation: clean build, all 33 host scripts and ELF section/segment checks
 pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386e80,
 _runtime_stack_end=3fce6030 remain within reserved regions.
+
+
+## APP-CAT 107 — standalone standard-input utility (2026-09-30)
+
+Image 106 confirms line-reading and allocator, echo, disk/MM, IPC and SYS
+regressions. Capture: docs/hardware/app-line-v106.log.
+
+MINIX commands/simple/cat.c copies standard input when no filenames are given.
+Add independently linked apps/cat/cat.c using the shared cp32_read/cp32_write
+library. Copy until EOF, fail on I/O errors, reject unsupported file arguments
+with usage/exit=2. The kernel's cat filename builtin remains unchanged.
+This is the stdin subset, not the complete MINIX utility or file API.
+
+Package inode 9 at zones 44..50, preserving the other application extents and
+reserved disk diagnostic sector. Reuse the fixed ELF slot, call0 crt0 and ABI
+v5. make cat builds it independently. Host tests cover multi-read input,
+short writes, EOF, read/write failures and unsupported arguments. The real
+filesystem-to-ELF test now loads all three programs sequentially.
+
+Hardware pending: [FEATURE APP-CAT 107]1 / [TEST APP-CAT 107]. Run ls boot,
+run /boot/cat, enter two lines, then Ctrl-D on an empty line. Expect copied
+lines and Application exit=0. Repeat for slot reuse, then hello --alloc,
+echo ok, disk and mm. EOF after typed text may require a second Ctrl-D.
+No flashing performed.
+
+Validation: clean build, all 34 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40386e80,
+_runtime_stack_end=3fce67c0 remain within reserved regions.
+
+
+## APP-REDIRECT 108 — application stdin from files (2026-10-01)
+
+Image 107 confirms repeated standalone cat input/EOF, allocator and device
+regressions. Capture: docs/hardware/app-cat-v107.log.
+
+MINIX commands/ash/redir.c NFROM opens input read-only and restores/closes
+redirected descriptors. CP32 adds one trailing unquoted < path to application
+launch only. The scanner respects quote/escape state; the filename is decoded
+with the bounded word parser. Paths resolve against shell cwd. Missing,
+multiple or extra operands are rejected before launch. Quoted '<' is literal.
+
+The parent opens the file after validating the executable, services app reads
+through the existing FS staging buffer, and closes/resets its input descriptor
+on normal exit or load failure. Subsequent launches again use TTY. The shell
+itself does not lose its keyboard input. No ABI/frame/map changes. This is
+single foreground redirection, not per-process FS tables, output redirection,
+pipes or application open/close. Other builtins retain existing parsers.
+
+Host tests cover parser quoting/errors, redirected read routing, successful
+launch and failed-load cleanup, plus existing TTY and filesystem tests.
+Hardware pending: [FEATURE APP-REDIRECT 108]1 / [TEST APP-REDIRECT 108]. Try
+run /boot/cat < readme, run /boot/cat < boot/readme, run /boot/cat < nosuch,
+then run /boot/cat (type a line and Ctrl-D), hello --alloc, disk and mm.
+Not flashed.
+
+Validation: clean build, all 34 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403742ac, _iram_ext_end=40387074,
+_runtime_stack_end=3fce69f0 remain within reserved regions.
+
+
+## APP-WC 112 — standalone word count (2026-10-07)
+
+User confirms image 111 looks good. Retain expanded font samples.
+MINIX commands/simple/wc.c counts newline bytes, whitespace-delimited words
+and bytes with -l/-w/-c selection. Add a standalone /boot/wc implementing the
+stdin subset with combined/separate options and fixed lines/words/bytes output
+order. Reuse shared I/O callbacks and shell-owned input redirection. Preserve
+word state across reads, count the final non-newline word, reject unsupported
+file operands and fail on I/O/counter overflow. No new kernel ABI or layout.
+
+Package inode 10 in zones 51..57; keep existing fixtures and diagnostic block
+63 intact. make wc builds its own ELF. Tests cover byte-at-a-time input,
+short output, empty/whitespace-only input, option selection and error paths.
+Real filesystem-to-ELF tests load all four application images sequentially.
+
+Hardware pending: [FEATURE APP-WC 112]1 / [TEST APP-WC 112]. Run
+run /boot/wc < readme, run /boot/wc -l < readme, run /boot/wc -c < readme,
+then run /boot/wc interactively (type one two, Enter, then Ctrl-D on an empty
+line; expect 1 2 8). Existing builtin wc remains available for comparison.
+Then hello --alloc, disk and mm. No flashing performed.
+
+Validation: clean build, all 35 host scripts and ELF section/segment checks
+pass without compiler warnings. _iram_end=403743d4, _iram_ext_end=40387008,
+_runtime_stack_end=3fce7360 stays below app alias 3fce8000 (3232-byte margin).
+
+
+## APP-ERRNO 113 — application I/O errors (2026-10-07)
+
+Image 112 hardware confirms readme counts 2 8 61, -l=2, -c=61 and interactive
+1 2 8. Capture: docs/hardware/app-wc-v112.log.
+
+MINIX include/errno.h defines positive userspace EIO=5, EBADF=9, EFAULT=14,
+EINVAL=22. Add application-local cp32_errno with scoped CP32_ constants to
+avoid kernel sign conventions. Standard-stream wrappers distinguish invalid
+stream direction, null nonempty buffer, initialization/count errors and
+callback failure. Success/EOF leaves errno unchanged; partial-write failure
+returns progress and records EIO. Opaque bootstrap callback errors map to EIO
+rather than inventing underlying FS error identities. Heap errno and full libc
+errno/syscall translation remain unfinished. Kernel ABI stays v5.
+
+hello --errno checks the new behavior. Consolidate repeated hello option
+matching without removing modes. The added code exceeded the fixed 7168-byte
+fixture, so independently linked applications use -mno-longcalls alongside
+-Os: all direct callees are within their validated 16 KiB text region. The
+linker resolves local call0 relocations; service callbacks remain callx0.
+Kernel compilation remains unchanged. This compiler change needs hardware
+regression. Final hello ELF is 7156 bytes, only 12 bytes below its fixture
+limit; further growth needs a deliberate packaging/runtime-size solution.
+
+Hardware pending: [FEATURE APP-ERRNO 113]1 / [TEST APP-ERRNO 113]. Run hello
+--errno twice, hello --alloc, hello --io (enter a line), run /boot/wc < readme,
+echo ok, disk and mm. Expect I/O errno OK and exit=0. Not flashed.
+
+Validation: clean build, all 35 host scripts, ELF section/segment checks and
+application call disassembly pass without compiler warnings.
+_iram_end=403743d4, _iram_ext_end=40387008, _runtime_stack_end=3fce7540.
+
+
+## APP-ZONES 114 — variable application file allocation (2026-10-07)
+
+Hardware image 113 confirms repeated I/O errno checks, calloc/realloc, interactive
+I/O, echo, disk and MM. Capture: docs/hardware/app-errno-v113.log. The wc command
+in that capture was consumed by hello --io, so it is not a new wc regression.
+
+MINIX V2 fs/const.h and read.c use seven direct zones followed by a table of
+32-bit zone numbers. The image generator now uses this format for applications
+and packs actual file sizes into shared zones 30..62, instead of reserving seven
+blocks per executable. It accounts for indirect tables, updates allocation
+bitmaps and rejects aggregate exhaustion. Block 63 stays reserved for the disk
+diagnostic. ESP32 application addresses, call0 ABI, fixed executable slots and
+read-only runtime filesystem are unchanged. This removes a packaging limit,
+not the SRAM limit: embedded bytes and sparse-run records still consume SRAM.
+
+Validation: clean build and all 35 host scripts pass. Tests cover the 7169-byte
+boundary, exact zone capacity, aggregate overflow, bitmaps, following-file
+placement and a padded valid ELF read through production FS and image loader.
+ELF size/sections/segments pass; _iram_end=403743d4,
+_iram_ext_end=40387008, _runtime_stack_end=3fce7550 (2736 bytes margin).
+
+Hardware pending: [FEATURE APP-ZONES 114]1 / [TEST APP-ZONES 114]. Run hello
+--errno, hello --alloc, echo ok, run /boot/wc < readme, run /boot/cat < readme,
+disk and mm. Large-file loading is host-tested; current production hello still
+fits direct zones. No flashing performed.
+
+
+## APP-STREAM 115 — buffered application input (2026-10-07)
+
+Image 114 hardware confirms errno/allocator checks, echo, redirected wc
+(2 8 61), cat, disk and MM; capture: docs/hardware/app-zones-v114.log.
+
+Add apps/lib/stream.c and stream.h: caller-owned 64-byte stdin buffering,
+cp32_getc, cp32_fgets, cp32_feof, cp32_ferror and cp32_clearerr. MINIX 2
+lib/stdio/fgetc.c and fgets.c establish unsigned-character results, retained
+newline, bounded NUL termination, EOF after partial text and error distinction.
+CP32 uses existing ABI-v5 read callbacks over IPC instead of a full FILE/syscall
+runtime. EOF/error remain sticky until clearerr; clearing flags preserves unread
+buffered bytes. Capacity below two is rejected. A valid stream pointer is
+required. Do not mix buffered and raw reads from the same input source.
+
+The standalone wc now uses buffered getc in its normal counting path. No kernel
+ABI or process layout changes. Full stdio, file opening and output buffering
+remain unfinished. Tests cover high-bit/NUL bytes, refill boundaries, line
+fragments, final lines without newline, sticky EOF/error, recovery and partial
+line failure; existing wc checks cover counting and read/write errors.
+
+Validation: clean build and all 36 host scripts pass, including UBSan stream
+checks; ELF sections/segments pass. _iram_end=403743d4,
+_iram_ext_end=40387008, _runtime_stack_end=3fce7870. Only 1936 bytes remain
+before the application text's DRAM alias; further embedded growth needs care.
+Hardware pending: [FEATURE APP-STREAM 115]1 / [TEST APP-STREAM 115]. Test
+run /boot/wc < readme (2 8 61), run /boot/wc -l < readme (2),
+run /boot/wc -c < readme (61), then hello --errno, disk and mm.
+Line helper behavior is host-tested; wc exercises character buffering on hardware.
+Not flashed.
+
+
+## APP-FLUSH 116 — buffered application output (2026-10-08)
+
+Image 115 hardware confirms wc default/line/byte counts (2 8 61 / 2 / 61),
+hello --errno, disk and MM. The capture also shows sustained timer activity
+through a long idle interval; this is not concurrent-application stress proof.
+Capture: docs/hardware/app-stream-v115.log.
+
+MINIX 2 lib/stdio/fflush.c reports completion or a stream error when buffered
+output cannot be written. CP32 adds apps/lib/output.c and output.h with a
+caller-owned 64-byte stdout/stderr buffer, cp32_putc, cp32_flush, error inspection
+and clearerr. It uses the existing ABI-v5 bounded IPC write wrapper, preserving
+bare-metal call0 and current process ownership. A partial write removes only
+the delivered prefix, retaining unsent bytes for retry after clearerr. A full
+buffer is flushed before accepting the next character; failure leaves that
+character unconsumed. Zero progress is an I/O error. Flush is explicit before
+exit or blocking input; automatic exit cleanup, full FILE and general file
+descriptors remain unimplemented. Do not interleave raw and buffered writes.
+
+The standalone wc now buffers its result and flushes before returning; its
+usage errors still use immediate stderr. Tests cover high-bit/NUL characters,
+full buffers, empty flush, repeated short writes, partial failure and retry,
+sticky errors, zero-progress writes, invalid streams and failure before
+accepting the next character. Existing wc tests exercise normal counts and
+input/output failure through the production application.
+
+Validation: clean build, all 37 host scripts including UBSan checks, ELF
+sections/segments and image layout pass without compiler warnings.
+_iram_end=403743d4, _iram_ext_end=40387008, _runtime_stack_end=3fce7b60.
+Only 1184 bytes remain before the application code DRAM alias. Embedded
+application growth will need a memory-placement or packaging improvement soon.
+Hardware pending: [FEATURE APP-FLUSH 116]1 / [TEST APP-FLUSH 116]. Run
+run /boot/wc < readme, run /boot/wc -l < readme, run /boot/wc -c < readme,
+hello --errno, disk and mm. Expected counts remain 2 8 61 / 2 / 61.
+Write-failure injection remains host-tested. Not flashed.
+
+
+## APP-FILES 117 — application file access and utility operands (2026-10-08)
+
+Image 116 hardware passes default/selected wc counts, errno, disk and MM.
+Capture: docs/hardware/app-flush-v116.log.
+
+This feature spans the application ABI, IPC, foreground FS ownership, libc
+wrappers and utilities. MINIX 2 fs/open.c do_open/do_close/do_lseek and
+filedes.c establish per-client descriptors, independent open offsets, seek
+validation and closing references. CP32 retains its single trusted fixed
+application slot and adapts these rules to four owned handles (3..6), backed
+by the existing read-only MINIX filesystem. Shell executable/redirection
+handles are never exposed to the child. The parent handles requests while
+waiting for that child and closes leftovers before launch and on normal exit.
+This does not add concurrent FS clients, fork inheritance or fault cleanup.
+
+ABI v6 appends one typed file request callback; earlier fields keep their
+layout. Application callbacks validate process identity and use SENDREC to FS;
+the parent checks operation, transfer/path length and complete application
+memory span before dereferencing. Open names include a terminator and are
+bounded to 255 bytes. Relative paths resolve from the waiting shell cwd.
+Directories are rejected; a regular file needs read bits. This is the trusted
+bootstrap permission policy, not full credential-based POSIX authorization.
+File reads are staged through FS memory and capped at 64 bytes. Seek supports
+signed 32-bit offsets and SET/CUR/END. Helpers translate private FS statuses
+into positive MINIX errno in the application, preserving specific missing,
+directory, descriptor, permission, exhaustion and argument errors.
+
+Public wrappers: cp32_open(path), cp32_read(fd,buffer,count), cp32_lseek(fd,
+offset,whence), cp32_close(fd). Buffered input can select a file descriptor;
+reinitialize only when intentionally discarding unread buffered data.
+Standalone cat copies sequential file operands or '-' stdin. Standalone wc
+accepts -lwc, '--', filenames and '-' stdin, prints per-file names/counts and
+aggregate totals, and continues after missing-file errors with exit=1.
+The kernel builtins remain; use run /boot/cat and run /boot/wc to exercise apps.
+hello --files checks independent offsets, seek/EOF, exhaustion, closed-handle
+errors, missing/directory paths, and intentionally leaves three handles for
+exit cleanup. Repeat it on hardware to prove subsequent launch reuse.
+
+Memory: the first full implementation exceeded the fixed application boundary.
+Coalescing embedded nonzero runs across zero gaps of at most four bytes avoids
+redundant metadata; reconstruction remains byte-identical. Application linking
+now uses --gc-sections so unreferenced library routines are omitted. No heap,
+stack or application-slot reservation is reduced. Final _iram_end=403743d4,
+_iram_ext_end=40387424, _runtime_stack_end=3fce6360, leaving 7328 bytes before
+the application text data alias. Final hello is 5136 bytes; larger ELF loading
+remains covered by the padded indirect-file integration test.
+
+Validation: clean build, all 38 test scripts, ELF sections/segments and image
+layout pass. Tests compile production FS and app wrappers/utilities together,
+cover handle isolation/exhaustion/reuse, 40 leak/cleanup cycles, errno, cwd,
+seek, single/double-indirect reads, request bounds, actual hello --files, cat/wc
+multiple operands and missing-file recovery. Launch/reap tests check cleanup
+on each of 20 launches. Sparse reconstruction and all four executable loading
+checks pass. Hardware pending: [FEATURE APP-FILES 117]1 / [TEST APP-FILES 117].
+Not flashed.
+
+Hardware exercise:
+hello --files (twice; File API OK and exit=0)
+run /boot/cat readme boot/readme (file contents twice)
+run /boot/wc readme boot/readme (2 8 61 per file, 4 16 122 total)
+run /boot/wc -c readme boot/readme (61 per file, 122 total)
+run /boot/cat missing readme (error, valid file still printed, exit=1)
+cd boot; then run /boot/wc -c readme (61 readme), then cd /
+run /boot/wc < readme (2 8 61), hello --errno, disk, mm
+Enter each command separately; shell command chaining is not implemented.
+
+
+## APP-DIRS 118 — application directory/metadata APIs and ls (2026-10-08)
+
+Hardware image 117 confirms repeated hello --files, file operands and totals
+in cat/wc, missing-file recovery, redirected stdin, disk and MM.
+Capture: docs/hardware/app-files-v117.log.
+
+MINIX 2 lib/posix/_fstat.c and fs/stadir.c obtain metadata from an open inode;
+lib/posix/_readdir.c converts directory entries and skips deleted slots. CP32
+preserves those portable semantics using its validated V2 directory decoder
+and fixed ABI records, rather than exposing an in-kernel pointer or historical
+host-sized struct stat. ABI v7 extends file operations without changing table
+layout. cp32_opendir returns one of four owned fd handles, cp32_readdir returns
+1/0/-1 for entry/EOF/error, cp32_fstat reads the opened inode, and cp32_stat
+resolves a pathname without consuming a descriptor. cp32_close releases either
+kind, and cp32_lseek(fd,0,0) rewinds directory iteration. Separate opens have
+independent offsets; normal exit cleanup covers both kinds.
+
+The parent validates exact record lengths and complete application address
+spans before access. Path requests are bounded and terminated. Metadata and
+entries are copied from aligned FS temporaries, allowing unaligned application
+buffers; EOF/errors leave result records unchanged. stat/fstat return inode,
+mode, link count, numeric uid/gid, size and three stored timestamps. Paths use
+the launching shell cwd. Read-only directory opening requires read bits, while
+path metadata lookup requires no extra descriptor or read-open permission.
+This is still one trusted foreground client, not general FS credentials or a
+protected multi-process server.
+
+Add a fifth independent executable /boot/ls and package it in the MINIX image.
+It lists current directory by default, supports -a (hidden entries), -l (mode,
+links, UID, GID, byte size), -d (directory itself), '--', and multiple paths.
+It reports a failed path and continues to later operands with exit=1. Listing
+is streamed in disk order with bounded memory; sorting, recursion, dates and
+owner names are not implemented. Bare ls remains the kernel builtin.
+Application builds link the existing freestanding lib/ansi/memcpy.c for
+compiler-generated aggregate copies; no hosted libc or ESP-IDF is introduced.
+
+Validation: clean build and all 39 host scripts pass without compiler warnings.
+New integration runs actual directory and metadata wrappers, production FS/IPC
+request validation and ls over the demo disk, including boot/large's indirect
+entry, deleted slots, independent offsets, rewind, closed/non-directory handles,
+full handle tables, stat without spare fds, unchanged EOF/error results, short
+record rejection, unaligned buffers, missing operands, default cwd, invalid
+options, and output failure cleanup. All five real ELFs load through the FS
+and image loader tests. ELF sections/segments and image layout pass.
+_iram_end=403743d4, _iram_ext_end=403875ec, _runtime_stack_end=3fce6f40;
+4288 bytes remain before the application text DRAM alias. ls.elf is 2616 bytes.
+
+Hardware pending: [FEATURE APP-DIRS 118]1 / [TEST APP-DIRS 118]. Run:
+run /boot/ls /boot
+run /boot/ls -al /boot/large
+run /boot/ls -l /readme
+run /boot/ls -ld /boot
+run /boot/ls missing /readme
+hello --files
+run /boot/wc readme boot/readme
+disk
+mm
+For boot/large expect '.', '..', 'readme'; /readme long output is
+-r--r--r-- 3 0 0 61 /readme. The missing-path command prints the valid operand
+and exits 1; successful commands exit 0. Also try cd boot followed by
+run /boot/ls and cd / as separate commands. Not flashed.

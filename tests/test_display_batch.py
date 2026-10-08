@@ -236,6 +236,35 @@ int main(void) {
       assert(pixels[py*240+px]==(stroke ? 0xffff : 0));
     }
   }
+  reset(); cardputer_display_putc('<');
+  assert(textbuf[0][0]=='<' && x==15 && y==0 && cells==1);
+  for(unsigned py=0;py<11;py++) for(unsigned px=0;px<15;px++) {
+    unsigned row=py/2;
+    unsigned start=row<=2 ? 8-2*row : 4+2*(row-2);
+    int stroke=py<10 && px>=start && px<start+2;
+    assert(pixels[py*240+px]==(stroke ? 0xffff : 0));
+  }
+  /* Independent 7-column visual masks for the requested symbols. */
+  const char symbols[]=">[]{}()|?";
+  const char *masks[]={
+    "..#...." "...#..." "....#.." "...#..." "..#....",
+    "...###." "...#..." "...#..." "...#..." "...###.",
+    "...###." ".....#." ".....#." ".....#." "...###.",
+    "....##." "...#..." "..#...." "...#..." "....##.",
+    "..##..." "....#.." ".....#." "....#.." "..##...",
+    "....#.." "...#..." "...#..." "...#..." "....#..",
+    "...#..." "....#.." "....#.." "....#.." "...#...",
+    "...#..." "...#..." "...#..." "...#..." "...#...",
+    "..###.." ".....#." "...##.." "......." "...#..."
+  };
+  for(unsigned k=0;k<sizeof(symbols)-1;k++) {
+    reset();cardputer_display_putc(symbols[k]);
+    assert(textbuf[0][0]==symbols[k] && x==15 && cells==1);
+    for(unsigned py=0;py<11;py++) for(unsigned px=0;px<15;px++) {
+      int stroke=py<10 && px<14 && masks[k][(py/2)*7+px/2]=='#';
+      assert(pixels[py*240+px]==(stroke ? 0xffff : 0));
+    }
+  }
   reset(); spi_fault=1; cardputer_display_write("hidden\n");
   assert(!display_batch && clears==0 && x==0 && y==0);
   printf("LCD model: zero scroll clears, %u versus %u cell writes, pixel/cursor/wrap/erasure checks passed\n",batchedcells,oldcells);

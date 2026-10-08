@@ -13,17 +13,19 @@ hardware, without an ESP-IDF or Arduino runtime.
 - A read-only MINIX V2 filesystem on a 64 KiB RAM disk: directories, file
   reads, metadata, seeking and indirect blocks.
 - Memory allocation and device services through IPC.
-- Separately compiled applications loaded from the filesystem, with arguments,
-  quoted arguments, environment, PID/parent queries, console input/output,
-  exit status and return to the shell. `hello`, pathname launch and `echo`
-  are hardware-verified.
-- Application heap services and allocation library: malloc/free, calloc,
-  realloc, resizing in place and explicit heap trimming.
+- Five separately compiled applications: `hello`, `echo`, `cat`, `wc` and `ls`,
+  loaded from the filesystem with arguments, environment and exit status.
+- Application file open/read/seek/close, directory iteration and stat/fstat,
+  with four owned handles and automatic cleanup on normal exit.
+- Buffered input/output, application-local I/O errors, PID/parent queries and
+  heap allocation: malloc/free, calloc, realloc and explicit heap trimming.
 
-The latest hardware milestone is **APP-STDIO 105**: standard-stream input,
-empty lines and Backspace editing pass. The current build, **APP-LINE 106**,
-adds bounded line reading across buffer-sized fragments; hardware validation
-is pending. On the Cardputer, type:
+**Current hardware-validated build: APP-DIRS 118.** The latest Cardputer log
+confirms standalone directory and long listings, missing-path recovery, file
+API checks, multi-file wc totals, and disk/MM checks. The matching build passes
+all **39 host test scripts** and ELF layout checks.
+
+On the Cardputer, type:
 
 ```text
 $ hello um dois
@@ -56,9 +58,12 @@ make
 make tests
 ```
 
-The normal build also compiles `hello` and `echo` and packages them in the boot filesystem.
-Outputs include `build/cp32.elf`, `build/cp32.bin`, `build/hello.elf` and
-`build/echo.elf`. Use `make hello` or `make echo` to build an application alone.
+The normal build compiles all five applications and packages them in the boot
+filesystem. Kernel outputs are `build/cp32.elf` and `build/cp32.bin`; application
+outputs are `build/hello.elf`, `build/echo.elf`, `build/cat.elf`, `build/wc.elf`
+and `build/ls.elf`. Use `make hello`, `make echo`, `make cat`, `make wc` or
+`make ls` to build an application alone. Applications use `-Os`; the kernel
+retains its `-O0` build.
 
 To flash:
 
@@ -107,6 +112,9 @@ re-enumerates. Hardware USB reset and flashing remain available.
 Paths may be absolute or relative to the current directory. Start with
 `ls`, `ls boot`, `cat readme`, then `hello one two`.
 
+Bare `ls`, `cat` and `wc` are kernel builtins. Use `run /boot/ls`,
+`run /boot/cat` and `run /boot/wc` to run the independent applications.
+
 | Command | Description |
 | --- | --- |
 | `ls [path]` | List a directory; defaults to the current directory. |
@@ -121,7 +129,15 @@ Paths may be absolute or relative to the current directory. Start with
 | `run path [arguments]` | Load an executable by absolute or current-directory-relative path; no PATH search. |
 | `echo [arguments]` | Run `/boot/echo` through external-command lookup. Bare external names use `/boot`; names containing `/` use their explicit path. Builtins take priority. |
 | `hello [arguments]` | Load `/boot/hello`, pass arguments and report its exit status. |
+| `run /boot/ls [-ald] [path ...]` | Standalone listing: `-a` includes hidden entries, `-l` shows mode/links/UID/GID/bytes, `-d` shows directories themselves. Defaults to current directory. |
+| `run /boot/wc [-lwc] < readme` | Run the standalone counter on redirected input. Without options prints lines, words, bytes. Accepts filenames too; multiple files include a total. |
+| `run /boot/wc -c readme boot/readme` | Count both files and print their total (61, 61, 122 bytes). |
+| `run /boot/cat readme boot/readme` | Copy file operands sequentially; `-` reads standard input. |
+| `run /boot/cat < readme` | Feed a read-only file to application standard input. One trailing `< path` is supported; paths may be quoted. |
+| `run /boot/cat` | Copy console input to output until Ctrl-D on an empty line. Use `run /boot/cat file ...` for file operands; `cat filename` remains the builtin. |
 | `hello --line` | Read and echo a full line through a bounded 16-byte buffer, including longer lines. |
+| `hello --files` | Check independent file offsets, seek, descriptor exhaustion, errors and exit cleanup; run twice. |
+| `hello --errno` | Check invalid-stream, bad-buffer and invalid-argument error reporting. |
 | `hello --io` | Read from standard input and write through standard output/error wrappers. |
 | `hello --read` | Prompt for a line on the keyboard, read through TTY and print it back. |
 | `hello --trim` | Check top-of-heap release, preservation of live blocks and allocation after trimming. |
@@ -153,6 +169,10 @@ tail -c 3 boot/double
 wc readme
 wc -wc readme
 stat boot/hello
+run /boot/ls -al /boot/large
+run /boot/wc readme boot/readme
+run /boot/cat readme boot/readme
+hello --files
 run /boot/hello one two
 run /boot/echo one two
 cd boot
@@ -171,12 +191,28 @@ line/byte N, counting from 1 (`+0` also starts at the beginning). Zero without
 `wc` counts newline characters, ASCII-whitespace-separated words and raw bytes;
 a final word without a newline is included.
 
-`head`, `tail` and `wc` accept `--` before a filename beginning with `-`.
-They operate on one regular file; standard input, multiple-file processing
-and tail follow mode are not implemented. File display sanitizes nonprintable
-bytes. The shell accepts up to 63 characters per command; `hello` and `run` accept up
-to eight arguments separated by whitespace. Quoting, expansion, pipelines
-and redirection are not implemented.
+The builtin `head`, `tail` and `wc` accept `--` before a filename beginning
+with `-` and operate on one regular file. Tail follow mode is not implemented.
+The standalone cat/wc applications accept multiple files and `-` for stdin;
+wc also accepts `-lwc` and `--`, and prints totals for multiple operands.
+
+Standalone `ls` accepts `-a`, `-l`, `-d`, multiple paths and `--`. It lists
+entries in disk order, one per line. Sorting, recursion, date formatting and
+owner-name lookup are not implemented.
+
+Application file access is read-only, with four owned handles per foreground
+application. Relative paths use the shell's current directory; normal exit
+closes handles left open. Missing-file errors return a nonzero exit status;
+standalone cat/wc/ls continue to later operands when possible.
+
+The shell accepts up to 63 characters per command and eight application
+arguments after the executable name. Application commands (`hello`, `run`,
+and direct external commands) accept single/double quotes, empty quoted
+arguments and backslash escapes: `hello "one two" ""` or `echo one\ two`.
+Unclosed quotes and trailing backslashes are rejected. One trailing `< path`
+redirects application stdin; paths may be quoted. Other builtins retain their
+own argument parsing. Variable expansion, output redirection, pipelines and
+multiline input are not implemented. File display sanitizes nonprintable bytes.
 
 ## Debugging and validation
 
@@ -197,17 +233,23 @@ make map        # Symbols sorted by size
 make disasm     # Source-interleaved disassembly
 ```
 
-Linker maps are in `build/cp32.map` and `build/hello.map` / `build/echo.map`.
-`make tests` runs the host suite; the latest review passed all 33 scripts.
-Host tests do not replace hardware validation. After a new flash, try `hello`
-twice, `hello one two`, `ls boot`, `disk` and `mm`, and retain the USB output.
+Linker maps are in `build/cp32.map` and each application's `build/<name>.map`.
+`make tests` runs the host suite. Host tests do not replace hardware validation.
+After flashing, check the image marker and try:
+
+```text
+run /boot/ls -al /boot/large
+run /boot/ls missing readme
+hello --files
+hello --files
+run /boot/wc readme boot/readme
+disk
+mm
+```
+
+Expect `.`, `..` and `readme` in the large-directory listing, `File API OK`
+from both file checks, and wc totals of `4 16 122`. The missing-path command
+should still list `readme` and exit `1`; successful applications exit `0`.
+Retain the USB output for regression checks.
 
 [Issues and bring-up history](issues.md) · [Hardware captures](docs/hardware/)
-
-Application commands (`hello`, `run`, and direct external commands) accept
-single/double quotes, empty quoted arguments and backslash escapes:
-`hello "one two" ""` or `echo one\ two`. Unclosed quotes and trailing
-backslashes are rejected. No variable expansion, pipelines or multiline input
-is implemented. Other builtins retain their existing argument parsing.
-
-Applications are size-optimized (`-Os`); the kernel retains its existing `-O0` build.

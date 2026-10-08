@@ -15,7 +15,7 @@ static void *grow(int n) {
  void *p=arena+used; used+=(unsigned)n; return p;
 }
 int main(void) {
- struct cp32_app_services s={4,0,0,0,0,grow,0};
+ struct cp32_app_services s={4,0,0,0,0,grow,0,0};
  assert(!cp32_malloc(8)); assert(cp32_heap_init(0)==-1);
  assert(!cp32_heap_init(&s)); assert(cp32_heap_init(&s)==-1);
  unsigned char *a=cp32_malloc(100),*b=cp32_malloc(80),*c=cp32_malloc(33);

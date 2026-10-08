@@ -1,7 +1,7 @@
 # CP32 port plan
 
-Updated 2026-09-30 against the working tree and user hardware results through
-**APP-STDIO 105**; image **APP-LINE 106** is built and host-tested. This file tracks current status and remaining work, not the
+Updated 2026-10-08 against the working tree and user hardware results through
+**APP-FILES 117**; image **APP-DIRS 118** is built and host-tested. This file tracks current status and remaining work, not the
 chronological bring-up history. See [issues.md](issues.md),
 [hardware captures](docs/hardware/) and [port review](minix.port-status.md)
 for implementation history, evidence and detailed MINIX comparisons.
@@ -20,7 +20,7 @@ slot, receives argc/argv, writes through IPC, exits and returns to the shell.
 The image-89 capture confirms both `hello` and `hello um dois`, with correct
 arguments and exit=0. These paths are no longer pending implementation or
 initial hardware validation. Repeated launch plus disk/MM regression passed
-in image 87. All 33 host test scripts and the clean build pass for image 106.
+in image 87. All 39 host test scripts and the clean build pass for image 118.
 
 The boundary is still **one trusted foreground application**. The shell is
 kernel-linked; there is no general exec/fork/wait server, protected application
@@ -102,6 +102,17 @@ are tested, including repeated operations and concurrent runnable applications.
 [ ] 5. Add per-process filesystem service ownership and request dispatch:
 descriptors, cwd, credentials, open/read/close/seek/stat, terminal descriptors,
 inheritance, close-on-exec and exit cleanup. Preserve current V2 read behavior.
+Image 117 adds ABI-v6 file requests over IPC, four application-owned handles
+separate from shell descriptors, read-only open/read/seek/close, error translation,
+and cleanup before launch/on normal exit. Relative paths use the waiting shell's
+cwd. The real filesystem and libc/utility paths pass host tests, including
+exhaustion, missing/directory operands, indirect reads and leaked-handle cleanup.
+Image 117 hardware confirms file access, repeated leak/cleanup checks, cat/wc
+multi-file operands and missing-file recovery. Image 118 adds ABI-v7 stat/fstat,
+owned directory handles, readdir and rewind through lseek(fd,0,0), with unchanged
+outputs on EOF/errors. Metadata-by-path uses no descriptor. Host tests pass;
+hardware verification of directory APIs is pending. Concurrent clients,
+independent mutable cwd, credential policy and descriptor inheritance remain.
 Acceptance: two clients have independent descriptor/cwd state; shared open
 file descriptions share offsets only when deliberately inherited/duplicated.
 
@@ -138,8 +149,17 @@ passed on image 104, including empty input and user-confirmed Backspace.
 Image 105 adds cp32_read/cp32_write standard-stream wrappers with chunked
 output and short-transfer handling. Image 105 hardware confirms input and
 user-verified Backspace editing. Image 106 adds cp32_readline with bounded
-NUL termination and fragment continuation; hardware pending; general fd-based file
-I/O, errno and FILE/stdio buffering remain unfinished.
+NUL termination and fragment continuation, validated on image 106; general fd-based file
+I/O and FILE/stdio buffering remain unfinished. Image 113 adds application-local
+cp32_errno for standard-stream wrappers; allocator/general syscall errno is
+still missing. Hardware confirmation of hello --errno passed in images 113 and 114.
+Image 115 adds caller-owned buffered stdin with getc/fgets and EOF/error
+indicators; wc uses it. Image 115 hardware confirms all three counting modes,
+errno and disk/MM checks. Image 116 adds caller-owned stdout/stderr buffering,
+explicit flush and retry without duplicating a successfully written prefix.
+Image 116 hardware confirms flushing and regression checks. Image 117 adds
+application file descriptors and buffered input from those descriptors. Full
+FILE APIs and automatic exit flushing remain unfinished.
 Acceptance: independently built programs use documented services rather than
 hello-specific kernel callbacks; blocking/error/short-I/O behavior is tested.
 
@@ -157,6 +177,19 @@ escapes and syntax rejection before opening an executable; image 95 hardware
 confirms these paths and regression checks. Image 96 fixes the three missing
 LCD quote/backslash glyphs; user confirmed all font samples look correct
 on image 96.
+Image 107 adds a third independent ELF, /boot/cat, using shared standard
+stream wrappers to copy stdin until EOF. Image 107 confirms repeated EOF
+return. Image 108 adds shell-owned trailing input redirection; hardware
+validation passed on image 108. Image 109 fixes the missing LCD < glyph;
+visual confirmation pending.
+Image 117 supplies file arguments through application FS interfaces.
+Image 112 adds standalone /boot/wc with stdin counting and -lwc selection,
+using the shared I/O library and input redirection. Image 112 hardware passed.
+Image 117 adds standalone cat/wc filename operands and wc aggregate totals;
+image 117 hardware confirms those paths. Image 118 adds standalone ls with
+-a/-l/-d, multiple operands and failure recovery, through the new directory and
+metadata APIs. It streams disk order; sorting, recursion, timestamps, pipelines
+and a user shell remain unfinished.
 Acceptance: boot into a user environment and run scripts and applicable MINIX
 user tests through the public application interfaces.
 
@@ -191,12 +224,12 @@ and do not remove working functionality during cleanup.
   while adapting architecture-specific mechanisms to Xtensa/ESP32-S3.
 - Keep call0, freestanding execution and current boot/IPC/console behavior.
   Respect shared D/IRAM aliases and the full runtime-stack reservation.
-  Latest inspected endpoints: `_iram_end=0x403742ac`,
-  `_iram_ext_end=0x40386e80`, `_runtime_stack_end=0x3fce6030`;
+  Latest inspected endpoints: `_iram_end=0x403743d4`,
+  `_iram_ext_end=0x403875ec`, `_runtime_stack_end=0x3fce6f40`;
   the application code's DRAM alias starts at `0x3fce8000`.
 - For implementation changes, add meaningful tests, run `make clean && make`
   and `make tests` in `src/`, then inspect relevant ELF sections/segments and
-  symbols. Current image identity is 106; increment feature/test markers for
+  symbols. Current image identity is 118; increment feature/test markers for
   each new image, with the test marker immediately before the idle call.
 - Record build and hardware results separately in `issues.md` and this plan.
   Mark completed items `[x]` only when their stated acceptance criteria pass;
@@ -204,3 +237,17 @@ and do not remove working functionality during cleanup.
   later compaction once their evidence is retained in the history.
 - Leave flashing to the user. Never infer hardware success from compilation,
   a host model, or the presence of a function name.
+
+Image 114 removes the seven-block application fixture limit using shared
+zones and single-indirect tables. Host coverage includes larger ELF loading
+and aggregate disk exhaustion; image 114 hardware regression passed. The 64 KiB
+disk has 33 application zones including indirect tables. Runtime-stack end
+0x3fce6f40 leaves 4288 bytes before the application data alias; larger embedded
+files still consume firmware SRAM and must pass linker placement checks.
+
+Image 117 compacts embedded disk runs across short zero gaps and links applications
+with section garbage collection. All reconstructed disk bytes and required ELF
+segments are checked. Heap, stack and application-slot reservations are unchanged.
+Next substantial milestone: lifecycle ownership in MM, or writable filesystem
+services with explicit recovery tests; avoid treating the foreground file bridge
+as a completed multi-process filesystem server.

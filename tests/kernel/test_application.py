@@ -21,6 +21,7 @@ pre=r'''
 #define APP_GETPPID 2004
 #define APP_SBRK 2005
 #define APP_READ 2006
+#define APP_FILE 2007
 #define APP_NR 3
 #define LOW_USER 2
 #define FS_PROC_NR 1
@@ -75,6 +76,9 @@ int cp32_exec_stack(unsigned char *b,unsigned cap,uint32_t base,unsigned argc,
  (void)b; assert(cap==512 && base==CP32_APP_TOP-512 && argc==3 && envc==3);
  assert(!strcmp(argv[0],args[0]) && !strcmp(argv[1],"one") && !strcmp(argv[2],"two")); if(stacking) return -1; *sp=CP32_APP_TOP-32;return 0;
 }
+static int resets;
+static void cp32_shell_app_files_reset(void) {resets++;}
+static int application_file_request(message *m) {(void)m;return -22;}
 static int receive(int nr,message *m) {
  assert(nr==APP_NR); struct proc *p=procs+3; p->p_flags=RECEIVING;p->p_getfrom=1;
  switch(reads++%10) {
@@ -119,7 +123,7 @@ int main(void) {
    assert(procs[3].p_flags==P_SLOT_FREE && procs[3].p_nr==3 && !app_busy);
    assert(bill_ptr==procs+2 && !procs[3].p_reg.pc);
  }
- assert(publishes==20 && syncs==20 && writes==20 && replies==180);
+ assert(publishes==20 && syncs==20 && writes==20 && replies==180 && resets==40);
  current_proc=procs+2;assert(cp32_application_run(0,0,0,3,args,output,&status)==-1);
  assert(publishes==20);
  uint32_t brk=CP32_APP_DATA+128, floor=brk;

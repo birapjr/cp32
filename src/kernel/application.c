@@ -12,6 +12,7 @@
 #define APP_GETPPID 2004
 #define APP_SBRK 2005
 #define APP_READ 2006
+#define APP_FILE 2007
 #define APP_TEXT_DATA (CP32_APP_TEXT-0x6f0000U)
 static int app_busy;
 extern struct proc *current_proc;
@@ -98,6 +99,34 @@ CP32_IRAM_EXT static int application_read(char *buffer,unsigned count)
   if(_sendrec(FS_PROC_NR,&m)!=OK || m.m_source!=FS_PROC_NR) return -1;
   return m.m_type;
 }
+CP32_IRAM_EXT static int application_file(unsigned op,int fd,void *buffer,unsigned arg)
+{
+  message m;
+  if(!app_busy || current_proc!=proc_addr(APP_NR)) return -9;
+  memset(&m,0,sizeof(m));m.m_type=APP_FILE;
+  m.m1_i1=op;m.m1_i2=fd;m.m1_i3=arg;m.m1_p1=buffer;
+  if(_sendrec(FS_PROC_NR,&m)!=OK || m.m_source!=FS_PROC_NR) return -5;
+  return m.m_type;
+}
+/* Validate the complete user span before the FS bridge dereferences it. */
+CP32_IRAM_EXT static int application_file_request(message *m)
+{
+  unsigned op=m->m1_i1,n=(unsigned)m->m1_i3;
+  uintptr_t p=(uintptr_t)m->m1_p1;
+  if(op>CP32_APP_STAT) return -22;
+  if(op==CP32_APP_OPEN || op==CP32_APP_OPENDIR || op==CP32_APP_READ ||
+     op==CP32_APP_FSTAT || op==CP32_APP_READDIR || op==CP32_APP_STAT) {
+    if((op==CP32_APP_OPEN || op==CP32_APP_OPENDIR) && (!n || n>256)) return -36;
+    if(op==CP32_APP_READ && n>64) return -22;
+    if(op==CP32_APP_FSTAT && n!=sizeof(struct cp32_app_stat))return -22;
+    if(op==CP32_APP_READDIR && n!=sizeof(struct cp32_app_dirent))return -22;
+    if(op==CP32_APP_STAT && n!=sizeof(struct cp32_app_stat_request))return -22;
+    if(n && (p<CP32_APP_DATA || p>CP32_APP_TOP || n>CP32_APP_TOP-p)) return -14;
+    if((op==CP32_APP_OPEN || op==CP32_APP_OPENDIR) && m->m1_p1[n-1]) return -22;
+    if(op==CP32_APP_STAT && m->m1_p1[255])return -36;
+  }
+  return cp32_shell_app_file(op,m->m1_i2,m->m1_p1,n);
+}
 CP32_IRAM_EXT static void application_exit(int status)
 {
   message m;
@@ -108,7 +137,7 @@ CP32_IRAM_EXT static void application_exit(int status)
   panic("application exit returned",NO_NUM);
   for(;;) {}
 }
-static const struct cp32_app_services services={5,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read};
+static const struct cp32_app_services services={7,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
 
 CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     uint32_t size,unsigned argc,const char *const argv[],cp32_app_output output,int *status)
@@ -137,6 +166,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   if(result) { app_busy=0; return result; }
   /* Writes use the internal SRAM data alias, not flash/cache memory. */
   __asm__ volatile("memw\n\tisync" ::: "memory");
+  cp32_shell_app_files_reset();
   saved=lock_save();
   pid=application_pid();
   if(pid<0) { restore_lock(saved); app_busy=0; return -1; }
@@ -162,6 +192,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
       /* MINIX MM retains an eight-bit exit status. This bootstrap API
        * returns that value directly, not a POSIX encoded wait status. */
       *status=(unsigned)m.m1_i1 & 255U;
+      cp32_shell_app_files_reset();
       saved=lock_save();
       /* SENDREC must leave the child waiting for FS's reply. */
       if(child->p_flags!=RECEIVING || child->p_getfrom!=FS_PROC_NR ||
@@ -176,6 +207,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     }
     result=m.m_type==APP_GETPID ? child->p_pid :
            m.m_type==APP_GETPPID ? parent_pid : -1;
+    if(m.m_type==APP_FILE) result=application_file_request(&m);
     if(m.m_type==APP_SBRK) {
       uint32_t old=heap_break;
       result=application_break(heap_floor,&heap_break,m.m1_i1);
