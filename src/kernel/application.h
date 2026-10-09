@@ -10,4 +10,7 @@ CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count);
 /* Foreground child owns a separate bounded fd namespace; FS context only. */
 CP32_IRAM_EXT void cp32_shell_app_files_reset(void);
 CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned arg);
+CP32_IRAM_EXT int cp32_shell_exec_open(const char *path,unsigned *size);
+CP32_IRAM_EXT void cp32_shell_exec_close(int fd);
+CP32_IRAM_EXT int cp32_shell_app_read(void *context,uint32_t offset,unsigned char *buffer,unsigned count);
 #endif

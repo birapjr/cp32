@@ -13,8 +13,20 @@ CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fda
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
+# SD is the default root. RAM remains a separate recovery build.
+STORAGE ?= sd
+ifeq ($(STORAGE),ram)
+STORAGE_SRCS = minix-demo.c ramdisk.c
+CFLAGS += -DCP32_ROOT_RAM=1
+else ifeq ($(STORAGE),sd)
+STORAGE_SRCS = sdcard.c rootdisk.c
+LDFLAGS += -Wl,--defsym=__cp32_heap_bytes=196608
+else
+$(error STORAGE must be sd or ram)
+endif
+
 # Files
-C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c minix-demo.c cardputer.c display.c ramdisk.c
+C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
 MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
 FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c utility.c
@@ -24,6 +36,10 @@ POSIX_SRCS = opendir.c readdir.c closedir.c rewinddir.c
 LIB_SRCS = lib/other/printk.c lib/other/seekdir.c lib/other/telldir.c lib/other/errno.c
 C_OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(C_SRCS)) $(patsubst %.c,$(BUILD_DIR)/fs/%.o,$(FS_SRCS)) $(patsubst %.c,$(BUILD_DIR)/mm/%.o,$(MM_SRCS))
 LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS)) $(patsubst %.c,$(BUILD_DIR)/lib/ansi/%.o,$(ANSI_SRCS)) $(patsubst %.c,$(BUILD_DIR)/lib/posix/%.o,$(POSIX_SRCS))
+
+ifeq ($(STORAGE),sd)
+C_OBJS += $(BUILD_DIR)/drivers/sd_spi.o
+endif
 
 TARGET  = cp32
 
@@ -35,10 +51,10 @@ BUILD_KLIB32_O = $(BUILD_DIR)/klib32.o
 
 # Directories
 SRC_DIR = kernel
-BUILD_DIR = build
+BUILD_DIR = $(if $(filter ram,$(STORAGE)),build-ram,build)
 
 # Default target
-all: $(BUILD_DIR)/$(TARGET).bin
+all: $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/sdcard.img
 
 # Host-side tests do not require the Xtensa toolchain. Keep the test runner
 # outside src/, while retaining a single project Makefile.
@@ -56,6 +72,12 @@ tests:
 	exit $$status
 
 # Compile all .c files
+$(BUILD_DIR)/drivers/%.o: drivers/%.c drivers/sd_spi.h | $(BUILD_DIR)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(C_OBJS): kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h
+
 $(BUILD_DIR)/lib/posix/%.o: lib/posix/%.c lib/posix/dirent.h $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -77,8 +99,8 @@ $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
-$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf $(BUILD_DIR)/cat.elf $(BUILD_DIR)/wc.elf $(BUILD_DIR)/ls.elf | $(BUILD_DIR)
-	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf --echo $(BUILD_DIR)/echo.elf --cat $(BUILD_DIR)/cat.elf --wc $(BUILD_DIR)/wc.elf --ls $(BUILD_DIR)/ls.elf
+$(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf $(BUILD_DIR)/cat.elf $(BUILD_DIR)/wc.elf $(BUILD_DIR)/ls.elf $(BUILD_DIR)/exec.elf | $(BUILD_DIR)
+	python3 $< --image $(BUILD_DIR)/minix-demo.img --header $@ --hello $(BUILD_DIR)/hello.elf --echo $(BUILD_DIR)/echo.elf --cat $(BUILD_DIR)/cat.elf --wc $(BUILD_DIR)/wc.elf --ls $(BUILD_DIR)/ls.elf --exec $(BUILD_DIR)/exec.elf
 
 $(BUILD_DIR)/minix-demo.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/minix-demo.o: $(BUILD_DIR)/minix-demo.h
@@ -110,7 +132,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: lib/other/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O)
+$(BUILD_DIR)/$(TARGET).elf: $(SRC_DIR)/esp32s3.ld $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O)
 	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O) -lgcc -o $@
 
 # Convert to raw binary for flashing
@@ -193,3 +215,14 @@ $(BUILD_DIR)/wc.elf: apps/lib/output.h apps/lib/stream.h apps/hello/start.S apps
 ls: $(BUILD_DIR)/ls.elf
 $(BUILD_DIR)/ls.elf: apps/hello/start.S apps/ls/ls.c apps/lib/output.c apps/lib/output.h apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/ls.map apps/hello/start.S apps/ls/ls.c apps/lib/output.c apps/lib/io.c lib/ansi/memcpy.c -o $@
+
+.PHONY: exec
+exec: $(BUILD_DIR)/exec.elf
+$(BUILD_DIR)/exec.elf: apps/hello/start.S apps/exec/exec.c apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/exec.map apps/hello/start.S apps/exec/exec.c apps/lib/io.c lib/ansi/memcpy.c -o $@
+
+# Only regular host image files are produced; no card is written by make.
+.PHONY: sdimage
+sdimage: $(BUILD_DIR)/sdcard.img
+$(BUILD_DIR)/sdcard.img: $(BUILD_DIR)/minix-demo.h ../tools/make_sd_image.py
+	python3 ../tools/make_sd_image.py $(BUILD_DIR)/minix-demo.img $@

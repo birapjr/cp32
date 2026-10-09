@@ -15,8 +15,30 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
 {
   unsigned i,n;
 
-  if(!s || (s->version<1 || s->version>7) || !s->write || !s->exit || started) return 1;
+  if(!s || (s->version<1 || s->version>8) || !s->write || !s->exit || started) return 1;
   started=1;
+  if(option(argc,argv,"--exec") || option(argc,argv,"--exec-fail")) {
+    int pid;char a[8];
+    const char *next[]={"hello","--exec-child",0};
+    if(cp32_io_init(s) || !s->getpid || (pid=s->getpid())<=0)return 1;
+    if(cp32_execv("/missing",next)!=-1 || cp32_errno!=CP32_ENOENT || s->getpid()!=pid)return 1;
+    if(cp32_execv("/readme",next)!=-1 || cp32_errno!=CP32_EACCES)return 1;
+    if(option(argc,argv,"--exec-fail"))return cp32_write(1,"Exec failure recovery OK\n",24)==24 ? 0:1;
+    if(cp32_open("/readme")!=3 || cp32_read(3,a,5)!=5)return 1;
+    /* Pass the original PID as an argv string; next image verifies identity. */
+    char id[12];unsigned n=0,value=pid,j;
+    do {id[n++]='0'+value%10;value/=10;}while(value);
+    for(j=0;j<n/2;j++){char c=id[j];id[j]=id[n-1-j];id[n-1-j]=c;}id[n]=0;
+    const char *args[]={"hello","--exec-child",id,0};
+    cp32_execv("/boot/hello",args);return 1;
+  }
+  if(argc==3 && option(2,argv,"--exec-child")) {
+    unsigned pid=0,j;char a[8];
+    for(j=0;argv[2][j];j++) {if(argv[2][j]<'0' || argv[2][j]>'9')return 1;pid=pid*10+argv[2][j]-'0';}
+    if(cp32_io_init(s) || !s->getpid || (unsigned)s->getpid()!=pid ||
+       cp32_lseek(3,0,1)!=5 || cp32_read(3,a,5)!=5 || cp32_close(3))return 1;
+    return cp32_write(1,"Exec PID and file OK\n",20)==20 ? 0:1;
+  }
   if(option(argc,argv,"--files")) {
     int fd[4],k;char a[8],b[8];
     if(cp32_io_init(s))return 1;

@@ -2744,3 +2744,181 @@ For boot/large expect '.', '..', 'readme'; /readme long output is
 -r--r--r-- 3 0 0 61 /readme. The missing-path command prints the valid operand
 and exits 1; successful commands exit 0. Also try cd boot followed by
 run /boot/ls and cd / as separate commands. Not flashed.
+
+## Image 120: transactional foreground application exec
+
+ABI v8 adds `cp32_execv(path, argv)` and `/boot/exec`. A running application
+can replace its fixed-slot ELF while retaining its process slot, PID, parent
+wait relationship and all four owned file/directory handles with their offsets.
+Success starts at the replacement entry and never replies to the old SENDREC
+buffer. The new context clears general/special registers and blocked-frame
+bookkeeping, resets the application heap and BSS, and installs fresh argc/argv
+and the fixed HOME/PATH/USER environment. Paths resolve against the shell cwd;
+the process name is the executable basename.
+
+MINIX reference: `minix-2.0.0/src/mm/exec.c` copies arguments before replacing
+memory, installs a fresh context without allocating a new PID, and notifies FS
+for close-on-exec processing. CP32 uses fixed Xtensa ELF addresses and its
+existing internal SRAM instruction/data alias. The foreground FS coordinator
+requests a temporary 32 KiB allocation from MM, loads and validates the complete
+image and stack there, then copies into the blocked child's slot and publishes
+the new context under the scheduler lock. It releases staging on both success
+and failure. Unlike MINIX's early `new_mem` transition, no old image bytes are
+changed before all payload reads succeed. No hardware mapping changes are made.
+
+Missing/nonexecutable paths, malformed images, read errors and MM allocation
+failure return errno through the existing file IPC callback; the old image,
+registers, heap break and application handles remain intact. Loader descriptors
+are separate from the application's four handles, so exec works with a full
+application fd table. Arguments are bounded to nine entries and 256 string
+bytes. This is trusted single-foreground execv, not general MM lifecycle
+ownership, fork, execve environment inheritance or protected execution.
+Close-on-exec flags are not exposed by this bootstrap application ABI.
+
+Validation: `make clean && make`, all 40 `make tests` scripts, ELF section/segment
+inspection and image-layout verification pass. No compiler warnings. The new
+integration test runs production FS, ELF loading, stack construction and
+replacement logic, modeling IPC and physical memory. It injects failures at
+every disk-read boundary, checks exact rollback of image/process/heap state,
+MM exhaustion, invalid executable/request/argument rejection, repeat staging
+release and successful replacement with a full fd table and preserved offset.
+All six generated application ELFs pass loader validation. Host tests do not
+execute Xtensa replacement instructions.
+
+ELF endpoints: `_iram_end=0x403743d4`, `_iram_ext_end=0x40387ba0`,
+`_runtime_stack_end=0x3fce7c50`. The new helpers and literals are in extended
+IRAM. Only 944 bytes remain before the application text's DRAM alias at
+0x3fce8000; existing 128 KiB heap and stack reservations remain intact.
+
+Hardware pending, not flashed: `[FEATURE APP-EXEC 120]1` and
+`[TEST APP-EXEC 120]`. Run these commands separately:
+
+```text
+hello --exec-fail
+hello --exec
+run /boot/exec /boot/echo replaced successfully
+run /boot/exec /missing
+hello --files
+run /boot/ls /boot
+mm
+disk
+```
+
+Expect `Exec failure recovery OK`, then `Exec PID and file OK`, both exit=0.
+The exec-to-echo command prints `replaced successfully` and exits 0; missing
+path prints `exec: cannot execute` and exits 1. Repeat `hello --exec` and check
+that `mm` has no leaked staging allocation and the shell remains usable.
+Invalid-image and injected read/allocation failures are host-verified only.
+
+## Image 121: keep MM allocations inside the linker heap
+
+Image 120 hardware FAILED during `hello --exec`, after `hello --exec-fail`
+returned exit=0. User serial report: EXCCAUSE=0x1c, EXCVADDR=0,
+EPC1=0x403d8002, PS=0x110. The expected instruction at that PC is `mov.n a6,a1`,
+not a memory load; an intact image does not explain that fault there.
+
+Root defect found in `mem_init`: `_heap_start=0x3fcb4c50` was rounded DOWN
+to a 4 KiB click, yielding staging base 0x3fcb4000. The 3152 bytes before the
+heap belong to kernel BSS, including part of the FS cache, its control fields,
+and the MM allocation table at 0x3fcb4848. Clearing/loading the exec buffer
+there overwrites these globals, and subsequent cache fills can overwrite
+staged executable bytes. This is software memory overlap, not evidence of a
+new Xtensa context or instruction-cache requirement. The earlier host exec
+test modeled a separate staging array and therefore missed this integration
+boundary; it also used 256-byte clicks instead of the target's 4096-byte clicks.
+
+Fix: round the heap start UP and `_heap_end` DOWN to whole clicks, exposing
+only the interior range. Empty/reversed/sub-click ranges expose zero pages.
+Arithmetic rounds after division to avoid overflow at the address-space end.
+The 128 KiB linker reservation is unchanged; this layout supplies 31 usable
+4 KiB pages (124 KiB), enough for the 32 KiB exec staging allocation. MINIX's
+whole-free-click allocation invariant is preserved without allocating BSS or
+stack bytes. Correct the exec host model to use target-sized clicks.
+
+Validation: clean ELF/bin build, all 41 host scripts and ELF sections/segments
+and image-layout checks pass without compiler warnings. New regression runs
+the production mem_init and allocator against image 120's exact addresses,
+all 4096 alignment offsets, empty/reversed/address-limit ranges, whole-heap
+exhaustion and release. The transactional exec regression still passes.
+Image 121 endpoints: `_iram_end=0x403743d4`, `_iram_ext_end=0x40387bac`,
+`_heap_start=0x3fcb4c60`, `_heap_end=0x3fcd4c60`,
+`_runtime_stack_end=0x3fce7c60`; 928 bytes remain before the app reservation.
+MM's usable interval is [0x3fcb5000, 0x3fcd4000).
+
+Hardware retest pending, not flashed: `[FEATURE APP-EXEC 121]1` and
+`[TEST APP-EXEC 121]`. Run `hello --exec-fail`, `hello --exec` twice,
+`run /boot/exec /boot/echo replaced successfully`, then `mm` and `disk`.
+Expect failure recovery, `Exec PID and file OK` with exit=0 on each successful
+self-replacement, echo output and a usable shell without leaked MM staging.
+Image 120 does not establish successful exec hardware validation.
+
+## Image 122: drain stale keyboard input before publishing readiness
+
+Image 121 hardware reported `[KBD init=1 stale=0 int=1 status=1 fifo=10]`
+followed by five empty TTY lines and repeated `$ ` prompts without new typing.
+`cardputer_keyboard_init` set `kbd_ready=0`, then called the public event reader
+to flush the FIFO. That reader returns immediately while readiness is false,
+so every queued event survived initialization. The ten queued events are
+consistent with five Enter press/release pairs; the log does not identify
+individual event bytes. Exec hardware validation is still pending.
+
+Initialization now drains KEY_EVENT_A directly through the existing register
+reader, masks the event count to its low four bits, and publishes readiness
+only after successful drain and interrupt setup. I2C failures or a still-busy
+FIFO after 32 discarded events leave the driver unready instead of releasing
+stale input to TTY. The normal runtime reader and shell prompt behavior remain
+unchanged; Enter and all other keys typed after initialization still work.
+Interrupt setup also stops if clearing old status fails.
+
+MINIX reference: src/kernel/keyboard.c kb_init consumes old scan input before
+enabling the keyboard IRQ. CP32 uses the TCA8418 FIFO rather than PC keyboard
+ports. Register behavior is from TI SCPS215G sections 8.6.2.3–4:
+https://www.ti.com/lit/ds/symlink/tca8418.pdf (0x03 count bits 3:0; each 0x04
+read pops one event). No new hardware timing assumptions or delays were added.
+
+Validation: clean firmware build and ELF sections/segments/image-layout checks
+pass. New production-init host regression covers FIFO depths 0–10, all count
+read/event read failures, register write failures, upper count-register bits,
+bounded draining and readiness gating. All 42 host test scripts pass.
+ELF endpoints: _iram_end=0x403743d4, _iram_ext_end=0x40387bd0,
+_runtime_stack_end=0x3fce7c90; 880 bytes remain before the application reservation.
+
+Hardware pending, not flashed: `[FEATURE KBD-START 122]1`,
+`[TEST KBD-START 122]`, and `[KBD V122 init=1 stale=... int=0 status=1 fifo=0]`
+when no new keys arrive during the diagnostic. Reboot after queued key events,
+then leave the keyboard untouched: expect a single prompt and no empty TTY
+lines. Confirm newly typed characters and Enter work, then retry hello --exec.
+
+
+## Image 122 hardware accepted; image 123 moves the root to SD
+
+User capture docs/hardware/app-exec-v122.log confirms no stale startup input,
+exec failure recovery, repeated PID/file-preserving self-replacement, exec to
+echo, and successful MM/disk checks. The previous two regressions are resolved
+on hardware. General multi-process lifecycle remains separate work.
+
+Image 123 changes the default root backing store to SD SPI, using the existing
+MINIX V2 FS and device IPC. Supported: SD v1/v2 SDSC and SDHC/SDXC command/address
+formats, CRC-checked sector reads, one primary MINIX partition or raw V2 volume,
+bounded waits and read-only diagnostics. Missing/bad media leaves the console
+available. Root writes return EROFS. No card contents or firmware were flashed.
+The RAM backend is retained as make STORAGE=ram in a separate build directory.
+
+Static SRAM savings versus image 122 are 86,632 bytes net. SD heap reservation
+increases from 128 to 192 KiB (188 KiB whole-page allocator); application and
+stack reservations are unchanged. Remaining margin is 21,968 bytes. ELF:
+_iram_end=403743e8, _iram_ext_end=403885f8, _heap_start=3fc9fa28,
+_heap_end=3fccfa28, _runtime_stack_end=3fce2a30. No resident ramdisk/demo symbols.
+Recovery RAM layout also passes, with _runtime_stack_end=3fce7cc0.
+
+Validation: both clean builds, all 43 host scripts, ELF sections/segments and
+image-layout checks pass without compiler warnings. New tests exercise SPI
+initialization/addressing/CRC/errors, partition bounds and malformed media,
+sector cache failure recovery, root/device readonly behavior and all six real
+application ELF loads through the filesystem from the generated SD image.
+Host tests model the card and GPIO is not yet hardware-validated.
+
+Pending hardware: [FEATURE SD-ROOT 123]1 / [TEST SD-ROOT 123], ROOT result=0,
+SD-backed directory/file/exec and no-card startup tests. See docs/sd-root.md for
+exact media preparation, error codes, acceptance commands and references.
+Writable MINIX allocation/sync/recovery and hardware SPI throughput are next.

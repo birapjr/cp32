@@ -935,3 +935,110 @@ For boot/large expect '.', '..', 'readme'; /readme long output is
 -r--r--r-- 3 0 0 61 /readme. The missing-path command prints the valid operand
 and exits 1; successful commands exit 0. Also try cd boot followed by
 run /boot/ls and cd / as separate commands. Not flashed.
+
+## Image 120: transactional foreground application exec
+
+ABI v8 adds `cp32_execv(path, argv)` and `/boot/exec`. A running application
+can replace its fixed-slot ELF while retaining its process slot, PID, parent
+wait relationship and all four owned file/directory handles with their offsets.
+Success starts at the replacement entry and never replies to the old SENDREC
+buffer. The new context clears general/special registers and blocked-frame
+bookkeeping, resets the application heap and BSS, and installs fresh argc/argv
+and the fixed HOME/PATH/USER environment. Paths resolve against the shell cwd;
+the process name is the executable basename.
+
+MINIX reference: `minix-2.0.0/src/mm/exec.c` copies arguments before replacing
+memory, installs a fresh context without allocating a new PID, and notifies FS
+for close-on-exec processing. CP32 uses fixed Xtensa ELF addresses and its
+existing internal SRAM instruction/data alias. The foreground FS coordinator
+requests a temporary 32 KiB allocation from MM, loads and validates the complete
+image and stack there, then copies into the blocked child's slot and publishes
+the new context under the scheduler lock. It releases staging on both success
+and failure. Unlike MINIX's early `new_mem` transition, no old image bytes are
+changed before all payload reads succeed. No hardware mapping changes are made.
+
+Missing/nonexecutable paths, malformed images, read errors and MM allocation
+failure return errno through the existing file IPC callback; the old image,
+registers, heap break and application handles remain intact. Loader descriptors
+are separate from the application's four handles, so exec works with a full
+application fd table. Arguments are bounded to nine entries and 256 string
+bytes. This is trusted single-foreground execv, not general MM lifecycle
+ownership, fork, execve environment inheritance or protected execution.
+Close-on-exec flags are not exposed by this bootstrap application ABI.
+
+Validation: `make clean && make`, all 40 `make tests` scripts, ELF section/segment
+inspection and image-layout verification pass. No compiler warnings. The new
+integration test runs production FS, ELF loading, stack construction and
+replacement logic, modeling IPC and physical memory. It injects failures at
+every disk-read boundary, checks exact rollback of image/process/heap state,
+MM exhaustion, invalid executable/request/argument rejection, repeat staging
+release and successful replacement with a full fd table and preserved offset.
+All six generated application ELFs pass loader validation. Host tests do not
+execute Xtensa replacement instructions.
+
+ELF endpoints: `_iram_end=0x403743d4`, `_iram_ext_end=0x40387ba0`,
+`_runtime_stack_end=0x3fce7c50`. The new helpers and literals are in extended
+IRAM. Only 944 bytes remain before the application text's DRAM alias at
+0x3fce8000; existing 128 KiB heap and stack reservations remain intact.
+
+Hardware pending, not flashed: `[FEATURE APP-EXEC 120]1` and
+`[TEST APP-EXEC 120]`. Run these commands separately:
+
+```text
+hello --exec-fail
+hello --exec
+run /boot/exec /boot/echo replaced successfully
+run /boot/exec /missing
+hello --files
+run /boot/ls /boot
+mm
+disk
+```
+
+Expect `Exec failure recovery OK`, then `Exec PID and file OK`, both exit=0.
+The exec-to-echo command prints `replaced successfully` and exits 0; missing
+path prints `exec: cannot execute` and exits 1. Repeat `hello --exec` and check
+that `mm` has no leaked staging allocation and the shell remains usable.
+Invalid-image and injected read/allocation failures are host-verified only.
+
+## Image 121: keep MM allocations inside the linker heap
+
+Image 120 hardware FAILED during `hello --exec`, after `hello --exec-fail`
+returned exit=0. User serial report: EXCCAUSE=0x1c, EXCVADDR=0,
+EPC1=0x403d8002, PS=0x110. The expected instruction at that PC is `mov.n a6,a1`,
+not a memory load; an intact image does not explain that fault there.
+
+Root defect found in `mem_init`: `_heap_start=0x3fcb4c50` was rounded DOWN
+to a 4 KiB click, yielding staging base 0x3fcb4000. The 3152 bytes before the
+heap belong to kernel BSS, including part of the FS cache, its control fields,
+and the MM allocation table at 0x3fcb4848. Clearing/loading the exec buffer
+there overwrites these globals, and subsequent cache fills can overwrite
+staged executable bytes. This is software memory overlap, not evidence of a
+new Xtensa context or instruction-cache requirement. The earlier host exec
+test modeled a separate staging array and therefore missed this integration
+boundary; it also used 256-byte clicks instead of the target's 4096-byte clicks.
+
+Fix: round the heap start UP and `_heap_end` DOWN to whole clicks, exposing
+only the interior range. Empty/reversed/sub-click ranges expose zero pages.
+Arithmetic rounds after division to avoid overflow at the address-space end.
+The 128 KiB linker reservation is unchanged; this layout supplies 31 usable
+4 KiB pages (124 KiB), enough for the 32 KiB exec staging allocation. MINIX's
+whole-free-click allocation invariant is preserved without allocating BSS or
+stack bytes. Correct the exec host model to use target-sized clicks.
+
+Validation: clean ELF/bin build, all 41 host scripts and ELF sections/segments
+and image-layout checks pass without compiler warnings. New regression runs
+the production mem_init and allocator against image 120's exact addresses,
+all 4096 alignment offsets, empty/reversed/address-limit ranges, whole-heap
+exhaustion and release. The transactional exec regression still passes.
+Image 121 endpoints: `_iram_end=0x403743d4`, `_iram_ext_end=0x40387bac`,
+`_heap_start=0x3fcb4c60`, `_heap_end=0x3fcd4c60`,
+`_runtime_stack_end=0x3fce7c60`; 928 bytes remain before the app reservation.
+MM's usable interval is [0x3fcb5000, 0x3fcd4000).
+
+Hardware retest pending, not flashed: `[FEATURE APP-EXEC 121]1` and
+`[TEST APP-EXEC 121]`. Run `hello --exec-fail`, `hello --exec` twice,
+`run /boot/exec /boot/echo replaced successfully`, then `mm` and `disk`.
+Expect failure recovery, `Exec PID and file OK` with exit=0 on each successful
+self-replacement, echo output and a usable shell without leaked MM staging.
+Image 120 does not establish successful exec hardware validation.

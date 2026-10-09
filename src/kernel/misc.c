@@ -12,30 +12,31 @@
 #include <minix/com.h>
 
 extern char _heap_start[];
-extern char _stack_bottom[];
+extern char _heap_end[];
 
 struct memory mem[3];
 phys_clicks tot_mem_size;
-
-CP32_IRAM_EXT static phys_clicks bytes_to_clicks(phys_bytes bytes)
-{
-	return (phys_clicks)((bytes + CLICK_SIZE - 1u) >> CLICK_SHIFT);
-}
 
 /*=========================================================================*
  *				mem_init				   *
  *=========================================================================*/
 CP32_IRAM_EXT PUBLIC void mem_init()
 {
-	phys_bytes usable_bytes = (phys_bytes)(_stack_bottom - _heap_start);
+	phys_bytes start = (phys_bytes)_heap_start;
+	phys_bytes end = (phys_bytes)_heap_end;
+	phys_clicks first = (start >> CLICK_SHIFT) +
+	                    ((start & (CLICK_SIZE - 1u)) != 0);
+	phys_clicks limit = end >> CLICK_SHIFT;
 
-	/* The ESP32-S3 build uses the linker script to carve one contiguous
-	 * DRAM region for the kernel heap and stack.
+	/* MINIX gives MM whole free clicks. The ESP32-S3 linker heap is only
+	 * 8-byte aligned: round its start UP and end DOWN, never include BSS
+	 * or stack bytes. Image 120 rounded down into the allocation table.
+	 * Divide before rounding to avoid overflow near the address-space end.
 	 */
 	mem[0].base = 0;
 	mem[0].size = 0;
-	mem[1].base = (phys_clicks)((phys_bytes)_heap_start >> CLICK_SHIFT);
-	mem[1].size = bytes_to_clicks(usable_bytes);
+	mem[1].base = first;
+	mem[1].size = end > start && limit > first ? limit - first : 0;
 	mem[2].base = 0;
 	mem[2].size = 0;
 

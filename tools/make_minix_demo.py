@@ -18,7 +18,7 @@ INDIRECT = b''.join(
 
 DOUBLE = b''.join(f'Double indirect line {i:02d}\n'.encode() for i in range(1,11)) + b'DOUBLE INDIRECT READ OK\n'
 
-def build_image(include_indirect=False, hello=None, echo=None, cat=None, wc=None, ls=None):
+def build_image(include_indirect=False, hello=None, echo=None, cat=None, wc=None, ls=None, execute=None):
     """Keep a minimal parser fixture; CLI firmware always includes INDIRECT."""
     disk = bytearray(65536)
     disk[1024:1048] = struct.pack('<6HIHHI', 32, 0, 1, 1, 6, 0,
@@ -84,7 +84,7 @@ def build_image(include_indirect=False, hello=None, echo=None, cat=None, wc=None
         directory(29,[(3,'readme')])
     entries=[(2,'.'),(1,'..'),(3,'readme'),(4,'indirect'),(5,'double'),(6,'large')]
     next_zone = 30
-    for number,name,payload in ((7,'hello',hello),(8,'echo',echo),(9,'cat',cat),(10,'wc',wc),(11,'ls',ls)):
+    for number,name,payload in ((7,'hello',hello),(8,'echo',echo),(9,'cat',cat),(10,'wc',wc),(11,'ls',ls),(12,'exec',execute)):
         if payload is None:
             continue
         if not include_indirect or not payload:
@@ -145,13 +145,15 @@ def main():
     parser.add_argument('--cat')
     parser.add_argument('--wc')
     parser.add_argument('--ls')
+    parser.add_argument('--exec', dest='execute')
     args = parser.parse_args()
     disk = build_image(include_indirect=True,
                        hello=Path(args.hello).read_bytes() if args.hello else None,
                        echo=Path(args.echo).read_bytes() if args.echo else None,
                        cat=Path(args.cat).read_bytes() if args.cat else None,
                        wc=Path(args.wc).read_bytes() if args.wc else None,
-                       ls=Path(args.ls).read_bytes() if args.ls else None)
+                       ls=Path(args.ls).read_bytes() if args.ls else None,
+                       execute=Path(args.execute).read_bytes() if args.execute else None)
     Path(args.image).write_bytes(disk)
     # Offset/length records plus packed data avoid firmware-sized zero gaps.
     runs=encode_runs(disk)

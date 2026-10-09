@@ -116,7 +116,7 @@ int main(int argc,char **argv) {
     return 0;
   }
   assert(app_main(0,0,0,0)==1);
-  services.version=8; assert(app_main(0,0,0,&services)==1);
+  services.version=9; assert(app_main(0,0,0,&services)==1);
   char *args[]={"hello","one","two",0};
   services.version=1; assert(!app_main(3,args,0,&services)); assert(writes==7);
   assert(!strcmp(captured,"Hello from a CP32 application!\narg: one\narg: two\n"));

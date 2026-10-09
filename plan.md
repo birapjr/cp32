@@ -1,7 +1,7 @@
 # CP32 port plan
 
-Updated 2026-10-08 against the working tree and user hardware results through
-**APP-FILES 117**; image **APP-DIRS 118** is built and host-tested. This file tracks current status and remaining work, not the
+Updated 2026-10-09 against the working tree and user hardware results through
+**KBD-START 122**; image **SD-ROOT 123** builds and host-tests the SD-root transition. This file tracks current status and remaining work, not the
 chronological bring-up history. See [issues.md](issues.md),
 [hardware captures](docs/hardware/) and [port review](minix.port-status.md)
 for implementation history, evidence and detailed MINIX comparisons.
@@ -20,7 +20,7 @@ slot, receives argc/argv, writes through IPC, exits and returns to the shell.
 The image-89 capture confirms both `hello` and `hello um dois`, with correct
 arguments and exit=0. These paths are no longer pending implementation or
 initial hardware validation. Repeated launch plus disk/MM regression passed
-in image 87. All 39 host test scripts and the clean build pass for image 118.
+in image 87. Both SD and recovery RAM builds and all 43 host scripts pass for image 123.
 
 The boundary is still **one trusted foreground application**. The shell is
 kernel-linked; there is no general exec/fork/wait server, protected application
@@ -224,12 +224,12 @@ and do not remove working functionality during cleanup.
   while adapting architecture-specific mechanisms to Xtensa/ESP32-S3.
 - Keep call0, freestanding execution and current boot/IPC/console behavior.
   Respect shared D/IRAM aliases and the full runtime-stack reservation.
-  Latest inspected endpoints: `_iram_end=0x403743d4`,
-  `_iram_ext_end=0x403875ec`, `_runtime_stack_end=0x3fce6f40`;
+  Latest inspected endpoints: `_iram_end=0x403743e8`,
+  `_iram_ext_end=0x403885f8`, `_runtime_stack_end=0x3fce2a30`;
   the application code's DRAM alias starts at `0x3fce8000`.
 - For implementation changes, add meaningful tests, run `make clean && make`
   and `make tests` in `src/`, then inspect relevant ELF sections/segments and
-  symbols. Current image identity is 118; increment feature/test markers for
+  symbols. Current image identity is 123; increment feature/test markers for
   each new image, with the test marker immediately before the idle call.
 - Record build and hardware results separately in `issues.md` and this plan.
   Mark completed items `[x]` only when their stated acceptance criteria pass;
@@ -251,3 +251,40 @@ segments are checked. Heap, stack and application-slot reservations are unchange
 Next substantial milestone: lifecycle ownership in MM, or writable filesystem
 services with explicit recovery tests; avoid treating the foreground file bridge
 as a completed multi-process filesystem server.
+
+
+[x] Foreground exec and keyboard acceptance completed on image 122. The user
+capture docs/hardware/app-exec-v122.log confirms failure recovery, two
+PID/file-preserving exec calls, exec-to-echo, MM and disk checks, and one clean
+startup prompt. Image 120's heap-alignment crash and image 121's stale-input
+bug are fixed. Earlier image-specific pending checks are superseded by this
+capture. General MM lifecycle, fork, mutable environments and fault isolation
+remain unfinished. See issues.md for the failure history and fixes.
+
+## Current direction: SD-backed root and reclaimed memory
+
+[x] Image 122 hardware confirms one clean startup prompt (fifo=0), exec error
+recovery, two successful PID/file-preserving replacements, exec-to-echo, and
+successful MM/disk checks. Evidence: docs/hardware/app-exec-v122.log. This closes
+the specific image-120/121 crash and stale-keyboard acceptance checks; general
+fork/MM lifecycle, mutable environments and fault containment remain open.
+
+[ ] Image 123 SD-root hardware acceptance. Default firmware now uses a bare-metal
+SPI SD reader and a primary type-0x81 MINIX V2 partition, with raw V2 support.
+No resident RAM disk/demo payload is linked. Both builds and all 43 host scripts
+pass; physical SD timing/card interoperability are not yet hardware-verified.
+Markers: [FEATURE SD-ROOT 123]1 / [TEST SD-ROOT 123], with
+[ROOT V123 backend=sd result=0 capacity=65536] for the generated card image.
+Run storage, fsinfo, disk, run /boot/ls /boot, hello --files, hello --exec-fail,
+hello --exec, exec-to-echo and mm. Boot without a card too. See docs/sd-root.md.
+No SD card or board was written. Recovery RAM build remains available.
+
+[x] Image 123 build-only memory acceptance: 86,632 SRAM bytes recovered net
+versus image 122. Assign 64 KiB to MM: SD heap reservation 192 KiB, whole-page
+allocator 188 KiB. Keep stacks/application slot unchanged. Remaining placement
+margin 21,968 bytes; _runtime_stack_end=0x3fce2a30. Both ELF layouts pass.
+
+[ ] Follow SD read/exec hardware acceptance with hardware SPI throughput, then
+SD sector writes and MINIX file/zone allocation, dirty-buffer ordering, sync
+and interrupted-write recovery. Read-only SD storage is persistent but is not
+a completed writable filesystem. Default disk diagnostic never writes media.

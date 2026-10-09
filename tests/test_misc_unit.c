@@ -24,7 +24,7 @@ void panic(const char *what, int num)
 }
 
 char _heap_start[0x100];
-char _stack_bottom[0x300];
+char _heap_end[0x300];
 
 #include "../src/kernel/misc.c"
 #undef main

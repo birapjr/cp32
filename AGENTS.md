@@ -44,6 +44,8 @@ Before modifying kernel/assembly code:
   - `port.c` — temporary ESP32-S3 glue and placeholder `_send`/`_receive` implementations.
   - `esp32s3.ld` — custom linker script placing vectors/code in internal IRAM and data/heap/stack in DRAM.
 - `src/include/` — compatibility headers and MINIX/ESP32-S3 definitions.
+- `src/drivers/sd_spi.c` — bounded read-only SD SPI protocol; GPIO transport is `src/kernel/sdcard.c`.
+- `src/kernel/rootdisk.c` — default SD-backed MINIX root volume; RAM recovery uses `make STORAGE=ram`. See `docs/sd-root.md` for media preparation and hardware acceptance.
 - `src/lib/other/printk.c` — small kernel support library source.
 - `docs/` — ESP32-S3 memory map and Xtensa assembly/linker notes.
 - `README.md` — basic build, flash, and serial-console instructions.
@@ -71,7 +73,7 @@ The expected toolchain is `xtensa-esp32s3-elf-gcc` and related binutils. Image g
 - This is freestanding code: no hosted libc, startup files, or operating-system services are available. Use the local implementations in `src/kernel/klib.c` and the project headers instead of assuming a normal libc.
 - The build uses `-mabi=call0`, `-ffreestanding`, `-nostdlib`, `-nostartfiles`, `-O0`, and `-mlongcalls`. Assembly must preserve the calling convention and match the C-visible stack/register assumptions.
 - The linker entry point is `CP32`. The ESP image loader places the linked IRAM/DRAM runtime segments at their VMAs before `CP32`; `mpx32.S` zeros `.bss`, establishes the stack/vector base, and enters C. Do not add software LMA copy loops without changing and revalidating the image format.
-- The linker places vectors and kernel `.text` in IRAM and `.data`/`.rodata` in DRAM. A fixed 128 KiB heap and 32 KiB downward-growing stack are reserved in DRAM.
+- The linker places vectors and kernel `.text` in IRAM and `.data`/`.rodata` in DRAM. The SD-root build reserves a 192 KiB heap; the optional RAM-root recovery build reserves 128 KiB. Both reserve a 32 KiB downward-growing boot stack plus the task/server stacks.
 - D/IRAM placement policy: use the extended internal D/IRAM region for
   ordinary C runtime code that does not need to execute from the low loader
   IRAM window. Good candidates include TTY/keyboard user-path handlers,

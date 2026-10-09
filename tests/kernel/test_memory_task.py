@@ -21,7 +21,8 @@ prelude = r'''
 #include <assert.h>
 #include <setjmp.h>
 #include <limits.h>
-#include "ramdisk.h"
+#define CP32_ROOT_RAM 1
+#include "rootdisk.h"
 #include "fs.h"
 #include "../lib/posix/dirent.h"
 extern int errno;
@@ -31,7 +32,7 @@ long strtol(const char *,char **,int);
 #define NO_NUM 0
 #define vir2phys(p) ((uintptr_t)(p))
 enum { OK=0, EPERM=-1, EIO=-5, ENXIO=-6, EFAULT=-14, EINVAL=-22,
-       FS_PROC_NR=1, HARDWARE=-1, MEM=-4, ANY=132, RAM_DEV=0,
+       EROFS=-30, FS_PROC_NR=1, HARDWARE=-1, MEM=-4, ANY=132, RAM_DEV=0,
        DEV_READ=3, DEV_WRITE=4, DEV_IOCTL=5, DEV_OPEN=6, DEV_CLOSE=7,
        TASK_REPLY=68 };
 typedef uintptr_t phys_bytes;
@@ -134,7 +135,7 @@ int main(void) {
   memcpy(disk,user+1,1024);memset(user+1,0,1024);m.m_type=DEV_READ;
   assert(cp32_mem_request(&m)==1024 && !memcmp(user+1,disk,1024));
   assert(user[0]==0xA5 && user[1025]==0xA5);
-  unsigned capacity=cp32_ramdisk_capacity();
+  unsigned capacity=cp32_root_capacity();
   m=request(DEV_WRITE,capacity-3,8); memcpy(user+1,"abcdefgh",8);
   assert(cp32_mem_request(&m)==3);
   memset(user+1,0x55,1024); m.m_type=DEV_READ;

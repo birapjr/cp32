@@ -131,7 +131,8 @@ SECTIONS {
     -------------------------------------------------- */
     .heap : ALIGN(8) {
         _heap_start = .;
-        . = . + 128K;
+        /* SD removes the resident disk; its build returns 64K to MM. */
+        . = . + (DEFINED(__cp32_heap_bytes) ? __cp32_heap_bytes : 128K);
         _heap_end = .;
     } > dram
 

@@ -126,3 +126,24 @@ int cp32_stat(const char *path,struct cp32_app_stat *info)
   if(file_call(CP32_APP_STAT,0,&request,sizeof(request)))return -1;
   *info=request.info;return 0;
 }
+
+int cp32_execv(const char *path,const char *const argv[])
+{
+  struct cp32_app_exec_request request;
+  unsigned n=0,used=0,i;
+  if(!api || api->version<8 || !api->file)return io_error(CP32_ENOSYS);
+  if(!path || !argv)return io_error(CP32_EFAULT);
+  while(n<255 && path[n]) {request.path[n]=path[n];n++;}
+  if(path[n])return io_error(CP32_ENAMETOOLONG);
+  request.path[n]=0;request.path[255]=0;
+  for(i=0;i<9 && argv[i];i++) {
+    n=0;
+    do {
+      if(used==sizeof(request.args))return io_error(CP32_E2BIG);
+      request.args[used++]=argv[i][n];
+    }while(argv[i][n++]);
+  }
+  if(!i || argv[i])return io_error(CP32_E2BIG);
+  request.argc=i;
+  return file_call(CP32_APP_EXEC,0,&request,sizeof(request));
+}

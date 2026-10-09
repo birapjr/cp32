@@ -253,3 +253,15 @@ should still list `readme` and exit `1`; successful applications exit `0`.
 Retain the USB output for regression checks.
 
 [Issues and bring-up history](issues.md) · [Hardware captures](docs/hardware/)
+
+
+## SD root filesystem (image 123)
+
+The default `make` now builds firmware that reads MINIX V2 directly from SD and
+creates `src/build/sdcard.img` for a spare card. This removes the resident RAM
+disk/embedded image and increases the MM heap reservation to 192 KiB. Initial
+SD support is read-only; hardware validation is pending. A FAT/exFAT card with
+an image copied onto it is not sufficient. See [SD root setup and acceptance](docs/sd-root.md)
+for media preparation, boot markers, tests, limits and the write-support roadmap.
+Use `make STORAGE=ram` in `src/` for the original RAM-backed recovery build in
+`src/build-ram/`. No build target writes an SD card.

@@ -5,7 +5,7 @@
 #include "proc.h"
 #include "irq_frame.h"
 #include "cardputer.h"
-#include "ramdisk.h"
+#include "rootdisk.h"
 #include "display.h"
 #include "cp32-shell.h"
 #include <string.h>
@@ -199,7 +199,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE APP-DIRS 118]");
+  usbj_print("[FEATURE SD-ROOT 123]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -241,7 +241,7 @@ void main(void)
     usbj_print("]\r\n");
   }
   kbd_init_result = cardputer_keyboard_init();
-  usbj_print("[KBD init=");
+  usbj_print("[KBD V122 init=");
   usbj_print_u32((uint32_t)kbd_init_result);
   usbj_print(" stale=");
   usbj_print_u32((uint32_t)cardputer_keyboard_stale_events);
@@ -252,9 +252,14 @@ void main(void)
   usbj_print(" fifo=");
   usbj_print_u32((uint32_t)kbd_count);
   usbj_print("]\r\n");
-  if (cp32_minix_demo_init() != 0) panic("RAM demo init failed", NO_NUM);
-  usbj_print("[RAMDISK capacity=");
-  usbj_print_u32((uint32_t)cp32_ramdisk_capacity());
+  {
+    int storage_result=cp32_root_init();
+    usbj_print("[ROOT V123 backend=" CP32_ROOT_NAME " result=");
+    if(storage_result<0)usbj_print("-");
+    usbj_print_u32((uint32_t)(storage_result<0 ? -storage_result:storage_result));
+  }
+  usbj_print(" capacity=");
+  usbj_print_u32((uint32_t)cp32_root_capacity());
   usbj_print("]\r\n");
   cardputer_display_clear();
   usbj_print("[LCD clear-done]\r\n");
@@ -319,7 +324,7 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST APP-DIRS 118]\r\n");
+  usbj_print("[TEST SD-ROOT 123]\r\n");
   kernel_idle_loop();
 }
 

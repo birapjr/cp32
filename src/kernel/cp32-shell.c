@@ -1,7 +1,7 @@
 #include "kernel.h"
 #include <termios.h>
 #include <sys/ioctl.h>
-#include "ramdisk.h"
+#include "rootdisk.h"
 #include "../fs/fs.h"
 #include "../lib/posix/dirent.h"
 #include "tty.h"
@@ -86,7 +86,7 @@ CP32_IRAM_EXT static int cp32_shell_disk_uncached(unsigned offset, char *buffer,
 
 CP32_IRAM_EXT static int cp32_shell_disk_read(unsigned offset, char *buffer, int count)
 {
-  return cp32_cache_read(cp32_shell_disk_uncached,cp32_ramdisk_capacity(),
+  return cp32_cache_read(cp32_shell_disk_uncached,cp32_root_capacity(),
                          offset,buffer,count);
 }
 
@@ -95,7 +95,7 @@ CP32_IRAM_EXT static void cp32_shell_stat(const char *path)
   struct cp32_minix_stat info;
   char full[CP32_MINIX_PATH_MAX+1];
   int result = cp32_minix_abspath(cp32_shell_cwd,path,full);
-  if (!result) result = cp32_minix_stat(cp32_shell_disk_read, cp32_ramdisk_capacity(), full, &info);
+  if (!result) result = cp32_minix_stat(cp32_shell_disk_read, cp32_root_capacity(), full, &info);
   if (result) {
     cp32_shell_print("Stat failed: ");
     cp32_shell_print_u32((unsigned)-result);
@@ -116,7 +116,7 @@ CP32_IRAM_EXT static void cp32_shell_fsinfo(void)
 {
   struct cp32_minix_super super;
   int result = cp32_minix_super_read(cp32_shell_disk_read,
-                                    cp32_ramdisk_capacity(), &super);
+                                    cp32_root_capacity(), &super);
   switch (result) {
     case CP32_SUPER_OK:
       cp32_shell_print("MINIX V2 superblock: inodes=");
@@ -138,7 +138,7 @@ CP32_IRAM_EXT static void cp32_shell_ls(const char *path)
   char full[CP32_MINIX_PATH_MAX+1];
   int result = cp32_minix_abspath(cp32_shell_cwd,path,full);
   if (!result) {
-    result=cp32_opendir(cp32_shell_disk_read,cp32_ramdisk_capacity(),full,&dir);
+    result=cp32_opendir(cp32_shell_disk_read,cp32_root_capacity(),full,&dir);
   }
   if (result == 0) {
     while ((result = cp32_readdir(&dir, &entry)) > 0) {
@@ -159,8 +159,14 @@ CP32_IRAM_EXT static void cp32_shell_ls(const char *path)
 
 CP32_IRAM_EXT static int cp32_shell_disk_check(void)
 {
+#if !CP32_ROOT_RAM
+  /* Real media diagnostics are read-only; never overwrite a mounted volume. */
+  struct cp32_minix_super super;
+  cp32_cache_invalidate();
+  return cp32_minix_super_read(cp32_shell_disk_read,cp32_root_capacity(),&super) ? EIO:OK;
+#else
   static char saved[CP32_RAMDISK_SECTOR_SIZE], data[CP32_RAMDISK_SECTOR_SIZE];
-  unsigned offset = cp32_ramdisk_capacity() - sizeof(saved), i;
+  unsigned offset = cp32_root_capacity() - sizeof(saved), i;
   int result;
   result = cp32_shell_disk_io(DEV_READ, offset, saved, sizeof(saved));
   if (result != (int)sizeof(saved)) return result < 0 ? result : EIO;
@@ -182,6 +188,7 @@ CP32_IRAM_EXT static int cp32_shell_disk_check(void)
     return EIO;
   for (i = 0; i < sizeof(data); i++) if (saved[i] != data[i]) return EIO;
   return result;
+#endif
 }
 
 /* MINIX commands/simple/tail.c count semantics, using seekable regular files.
@@ -252,7 +259,7 @@ CP32_IRAM_EXT static int cp32_shell_tail_start(int fd,unsigned count,int bytes_m
 CP32_IRAM_EXT static int cp32_shell_open_file(const char *path)
 {
   struct cp32_minix_stat info;
-  int fd=cp32_fd_open(cp32_shell_disk_read,cp32_ramdisk_capacity(),path);
+  int fd=cp32_fd_open(cp32_shell_disk_read,cp32_root_capacity(),path);
   int result;
   if(fd<0) return fd;
   result=cp32_fd_fstat(fd,&info);
@@ -325,7 +332,7 @@ usage:
   cp32_shell_print("Usage: wc [-lwc] [--] filename\r\n");
 }
 
-CP32_IRAM_EXT static int cp32_shell_app_read(void *context,uint32_t offset,
+CP32_IRAM_EXT int cp32_shell_app_read(void *context,uint32_t offset,
                                              unsigned char *buffer,unsigned count)
 {
   int fd=*(int *)context;
@@ -374,6 +381,22 @@ CP32_IRAM_EXT static int cp32_app_file_error(int r)
     default:return -5;
   }
 }
+/* Internal backing descriptor, independent of the child's four open handles. */
+CP32_IRAM_EXT int cp32_shell_exec_open(const char *name,unsigned *size)
+{
+  char path[CP32_MINIX_PATH_MAX+1];struct cp32_minix_stat info;
+  int r,fd;
+  if(!*name)return -2;
+  r=cp32_minix_abspath(cp32_shell_cwd,name,path);
+  if(r)return cp32_app_file_error(r);
+  fd=cp32_shell_open_file(path);
+  if(fd<0)return fd==-CP32_FILE_IS_DIR ? -13 : cp32_app_file_error(fd);
+  r=cp32_fd_fstat(fd,&info);
+  if(r || !(info.mode & 0111)) {cp32_fd_close(fd);return r ? -5 : -13;}
+  *size=info.size;return fd;
+}
+CP32_IRAM_EXT void cp32_shell_exec_close(int fd) {cp32_fd_close(fd);}
+
 /* Both records are nine 32-bit unsigned fields in the same declared order. */
 typedef char cp32_stat_layout_check[(sizeof(struct cp32_app_stat)==
                                     sizeof(struct cp32_minix_stat)) ? 1 : -1];
@@ -386,7 +409,7 @@ CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned a
     struct cp32_minix_stat info;
     if(!*(char *)buffer)return -2;
     r=cp32_minix_abspath(cp32_shell_cwd,buffer,path);
-    if(!r)r=cp32_minix_stat(cp32_shell_disk_read,cp32_ramdisk_capacity(),path,&info);
+    if(!r)r=cp32_minix_stat(cp32_shell_disk_read,cp32_root_capacity(),path,&info);
     if(!r)memcpy((char *)buffer+256,&info,sizeof(info));
     return r ? cp32_app_file_error(r) : 0;
   }
@@ -398,7 +421,7 @@ CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned a
     if(slot==CP32_APP_FILE_MAX)return -24;
     r=cp32_minix_abspath(cp32_shell_cwd,buffer,path);
     if(r)return cp32_app_file_error(r);
-    r=op==CP32_APP_OPENDIR ? cp32_fd_open(cp32_shell_disk_read,cp32_ramdisk_capacity(),path) :
+    r=op==CP32_APP_OPENDIR ? cp32_fd_open(cp32_shell_disk_read,cp32_root_capacity(),path) :
                            cp32_shell_open_file(path);
     if(r<0)return cp32_app_file_error(r);
     fd=r;r=cp32_fd_fstat(fd,&info);
@@ -746,7 +769,7 @@ CP32_IRAM_EXT static void cp32_shell_cd(const char *path)
     return;
   }
   strcpy(next, cp32_shell_cwd);
-  result = cp32_minix_chdir(cp32_shell_disk_read, cp32_ramdisk_capacity(),
+  result = cp32_minix_chdir(cp32_shell_disk_read, cp32_root_capacity(),
                            next, previous ? cp32_shell_previous : path);
   if (result) {
     cp32_shell_print("Directory change failed: ");
@@ -902,12 +925,12 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
     cp32_shell_fsinfo();
   } else if (strcmp(line, "disk") == 0) {
     int result = cp32_shell_disk_check();
-    cp32_shell_print("[RAM IPC V49 result=");
+    cp32_shell_print("[DISK IPC V123 result=");
     cp32_shell_print_u32((uint32_t)result);
     cp32_shell_print("]\r\n");
-  } else if (strcmp(line, "ramdisk") == 0) {
-    cp32_shell_print("[CMD ramdisk capacity=");
-    cp32_shell_print_u32(cp32_ramdisk_capacity());
+  } else if (strcmp(line, "storage") == 0 || strcmp(line, "ramdisk") == 0) {
+    cp32_shell_print("[STORAGE " CP32_ROOT_NAME " capacity=");
+    cp32_shell_print_u32(cp32_root_capacity());
     cp32_shell_print("]\r\n");
   } else if (line[0] != '\0') {
     cp32_shell_launch(line,2);
