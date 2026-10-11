@@ -4,6 +4,8 @@
 #include "kernel.h"
 #include "proc.h"
 #include "application.h"
+#include <minix/cp32_mm.h>
+#include <minix/com.h>
 #include "../apps/hello/abi.h"
 #define APP_NR (LOW_USER+1)
 #define APP_WRITE 2001
@@ -137,7 +139,78 @@ CP32_IRAM_EXT static void application_exit(int status)
   panic("application exit returned",NO_NUM);
   for(;;) {}
 }
-static const struct cp32_app_services services={7,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+static const struct cp32_app_services services={8,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+
+/* Transactional foreground exec. Stage all bytes in MM-owned temporary memory
+ * while the child is blocked in SENDREC; publish only after every read succeeds.
+ * No target-memory writes or fd-table changes occur on a recoverable failure. */
+CP32_IRAM_EXT static int application_replace(struct proc *child,message *request,
+                                            uint32_t *floor,uint32_t *brk)
+{
+  struct cp32_app_exec_request copy;
+  struct cp32_image image;
+  const char *argv[9],*env[]={"HOME=/","PATH=/boot","USER=root"};
+  uintptr_t p=(uintptr_t)request->m1_p1;
+  unsigned i,n=0,size,base;
+  const char *name,*scan;
+  uint32_t sp;
+  unsigned char *stage;
+  message mm;
+  int fd,r,saved;
+  if((unsigned)request->m1_i3!=sizeof(copy))return -22;
+  if(p<CP32_APP_DATA || p>CP32_APP_TOP || sizeof(copy)>CP32_APP_TOP-p)return -14;
+  memcpy(&copy,request->m1_p1,sizeof(copy));
+  if(copy.path[255])return -36;
+  if(!copy.argc || copy.argc>9)return -7;
+  for(i=0;i<copy.argc;i++) {
+    if(n>=sizeof(copy.args))return -7;
+    argv[i]=copy.args+n;
+    while(n<sizeof(copy.args) && copy.args[n])n++;
+    if(n==sizeof(copy.args))return -7;
+    n++;
+  }
+  fd=cp32_shell_exec_open(copy.path,&size);
+  if(fd<0)return fd;
+  memset(&mm,0,sizeof(mm));mm.m_type=CP32_MM_ALLOCATE;mm.m1_i1=32768U>>CLICK_SHIFT;
+  r=_sendrec(MM_PROC_NR,&mm);
+  if(r!=OK || mm.m_source!=MM_PROC_NR || mm.m_type!=OK || !mm.m1_i1) {
+    cp32_shell_exec_close(fd);return -12;
+  }
+  base=(unsigned)mm.m1_i1;stage=(unsigned char *)(uintptr_t)(base<<CLICK_SHIFT);
+  r=cp32_image_load(cp32_shell_app_read,&fd,size,stage,stage+16384,&image);
+  cp32_shell_exec_close(fd);
+  if(r)r=r==-1 ? -8 : -5;
+  if(!r) {
+    memset(stage+28672,0,4096);
+    if(cp32_exec_stack(stage+32768-512,512,CP32_APP_TOP-512,copy.argc,argv,3,env,&sp))r=-7;
+  }
+  if(!r) {
+    /* Child cannot run until the new frame is complete. No IPC reply goes to
+     * the old message buffer, which will cease to exist after these copies. */
+    if(child->p_flags!=RECEIVING || child->p_getfrom!=FS_PROC_NR ||
+       child->p_callerq!=NIL_PROC || child->p_sendlink!=NIL_PROC)
+      panic("exec blocked state",NO_NUM);
+    saved=lock_save();
+    memcpy((void *)APP_TEXT_DATA,stage,16384);
+    memcpy((void *)CP32_APP_DATA,stage+16384,16384);
+    __asm__ volatile("memw\n\tisync" ::: "memory");
+    *floor=(CP32_APP_DATA+image.data.memsz+15U)&~15U;*brk=*floor;
+    if(cp32_exec_frame(child,image.entry,sp,(reg_t)&services)!=OK)panic("exec frame",NO_NUM);
+    child->p_blocked_frame_valid=0;child->p_blocked_frame_result=0;
+    child->p_blocked_frame_pc=child->p_blocked_frame_psw=child->p_blocked_frame_sp=0;
+    child->p_messbuf=0;child->p_getfrom=ANY;child->p_sendto=0;
+    name=copy.path;
+    for(scan=name;*scan;scan++)if(*scan=='/')name=scan+1;
+    for(i=0;name[i] && i<sizeof(child->p_name)-1;i++)child->p_name[i]=name[i];
+    child->p_name[i]=0;
+    child->p_flags=0;lock_ready(child);
+    restore_lock(saved);
+  }
+  memset(&mm,0,sizeof(mm));mm.m_type=CP32_MM_RELEASE;mm.m1_i1=base;
+  if(_sendrec(MM_PROC_NR,&mm)!=OK || mm.m_source!=MM_PROC_NR || mm.m_type!=OK)
+    panic("exec staging release",NO_NUM);
+  return r;
+}
 
 CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     uint32_t size,unsigned argc,const char *const argv[],cp32_app_output output,int *status)
@@ -207,7 +280,10 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     }
     result=m.m_type==APP_GETPID ? child->p_pid :
            m.m_type==APP_GETPPID ? parent_pid : -1;
-    if(m.m_type==APP_FILE) result=application_file_request(&m);
+    if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_EXEC) {
+      result=application_replace(child,&m,&heap_floor,&heap_break);
+      if(!result)continue; /* new image resumes at entry, never through send */
+    } else if(m.m_type==APP_FILE) result=application_file_request(&m);
     if(m.m_type==APP_SBRK) {
       uint32_t old=heap_break;
       result=application_break(heap_floor,&heap_break,m.m1_i1);

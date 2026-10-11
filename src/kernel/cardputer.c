@@ -177,21 +177,28 @@ CP32_IRAM_EXT int cardputer_keyboard_init(void)
   ok &= init_write(0x1B, 0xFF); ok &= init_write(0x1C, 0xFF);
   ok &= init_write(0x1D, 0x7F); ok &= init_write(0x1E, 0xFF);
   ok &= init_write(0x1F, 0x00);
-  /* Discard events accumulated before this boot's TTY reader exists. */
+  /* MINIX kb_init consumes leftover input before enabling its reader.
+   * TCA8418 datasheet SCPS215G 8.6.2.3-4: count is bits 3:0 of 0x03;
+   * reading KEY_EVENT_A (0x04) pops one FIFO event. Use raw register reads
+   * here: the public reader deliberately refuses input until kbd_ready.
+   * Bound draining if input continues, and fail closed on I2C errors. */
   stale = 0;
-  if (read_register(0x03, &pending)) {
+  if (!read_register(0x03, &pending)) ok = 0;
+  else {
+    pending &= 0x0F;
     while (pending != 0 && stale != 32) {
       unsigned char event;
-      if (!cardputer_keyboard_read_event(&event)) break;
+      if (!read_register(0x04, &event)) { ok = 0; break; }
       stale++;
-      if (!read_register(0x03, &pending)) break;
+      if (!read_register(0x03, &pending)) { ok = 0; break; }
+      pending &= 0x0F;
     }
+    if (pending != 0) ok = 0;
   }
   cardputer_keyboard_stale_events = stale;
-  /* Clear stale GPIO/key interrupt state, then enable both sources. */
-  ok &= init_write(0x02, 0x03);
-  ok &= init_write(0x01, 0x03);
   if (!ok) return 0;
+  /* Clear stale GPIO/key interrupt state, then enable both sources. */
+  if (!init_write(0x02, 0x03) || !init_write(0x01, 0x03)) return 0;
   kbd_ready = 1;
   return ok;
 }

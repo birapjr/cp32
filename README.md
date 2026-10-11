@@ -10,20 +10,23 @@ hardware, without an ESP-IDF or Arduino runtime.
 
 - Boot, task scheduling, timer interrupts and blocking message passing.
 - Cardputer keyboard/LCD shell, with standalone startup and USB diagnostics.
-- A read-only MINIX V2 filesystem on a 64 KiB RAM disk: directories, file
+- A persistent MINIX V2 filesystem on microSD over hardware SPI: directories,
   reads, metadata, seeking and indirect blocks.
+- Shell file creation, patching, append, shrink-only truncation, hard links and
+  deletion, with inode/data-zone allocation and reclamation.
 - Memory allocation and device services through IPC.
-- Five separately compiled applications: `hello`, `echo`, `cat`, `wc` and `ls`,
+- Six separately compiled applications: `hello`, `echo`, `cat`, `wc`, `ls` and `exec`,
   loaded from the filesystem with arguments, environment and exit status.
 - Application file open/read/seek/close, directory iteration and stat/fstat,
   with four owned handles and automatic cleanup on normal exit.
 - Buffered input/output, application-local I/O errors, PID/parent queries and
   heap allocation: malloc/free, calloc, realloc and explicit heap trimming.
 
-**Current hardware-validated build: APP-DIRS 118.** The latest Cardputer log
-confirms standalone directory and long listings, missing-path recovery, file
-API checks, multi-file wc totals, and disk/MM checks. The matching build passes
-all **39 host test scripts** and ELF layout checks.
+**Current build: FS-UNLINK 130.** All **44 host test scripts** and clean
+SPI2 SD, GPIO SD and RAM recovery builds pass. Hardware logs through image 129
+confirm SD reads/exec, persistent patches and appended content, basic creation
+and truncation, and matching hard-link inode/count/content after restart.
+Image 130 deletion and reclamation still need hardware validation.
 
 On the Cardputer, type:
 
@@ -36,9 +39,13 @@ Hello exit=0
 ```
 
 CP32 is still an experimental port. The shell is kernel-linked and supports
-one trusted foreground application. General fork/exec/wait, memory protection,
-application fault recovery, writable/persistent filesystems, full libc and a
-user shell are still ahead. The RAM filesystem is recreated at every boot.
+one trusted foreground application. Application `exec` replaces the running
+image while retaining its PID and open files; failed loads return an error.
+General fork/wait, memory protection, application fault recovery, application
+file-write syscalls, full libc and a user shell are still ahead. Filesystem
+mutations currently use privileged shell commands, with synchronous verified
+SD writes. Crash recovery and power-loss atomicity are not implemented.
+The optional RAM recovery filesystem is recreated at every boot.
 
 See the [remaining plan](plan.md), [MINIX port review](minix.port-status.md)
 and [application roadmap](docs/application-execution.md) for details.
@@ -58,11 +65,11 @@ make
 make tests
 ```
 
-The normal build compiles all five applications and packages them in the boot
+The normal build compiles all six applications and packages them in the boot
 filesystem. Kernel outputs are `build/cp32.elf` and `build/cp32.bin`; application
 outputs are `build/hello.elf`, `build/echo.elf`, `build/cat.elf`, `build/wc.elf`
-and `build/ls.elf`. Use `make hello`, `make echo`, `make cat`, `make wc` or
-`make ls` to build an application alone. Applications use `-Os`; the kernel
+and `build/ls.elf`, plus `build/exec.elf`. Use `make hello`, `make echo`,
+`make cat`, `make wc`, `make ls` or `make exec` to build an application alone. Applications use `-Os`; the kernel
 retains its `-O0` build.
 
 To flash:
@@ -126,6 +133,12 @@ Bare `ls`, `cat` and `wc` are kernel builtins. Use `run /boot/ls`,
 | `wc [-lwc] file` | Count lines, words and bytes; flags select columns in that order. |
 | `cmp file1 file2` | Report whether two files are identical. |
 | `stat path` | Show inode, size, links, owner IDs and modification time. |
+| `create /name text` | SD only: create a new root file; name 1–14 bytes, initial text 1–64 bytes. Existing names are rejected. |
+| `patch path offset text` | SD only: overwrite 1–64 bytes in an existing non-executable file, within one sector and current EOF. |
+| `append path text` | SD only: append 1–64 bytes to a non-executable file, allocating zones as needed. |
+| `truncate path length` | SD only: shrink a non-executable file to a decimal byte count, releasing unused zones. Zero empties the file. |
+| `link existing /alias` | SD only: create a root hard link sharing the source inode/data; the destination must be new. |
+| `rm path` or `unlink path` | SD only: remove one regular-file name; the last link releases its inode and supported data/indirect zones. Open files and directories are rejected. |
 | `run path [arguments]` | Load an executable by absolute or current-directory-relative path; no PATH search. |
 | `echo [arguments]` | Run `/boot/echo` through external-command lookup. Bare external names use `/boot`; names containing `/` use their explicit path. Builtins take priority. |
 | `hello [arguments]` | Load `/boot/hello`, pass arguments and report its exit status. |
@@ -150,8 +163,8 @@ Bare `ls`, `cat` and `wc` are kernel builtins. Use `run /boot/ls`,
 | `hello --env` | Show the initial application environment. These defaults are recreated on every launch. |
 | `hello --exit N` | Exit immediately with decimal status 0..65535; the shell reports its low eight bits (e.g. 263 becomes 7). |
 | `fsinfo` | Inspect the MINIX superblock and filesystem geometry. |
-| `ramdisk` | Show RAM disk capacity. |
-| `disk` | Exercise RAM-device IPC read/write, restoring the tested sector. |
+| `storage` or `ramdisk` | Show the selected storage backend and filesystem capacity. |
+| `disk` | SD: validate the superblock through read IPC without writing media. RAM recovery: exercise read/write and restore the tested sector. |
 | `mm` | Check allocation/release through the memory service. |
 | `sys` | Query saved stack pointer and uptime through the system task. |
 | `ipc` | Check TTY attributes through an IPC ioctl request. |
@@ -253,3 +266,92 @@ should still list `readme` and exit `1`; successful applications exit `0`.
 Retain the USB output for regression checks.
 
 [Issues and bring-up history](issues.md) · [Hardware captures](docs/hardware/)
+
+
+## SD root filesystem (image 130)
+
+The default build mounts MINIX V2 directly from the Cardputer Adv microSD slot
+using hardware SPI2. It removes the resident RAM disk and embedded demo image,
+leaving a 192 KiB MM heap reservation (188 KiB of whole allocator pages). SD is
+persistent storage, not extra executable RAM or swap.
+
+`build/sdcard.img` is a whole-card MBR image containing a 64 KiB MINIX fixture
+and all six applications. A FAT/exFAT card with this image copied onto it as a
+file will not work. Follow [SD preparation and acceptance](docs/sd-root.md) for
+a new card. Existing CP32 MINIX cards need no reformat for these features;
+replacing their image would overwrite saved files. Build targets produce host
+files and never write an SD device. Insert the card before boot; missing media
+leaves the console available but filesystem operations fail. Live remount and
+hot removal are not supported.
+
+`make STORAGE=ram` selects the original RAM recovery configuration in
+`build-ram/`; its filesystem mutations are not enabled. `make SD_SPI=soft`
+selects the GPIO SD transport in `build-sd-soft/`. Run these from `src/`.
+
+### Persistent file operations
+
+The shell commands in the table above form a small writable-file lifecycle.
+`create`, `append` and `patch` store literal text without adding a newline.
+The shell's 63-character command-line limit includes command names and paths,
+so it can impose a smaller text limit than the 64-byte filesystem helper limit.
+Mutation commands use whitespace-delimited paths, without the application
+command parser's quoting or escape handling.
+
+Try this with unused names:
+
+```text
+create /sample hello
+append /sample SD
+patch /sample 0 HELLO
+link /sample /samplelink
+stat /sample
+stat /samplelink
+cat /samplelink
+truncate /samplelink 5
+cat /sample
+rm /sample
+cat /samplelink
+stat /samplelink
+```
+
+Both names initially share an inode and link count 2. The first read prints
+`HELLOSD`. Truncating either name changes the shared file to `HELLO`; removing
+`/sample` leaves `/samplelink` readable with link count 1. Restart and verify
+that the surviving name and content persist. To remove the final link:
+
+```text
+unlink /samplelink
+create /sample reused
+cat /sample
+```
+
+The final deletion releases the inode and zones for reuse. This does not
+securely erase old data. Use `hello --exec`, `disk` and `mm` for regression
+checks. Detailed [image 130 hardware acceptance](docs/sd-root.md#file-and-link-deletion-image-130)
+is still pending; the examples are test instructions, not hardware results.
+
+### Current limits
+
+- Creation and new hard-link names are root-only, with 1–14-byte names. Source
+  paths and deletion can use existing nested directories. Mutating a parent
+  directory requires it to fit in one 1024-byte block; directory growth beyond
+  that block, directory creation/removal and recursive deletion are unported.
+- Append, truncate and last-link reclamation support 1024-byte zones and direct/
+  single-indirect mappings through 263 KiB, subject to free volume space.
+  Truncate only shrinks. The supplied fixture volume is 64 KiB.
+- Patch, append and truncate reject executable files. Link and deletion accept
+  regular executable files too. Deletion rejects open inodes with error 13;
+  keeping an unlinked file alive until its last descriptor closes is unported.
+- Application descriptors remain read-only. These are privileged shell
+  maintenance operations, not a general POSIX write/permission implementation.
+  Timestamps are not updated, and rename is not implemented.
+- Writes are synchronous and verified by sector readback. I/O failure may
+  occur after a change became visible and may leave unreachable allocations
+  or excess link counts. Further device writes are disabled until reboot.
+  There is no automatic retry, rollback, filesystem repair or torn-sector/
+  power-loss atomicity guarantee.
+
+See [SD filesystem implementation and validation](docs/sd-root.md) for the
+MINIX references, write ordering, memory placement and per-feature hardware
+captures. Host tests cover both disk byte orders, shared-link changes, remount
+persistence, resource reuse, and failures before/after complete writes.

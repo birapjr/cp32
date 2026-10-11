@@ -2744,3 +2744,411 @@ For boot/large expect '.', '..', 'readme'; /readme long output is
 -r--r--r-- 3 0 0 61 /readme. The missing-path command prints the valid operand
 and exits 1; successful commands exit 0. Also try cd boot followed by
 run /boot/ls and cd / as separate commands. Not flashed.
+
+## Image 120: transactional foreground application exec
+
+ABI v8 adds `cp32_execv(path, argv)` and `/boot/exec`. A running application
+can replace its fixed-slot ELF while retaining its process slot, PID, parent
+wait relationship and all four owned file/directory handles with their offsets.
+Success starts at the replacement entry and never replies to the old SENDREC
+buffer. The new context clears general/special registers and blocked-frame
+bookkeeping, resets the application heap and BSS, and installs fresh argc/argv
+and the fixed HOME/PATH/USER environment. Paths resolve against the shell cwd;
+the process name is the executable basename.
+
+MINIX reference: `minix-2.0.0/src/mm/exec.c` copies arguments before replacing
+memory, installs a fresh context without allocating a new PID, and notifies FS
+for close-on-exec processing. CP32 uses fixed Xtensa ELF addresses and its
+existing internal SRAM instruction/data alias. The foreground FS coordinator
+requests a temporary 32 KiB allocation from MM, loads and validates the complete
+image and stack there, then copies into the blocked child's slot and publishes
+the new context under the scheduler lock. It releases staging on both success
+and failure. Unlike MINIX's early `new_mem` transition, no old image bytes are
+changed before all payload reads succeed. No hardware mapping changes are made.
+
+Missing/nonexecutable paths, malformed images, read errors and MM allocation
+failure return errno through the existing file IPC callback; the old image,
+registers, heap break and application handles remain intact. Loader descriptors
+are separate from the application's four handles, so exec works with a full
+application fd table. Arguments are bounded to nine entries and 256 string
+bytes. This is trusted single-foreground execv, not general MM lifecycle
+ownership, fork, execve environment inheritance or protected execution.
+Close-on-exec flags are not exposed by this bootstrap application ABI.
+
+Validation: `make clean && make`, all 40 `make tests` scripts, ELF section/segment
+inspection and image-layout verification pass. No compiler warnings. The new
+integration test runs production FS, ELF loading, stack construction and
+replacement logic, modeling IPC and physical memory. It injects failures at
+every disk-read boundary, checks exact rollback of image/process/heap state,
+MM exhaustion, invalid executable/request/argument rejection, repeat staging
+release and successful replacement with a full fd table and preserved offset.
+All six generated application ELFs pass loader validation. Host tests do not
+execute Xtensa replacement instructions.
+
+ELF endpoints: `_iram_end=0x403743d4`, `_iram_ext_end=0x40387ba0`,
+`_runtime_stack_end=0x3fce7c50`. The new helpers and literals are in extended
+IRAM. Only 944 bytes remain before the application text's DRAM alias at
+0x3fce8000; existing 128 KiB heap and stack reservations remain intact.
+
+Hardware pending, not flashed: `[FEATURE APP-EXEC 120]1` and
+`[TEST APP-EXEC 120]`. Run these commands separately:
+
+```text
+hello --exec-fail
+hello --exec
+run /boot/exec /boot/echo replaced successfully
+run /boot/exec /missing
+hello --files
+run /boot/ls /boot
+mm
+disk
+```
+
+Expect `Exec failure recovery OK`, then `Exec PID and file OK`, both exit=0.
+The exec-to-echo command prints `replaced successfully` and exits 0; missing
+path prints `exec: cannot execute` and exits 1. Repeat `hello --exec` and check
+that `mm` has no leaked staging allocation and the shell remains usable.
+Invalid-image and injected read/allocation failures are host-verified only.
+
+## Image 121: keep MM allocations inside the linker heap
+
+Image 120 hardware FAILED during `hello --exec`, after `hello --exec-fail`
+returned exit=0. User serial report: EXCCAUSE=0x1c, EXCVADDR=0,
+EPC1=0x403d8002, PS=0x110. The expected instruction at that PC is `mov.n a6,a1`,
+not a memory load; an intact image does not explain that fault there.
+
+Root defect found in `mem_init`: `_heap_start=0x3fcb4c50` was rounded DOWN
+to a 4 KiB click, yielding staging base 0x3fcb4000. The 3152 bytes before the
+heap belong to kernel BSS, including part of the FS cache, its control fields,
+and the MM allocation table at 0x3fcb4848. Clearing/loading the exec buffer
+there overwrites these globals, and subsequent cache fills can overwrite
+staged executable bytes. This is software memory overlap, not evidence of a
+new Xtensa context or instruction-cache requirement. The earlier host exec
+test modeled a separate staging array and therefore missed this integration
+boundary; it also used 256-byte clicks instead of the target's 4096-byte clicks.
+
+Fix: round the heap start UP and `_heap_end` DOWN to whole clicks, exposing
+only the interior range. Empty/reversed/sub-click ranges expose zero pages.
+Arithmetic rounds after division to avoid overflow at the address-space end.
+The 128 KiB linker reservation is unchanged; this layout supplies 31 usable
+4 KiB pages (124 KiB), enough for the 32 KiB exec staging allocation. MINIX's
+whole-free-click allocation invariant is preserved without allocating BSS or
+stack bytes. Correct the exec host model to use target-sized clicks.
+
+Validation: clean ELF/bin build, all 41 host scripts and ELF sections/segments
+and image-layout checks pass without compiler warnings. New regression runs
+the production mem_init and allocator against image 120's exact addresses,
+all 4096 alignment offsets, empty/reversed/address-limit ranges, whole-heap
+exhaustion and release. The transactional exec regression still passes.
+Image 121 endpoints: `_iram_end=0x403743d4`, `_iram_ext_end=0x40387bac`,
+`_heap_start=0x3fcb4c60`, `_heap_end=0x3fcd4c60`,
+`_runtime_stack_end=0x3fce7c60`; 928 bytes remain before the app reservation.
+MM's usable interval is [0x3fcb5000, 0x3fcd4000).
+
+Hardware retest pending, not flashed: `[FEATURE APP-EXEC 121]1` and
+`[TEST APP-EXEC 121]`. Run `hello --exec-fail`, `hello --exec` twice,
+`run /boot/exec /boot/echo replaced successfully`, then `mm` and `disk`.
+Expect failure recovery, `Exec PID and file OK` with exit=0 on each successful
+self-replacement, echo output and a usable shell without leaked MM staging.
+Image 120 does not establish successful exec hardware validation.
+
+## Image 122: drain stale keyboard input before publishing readiness
+
+Image 121 hardware reported `[KBD init=1 stale=0 int=1 status=1 fifo=10]`
+followed by five empty TTY lines and repeated `$ ` prompts without new typing.
+`cardputer_keyboard_init` set `kbd_ready=0`, then called the public event reader
+to flush the FIFO. That reader returns immediately while readiness is false,
+so every queued event survived initialization. The ten queued events are
+consistent with five Enter press/release pairs; the log does not identify
+individual event bytes. Exec hardware validation is still pending.
+
+Initialization now drains KEY_EVENT_A directly through the existing register
+reader, masks the event count to its low four bits, and publishes readiness
+only after successful drain and interrupt setup. I2C failures or a still-busy
+FIFO after 32 discarded events leave the driver unready instead of releasing
+stale input to TTY. The normal runtime reader and shell prompt behavior remain
+unchanged; Enter and all other keys typed after initialization still work.
+Interrupt setup also stops if clearing old status fails.
+
+MINIX reference: src/kernel/keyboard.c kb_init consumes old scan input before
+enabling the keyboard IRQ. CP32 uses the TCA8418 FIFO rather than PC keyboard
+ports. Register behavior is from TI SCPS215G sections 8.6.2.3–4:
+https://www.ti.com/lit/ds/symlink/tca8418.pdf (0x03 count bits 3:0; each 0x04
+read pops one event). No new hardware timing assumptions or delays were added.
+
+Validation: clean firmware build and ELF sections/segments/image-layout checks
+pass. New production-init host regression covers FIFO depths 0–10, all count
+read/event read failures, register write failures, upper count-register bits,
+bounded draining and readiness gating. All 42 host test scripts pass.
+ELF endpoints: _iram_end=0x403743d4, _iram_ext_end=0x40387bd0,
+_runtime_stack_end=0x3fce7c90; 880 bytes remain before the application reservation.
+
+Hardware pending, not flashed: `[FEATURE KBD-START 122]1`,
+`[TEST KBD-START 122]`, and `[KBD V122 init=1 stale=... int=0 status=1 fifo=0]`
+when no new keys arrive during the diagnostic. Reboot after queued key events,
+then leave the keyboard untouched: expect a single prompt and no empty TTY
+lines. Confirm newly typed characters and Enter work, then retry hello --exec.
+
+
+## Image 122 hardware accepted; image 123 moves the root to SD
+
+User capture docs/hardware/app-exec-v122.log confirms no stale startup input,
+exec failure recovery, repeated PID/file-preserving self-replacement, exec to
+echo, and successful MM/disk checks. The previous two regressions are resolved
+on hardware. General multi-process lifecycle remains separate work.
+
+Image 123 changes the default root backing store to SD SPI, using the existing
+MINIX V2 FS and device IPC. Supported: SD v1/v2 SDSC and SDHC/SDXC command/address
+formats, CRC-checked sector reads, one primary MINIX partition or raw V2 volume,
+bounded waits and read-only diagnostics. Missing/bad media leaves the console
+available. Root writes return EROFS. No card contents or firmware were flashed.
+The RAM backend is retained as make STORAGE=ram in a separate build directory.
+
+Static SRAM savings versus image 122 are 86,632 bytes net. SD heap reservation
+increases from 128 to 192 KiB (188 KiB whole-page allocator); application and
+stack reservations are unchanged. Remaining margin is 21,968 bytes. ELF:
+_iram_end=403743e8, _iram_ext_end=403885f8, _heap_start=3fc9fa28,
+_heap_end=3fccfa28, _runtime_stack_end=3fce2a30. No resident ramdisk/demo symbols.
+Recovery RAM layout also passes, with _runtime_stack_end=3fce7cc0.
+
+Validation: both clean builds, all 43 host scripts, ELF sections/segments and
+image-layout checks pass without compiler warnings. New tests exercise SPI
+initialization/addressing/CRC/errors, partition bounds and malformed media,
+sector cache failure recovery, root/device readonly behavior and all six real
+application ELF loads through the filesystem from the generated SD image.
+Host tests model the card and GPIO is not yet hardware-validated.
+
+Pending hardware: [FEATURE SD-ROOT 123]1 / [TEST SD-ROOT 123], ROOT result=0,
+SD-backed directory/file/exec and no-card startup tests. See docs/sd-root.md for
+exact media preparation, error codes, acceptance commands and references.
+Writable MINIX allocation/sync/recovery and hardware SPI throughput are next.
+
+
+## Image 123 hardware result and image 124 SPI2 — 2026-10-10
+
+User capture `docs/hardware/sd-root-v123.log` confirms SD mounting, directory
+reads, exec failure recovery, two PID/file-preserving exec replacements,
+exec-to-echo, MM and disk result=0. Separate supplied no-card output confirms
+ROOT V123 result=-2/capacity=0 and shell operation (ls reports a read error).
+This closes basic SD-root acceptance; bad-volume/card-variation tests remain.
+
+Image 124 replaces GPIO clocking with bare-metal SPI2: 400kHz identification,
+4MHz reads and 64-byte FIFO batches, with software CS across command/data/CRC.
+MINIX at_wini.c's bounded-controller-wait contract is preserved using wrapping
+CPU-cycle deadlines; UPDATE/USR stalls latch a transport failure. CRC checking,
+read-only sector IPC, filesystem validation, exec staging, and the 192KiB heap
+remain. GPIO recovery uses SD_SPI=soft and separate build-sd-soft artifacts.
+Hardware register/sequence sources and test commands are in docs/sd-root.md.
+
+Build-only: clean SPI2, GPIO and RAM builds pass without compiler warnings;
+all 43 host scripts pass. New register model covers FIFO packing, unaligned and
+partial buffers, 512-byte batching, UPDATE/start ordering, counter wrap and
+stuck-controller errors. Protocol tests cover burst/scalar paths, bulk errors,
+sticky faults and minimum token timeout; existing FS tests load all six ELFs.
+SPI2 ELF endpoints: _iram_end=0x403743e8, _iram_ext_end=0x40388aa0,
+_heap_start=0x3fc9fee8, _heap_end=0x3fccfee8,
+_runtime_stack_end=0x3fce2ef0 (20,752-byte app-alias margin).
+
+Hardware: pending for image 124; no board/card writes performed. Markers:
+[FEATURE SD-SPI 124]1, [TEST SD-SPI 124], [ROOT V124 ...],
+[SD V124 transport=spi2 init-hz=400000 read-hz=4000000]. The GPIO build reports
+[SD V124 transport=gpio]. Read-hz is configured speed, not measured throughput.
+
+
+## Image 124 hardware acceptance; image 125 persistent patches — 2026-10-10
+
+The user confirms much faster SD access. Image-124 log proves successful mount,
+ls, repeated PID/file-preserving exec, disk and MM checks; retained excerpt is
+`docs/hardware/sd-spi-v124-excerpt.log`. No benchmark, no-card SPI2 or bad-volume
+results were supplied. The SD transport diagnostic was suppressed by a
+`!defined(CP32_ROOT_RAM)` guard (the header defines it to 0); image 125 fixes
+that guard to test the value. Feature/test identifiers remain authoritative.
+
+Image 125 adds SD CMD24/CRC16, response/busy/CMD13 validation, FIFO transmit,
+and synchronous root-sector read/modify/write with full readback verification.
+DEV_WRITE remains owned by FS; copied chunks stop at sector boundaries.
+A failed device update invalidates cached bytes and disables writes until
+reboot. `patch` maps existing regular-file zones through the FS and device IPC,
+rejecting executables, holes, EOF growth, >64 bytes and sector crossings.
+This privileged maintenance command leaves metadata unchanged; application
+write permissions/syscalls, allocation, timestamps and crash recovery remain
+unimplemented. It is SD-only to preserve the tight RAM-recovery SRAM budget.
+
+Tests: all 43 scripts pass, with new CMD24 CRC/busy/status rejection tests,
+readback mismatch/write lockout, cached hard-link reads, remount persistence,
+unchanged surrounding bytes and metadata, direct/indirect writes, failure
+handling and command parsing. Memory-task tests now expect a separate chunk
+at sector boundaries. All three clean builds pass without compiler warnings;
+initial missing hosted strlen reference was replaced with bounded scanning.
+ELF sections/segments and image layout checks pass. SD endpoints:
+_iram_end=0x403743f8, _iram_ext_end=0x40389368,
+_heap_start=0x3fca0aa8, _heap_end=0x3fcd0aa8,
+_runtime_stack_end=0x3fce3ab0; margin 17,744 bytes. Heap 192 KiB remains.
+RAM recovery runtime-stack end=0x3fce7e60, leaving 416 bytes.
+
+Hardware writes/reboot persistence: pending. Markers [FEATURE SD-WRITE 125]1,
+[TEST SD-WRITE 125], ROOT/SD/DISK V125. Follow docs/sd-root.md using the existing
+card. Boot/disk diagnostics remain read-only. No flashing or SD writes were
+performed here. An unsuccessful write can still have changed media; this is
+not a transactional or power-loss-safe filesystem.
+
+
+## Image 125 hardware / image 126 root-file creation — 2026-10-11
+
+`docs/hardware/sd-write-v125.log` retains the user's two boots. Second boot
+reads SD25 from /readme, patches CP32 with verified completion, and rereads
+CP32. The initial SD25 write is outside this capture. First boot stops during
+CORE diagnostics and is followed by a reset dump: cause undetermined; no
+watchdog/manual-reset diagnosis is inferred. Recurrence needs a full capture.
+
+Image 126 adds `create /name text`, allocating a MINIX inode and one data zone
+for up to64 bytes in a root entry with a14-byte name. Existing names cannot be
+overwritten. Root directory uses its existing first block, including deleted
+slots. Larger geometries/directories are rejected before writes. Bitmap
+reservations and zeroed data precede inode persistence; directory publication
+is last, matching MINIX new_node's ordering. Failed operations can leak
+reservations or have completed publication: no unsafe rollback or automatic
+retry is attempted. General POSIX writes/recovery remain incomplete.
+
+Clean SPI2/GPIO/RAM builds and44 host scripts pass. Tests cover endian maps,
+allocation limits, duplicate/exhaustion handling, remount, unchanged existing
+files, full-write failures before/after every step and parser validation.
+Initial RAM build exceeded its alias limit because the linker KEEP retains
+extended IRAM functions. Makefile now omits only the SD-only create object
+from RAM recovery. All heaps/stacks and existing RAM commands are preserved.
+SD endpoints: _iram_end=0x403743f8, _iram_ext_end=0x40389c94,
+_heap_start=0x3fca1470, _heap_end=0x3fcd1470,
+_runtime_stack_end=0x3fce4470 (15,248-byte margin). RAM end0x3fce7e60.
+Markers [FEATURE FS-CREATE 126]1 / [TEST FS-CREATE 126], ROOT/SD V126.
+Hardware creation/reboot validation pending; no board or card writes performed.
+
+
+## Image 126 hardware and image 127 append/growth — 2026-10-11
+
+User clarification closes the early-reset investigation: the restart in the
+image 125 capture was intentional to verify persistence after a full restart.
+Do not treat it as an unexplained watchdog/kernel failure. Latest capture
+`docs/hardware/fs-create-v126.log` verifies creation of /note, ls/cat/stat,
+inode 13, size 8, links 1. Reboot and duplicate rejection are not in this log.
+
+Image 127 adds privileged `append path text` with relative/nested pathname
+resolution, 1–64 bytes per command, direct/single-indirect zone allocation and
+size publication after verified data writes. Preserves the old prefix and
+metadata other than size/pointers. File limit 263 KiB/one-block zones, constrained
+by actual free volume space. Rejects executable/directory targets, sparse EOF,
+stale unused pointers, larger geometries and growth beyond supported mapping.
+No POSIX write handles, truncation, timestamps or recovery claim is made.
+
+Validation: 44 host scripts, clean SPI2/GPIO/RAM builds and ELF section/segment
+checks pass without warnings. Tests cover both byte orders, empty/sector/zone
+boundaries, new/existing indirect table, final single-indirect slot, poisoned
+free-zone zeroing, space/error preflight and every complete-write interruption.
+FS->root->SD mock remount verifies appended content and retains all six ELF
+loads. Parser tests cover literal spaces, lengths, relative paths and errors.
+SD: _iram_end=0x403743f8, _iram_ext_end=0x4038a3a4,
+_heap_start=0x3fca1bc8, _heap_end=0x3fcd1bc8,
+_runtime_stack_end=0x3fce4bd0, margin 13,360 bytes; heap 192 KiB unchanged.
+RAM end=0x3fce7e60 (416-byte margin); SD-only allocator remains excluded.
+
+Markers [FEATURE FS-APPEND 127]1 / [TEST FS-APPEND 127], ROOT/SD V127.
+Hardware append/reboot validation pending; no board/card writes performed.
+After I/O failure, reserved space or an indirect pointer beyond EOF may remain;
+no automatic rollback/retry or torn-sector/power-loss guarantee is provided.
+
+
+## Image 127 persistence / image 128 truncation — 2026-10-11
+
+The user's latest two-boot capture is retained in docs/hardware/fs-append-v127.log.
+It reads hello SD! from /note after restart. This confirms persisted appended
+content, but does not show the append command, stat or full regression matrix.
+
+Image 128 implements privileged shrink-only `truncate path length` through
+shell, filesystem, device IPC and verified SD writes. It validates all direct
+and single-indirect mappings before mutation, publishes the reduced size,
+detaches discarded mappings, zeros partial-zone tail bytes and only then frees
+zones. Emptying a file releases its indirect table too. Same-size truncation
+can clean still-referenced unused mappings after failed append. Existing inode,
+links and non-size metadata remain intact. No application write ABI is added.
+
+All 44 host scripts and clean SPI2/GPIO/RAM builds pass without compiler warnings;
+ELF sections/segments pass. Both endian formats, partial/zero/same-size cases,
+indirect reclamation, released-space reuse, parser rejection and every complete-
+write interruption are covered. Failure tests ensure no remaining mapping points
+to freed storage. Root/SD mock remount and all six ELF loads pass.
+SD endpoints: _iram_end=0x403743f8, _iram_ext_end=0x4038ad08,
+_heap_start=0x3fca29b0, _heap_end=0x3fcd29b0,
+_runtime_stack_end=0x3fce59b0 (9,808-byte margin). Heap remains 192 KiB.
+The static mapping snapshot uses 1,056 bytes. RAM recovery excludes the SD-only
+allocator and ends at0x3fce7e70 (400-byte margin); GPIO SD ends at0x3fce5580.
+
+Markers [FEATURE FS-TRUNCATE 128]1 / [TEST FS-TRUNCATE 128], ROOT/SD V128.
+Hardware acceptance pending; no board/card writes performed. I/O failure can
+leave the shorter size visible and leak unreachable zones. No rollback/retry,
+whole-volume cross-inode validation, torn-sector recovery or power-loss
+atomicity is claimed. Documentation includes a disposable /trim reboot test.
+
+
+## Image 128 hardware / image 129 hard links — 2026-10-11
+
+Retained docs/hardware/fs-truncate-v128.log verifies truncate-to-zero, empty
+readback, append/read reused, exec, disk and MM. Partial shrink and restart
+readback after these writes are not shown. A first startup is interrupted by
+another boot; cause is not established by this capture. Earlier image-125
+intentional-reset clarification is preserved and not generalized to this log.
+
+Image 129 ports MINIX link.c:do_link, preserving shared inode identity and
+LINK_MAX=127. `link existing /alias` accepts existing regular files and a new
+root name, reuses directory slots, and allocates no inode or data zone.
+CP32 uses synchronous verified writes: increased link count precedes entry
+publication, preventing an undercount at every complete-write failure point.
+Failure can overcount or leave an unpublished entry; no automatic rollback,
+recovery or power-loss/torn-sector atomicity is claimed. Directory links and
+root growth beyond its first block remain unsupported. This is a privileged
+shell operation; the application syscall ABI and timestamps are unchanged.
+
+All 44 host scripts and clean SPI2/GPIO/RAM builds pass without warnings.
+Tests cover endian metadata, shared append/truncate visibility, unchanged
+allocation maps, invalid/duplicate/full/limit checks, deleted-slot reuse,
+every before/after write failure, parser validation and SD-mock remount.
+All six ELF applications still load. ELF sections/segments checked.
+SD: _iram_end=0x403743f8, _iram_ext_end=0x4038b344,
+_heap_start=0x3fca3048, _heap_end=0x3fcd3048,
+_runtime_stack_end=0x3fce6050 (8,112-byte margin); heap stays 192 KiB.
+RAM end=0x3fce7e60 (416-byte margin).
+Markers [FEATURE FS-LINK 129]1 / [TEST FS-LINK 129], ROOT/SD V129.
+Hardware pending; no board/card writes performed. Next is unlink with safe
+last-link reclamation rather than treating shell maintenance as full POSIX FS.
+
+
+## Image 129 hardware / image 130 file and link deletion — 2026-10-11
+
+Retained docs/hardware/fs-link-v129.log confirms both names persist with inode14,
+links2, size7 and reused!, plus ls/exec/disk/MM. The actual link/append commands
+are absent, so the log is readback evidence rather than a complete test matrix.
+
+Image130 adds rm/unlink through shell -> FS -> device IPC -> verified SD writes.
+Preflight rejects directories, invalid names, unsupported geometry and open
+inodes. Removing a shared name only decrements links; last-link removal clears
+the inode, releases data/indirect zones, then frees the inode bit. Name and inode
+references are detached before storage becomes reusable. Root/nested one-block
+parents work; directory size stays unchanged and deleted slots are reusable.
+The existing truncation snapshot is shared for last-link mapping validation.
+MINIX link.c:unlink_file and inode.c:put_inode/free_inode are the reference.
+Open-file deletion is busy (13), not POSIX deferred last-close reclamation.
+
+All44 host scripts and clean SPI2/GPIO/RAM builds pass without warnings.
+Tests cover byte orders, shared/nested/busy/invalid cases, empty/direct/indirect/
+sparse reclamation, inode/zone/name reuse, parser handling and every before/after
+complete-write fault. SD mock remount checks both deletion stages and reuse;
+all six ELF applications still load. ELF sections/segments checked.
+_iram_end=0x403743f8, _iram_ext_end=0x4038bb18,
+_heap_start=0x3fca3880, _heap_end=0x3fcd3880,
+_runtime_stack_end=0x3fce6880 (6,016-byte SD margin). Heap192KiB retained.
+RAM runtime end0x3fce7e60 (416 bytes). Markers [FEATURE FS-UNLINK 130]1 /
+[TEST FS-UNLINK 130], ROOT/SD V130. No board/card writes; hardware pending.
+
+An error can occur after the name disappears and leave leaked allocations or
+an overcount. No automatic retry, fsck, torn-sector/power-loss guarantee or
+secure erasure. Last-link double/triple-indirect files and larger parent
+directories remain unsupported, as does directory deletion. Device I/O lockout
+until reboot remains unchanged. Follow docs/sd-root.md disposable-file test.

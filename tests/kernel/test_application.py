@@ -22,6 +22,7 @@ pre=r'''
 #define APP_SBRK 2005
 #define APP_READ 2006
 #define APP_FILE 2007
+#define CP32_APP_EXEC 10
 #define APP_NR 3
 #define LOW_USER 2
 #define FS_PROC_NR 1
@@ -78,6 +79,7 @@ int cp32_exec_stack(unsigned char *b,unsigned cap,uint32_t base,unsigned argc,
 }
 static int resets;
 static void cp32_shell_app_files_reset(void) {resets++;}
+static int application_replace(struct proc *p,message *m,uint32_t *f,uint32_t *b) {(void)p;(void)m;(void)f;(void)b;return -8;}
 static int application_file_request(message *m) {(void)m;return -22;}
 static int receive(int nr,message *m) {
  assert(nr==APP_NR); struct proc *p=procs+3; p->p_flags=RECEIVING;p->p_getfrom=1;

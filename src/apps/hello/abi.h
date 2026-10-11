@@ -1,6 +1,6 @@
 #ifndef CP32_APP_ABI_H
 #define CP32_APP_ABI_H
-/* Bootstrap ABI v7 (earlier prefixes preserved): trusted call0 callbacks, no privilege boundary.
+/* Bootstrap ABI v8 (earlier prefixes preserved): trusted call0 callbacks, no privilege boundary.
  * Loader supplies this table in a2; stack is built by cp32_exec_stack.
  * write returns bytes written or a negative error; exit must not return.
  * The kernel bridge supports one foreground process with write/exit/getpid/getppid IPC.
@@ -32,5 +32,8 @@ struct cp32_app_stat_request {char path[256];struct cp32_app_stat info;};
 #define CP32_APP_READDIR 7
 #define CP32_APP_OPENDIR 8
 #define CP32_APP_STAT 9
+/* v8 exec: bounded NUL-separated argv, copied before replacing the image. */
+struct cp32_app_exec_request {char path[256],args[256];unsigned argc;};
+#define CP32_APP_EXEC 10
 #define CP32_APP_FILE_MAX 4
 #endif

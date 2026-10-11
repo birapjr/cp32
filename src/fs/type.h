@@ -2,6 +2,7 @@
 #define CP32_FS_TYPE_H
 /* Byte-oriented device reader: count/error result, offsets in bytes. */
 typedef int (*cp32_disk_reader)(unsigned offset, char *buffer, int count);
+typedef int (*cp32_disk_writer)(unsigned offset, const char *buffer, int count);
 #ifndef CP32_IRAM_EXT
 #if defined(__XTENSA__)
 #define CP32_IRAM_EXT __attribute__((section(".iram_ext.text")))

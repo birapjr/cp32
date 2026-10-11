@@ -13,6 +13,9 @@
 #define CP32_OPEN_MAX 8
 #define CP32_FILE_BAD_FD 9
 #define CP32_FILE_LIMIT 10
+#define CP32_FILE_EXISTS 11
+#define CP32_FILE_NOSPACE 12
+#define CP32_FILE_BUSY 13
 #define CP32_MINIX_PATH_MAX 255
 /* MINIX 2.0 include/fcntl.h values; helper API, not a user syscall ABI. */
 #define CP32_F_DUPFD 0

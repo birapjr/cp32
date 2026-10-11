@@ -1,7 +1,8 @@
 # CP32 port plan
 
-Updated 2026-10-08 against the working tree and user hardware results through
-**APP-FILES 117**; image **APP-DIRS 118** is built and host-tested. This file tracks current status and remaining work, not the
+Updated 2026-10-11 against the working tree and user hardware results through
+**FS-CREATE 126**. **FS-APPEND 127** builds and host-tests persistent append
+and file growth; hardware append acceptance is pending. This tracks remaining work, not the
 chronological bring-up history. See [issues.md](issues.md),
 [hardware captures](docs/hardware/) and [port review](minix.port-status.md)
 for implementation history, evidence and detailed MINIX comparisons.
@@ -20,11 +21,11 @@ slot, receives argc/argv, writes through IPC, exits and returns to the shell.
 The image-89 capture confirms both `hello` and `hello um dois`, with correct
 arguments and exit=0. These paths are no longer pending implementation or
 initial hardware validation. Repeated launch plus disk/MM regression passed
-in image 87. All 39 host test scripts and the clean build pass for image 118.
+in image 87. SPI2 SD, GPIO SD and recovery RAM builds and all 43 host scripts pass for image 125.
 
 The boundary is still **one trusted foreground application**. The shell is
 kernel-linked; there is no general exec/fork/wait server, protected application
-ABI, fault containment, per-process FS service, writable/persistent filesystem,
+ABI, fault containment, per-process FS service, writable filesystem,
 full libc or user shell. MM currently dispatches allocation/release requests;
 application lifecycle is coordinated by the shell and kernel helper.
 
@@ -224,12 +225,12 @@ and do not remove working functionality during cleanup.
   while adapting architecture-specific mechanisms to Xtensa/ESP32-S3.
 - Keep call0, freestanding execution and current boot/IPC/console behavior.
   Respect shared D/IRAM aliases and the full runtime-stack reservation.
-  Latest inspected endpoints: `_iram_end=0x403743d4`,
-  `_iram_ext_end=0x403875ec`, `_runtime_stack_end=0x3fce6f40`;
+  Latest inspected endpoints: `_iram_end=0x403743f8`,
+  `_iram_ext_end=0x4038a3a4`, `_runtime_stack_end=0x3fce4bd0`;
   the application code's DRAM alias starts at `0x3fce8000`.
 - For implementation changes, add meaningful tests, run `make clean && make`
   and `make tests` in `src/`, then inspect relevant ELF sections/segments and
-  symbols. Current image identity is 118; increment feature/test markers for
+  symbols. Current image identity is 127; increment feature/test markers for
   each new image, with the test marker immediately before the idle call.
 - Record build and hardware results separately in `issues.md` and this plan.
   Mark completed items `[x]` only when their stated acceptance criteria pass;
@@ -251,3 +252,174 @@ segments are checked. Heap, stack and application-slot reservations are unchange
 Next substantial milestone: lifecycle ownership in MM, or writable filesystem
 services with explicit recovery tests; avoid treating the foreground file bridge
 as a completed multi-process filesystem server.
+
+
+[x] Foreground exec and keyboard acceptance completed on image 122. The user
+capture docs/hardware/app-exec-v122.log confirms failure recovery, two
+PID/file-preserving exec calls, exec-to-echo, MM and disk checks, and one clean
+startup prompt. Image 120's heap-alignment crash and image 121's stale-input
+bug are fixed. Earlier image-specific pending checks are superseded by this
+capture. General MM lifecycle, fork, mutable environments and fault isolation
+remain unfinished. See issues.md for the failure history and fixes.
+
+## Current direction: SD-backed root and reclaimed memory
+
+[x] Image 122 hardware confirms one clean startup prompt (fifo=0), exec error
+recovery, two successful PID/file-preserving replacements, exec-to-echo, and
+successful MM/disk checks. Evidence: docs/hardware/app-exec-v122.log. This closes
+the specific image-120/121 crash and stale-keyboard acceptance checks; general
+fork/MM lifecycle, mutable environments and fault containment remain open.
+
+[x] Image 123 basic SD-root hardware acceptance: user capture
+`docs/hardware/sd-root-v123.log` proves mounting (capacity=65536), ls, exec
+failure recovery, two PID/file-preserving replacements, exec-to-echo, MM and
+disk checks. Separate no-card log: ROOT=-2, capacity=0, responsive shell.
+Bad-volume behavior, card model/capacity and the full command matrix remain
+unverified on hardware; do not infer them from the host suite.
+
+[x] Image 123 build-only memory acceptance: 86,632 SRAM bytes recovered net
+versus image 122. Assign 64 KiB to MM: SD heap reservation 192 KiB, whole-page
+allocator 188 KiB. Keep stacks/application slot unchanged. Remaining placement
+margin 21,968 bytes; _runtime_stack_end=0x3fce2a30. Both ELF layouts pass.
+
+[ ] Follow SD read/exec hardware acceptance with hardware SPI throughput, then
+SD sector writes and MINIX file/zone allocation, dirty-buffer ordering, sync
+and interrupted-write recovery. Read-only SD storage is persistent but is not
+a completed writable filesystem. Default disk diagnostic never writes media.
+
+[x] Image 124 build/host acceptance: hardware SPI2 SD transport, 400kHz init
+then 4MHz reads, 64-byte FIFO bursts, bounded UPDATE/USR waits, CRC/error
+propagation and GPIO recovery build. MINIX block IPC/read-only FS/exec path
+and 192KiB SD heap preserved. All three clean builds and 43 test scripts pass.
+SPI2 endpoints: _iram_end=0x403743e8, _iram_ext_end=0x40388aa0,
+_heap_start=0x3fc9fee8, _heap_end=0x3fccfee8,
+_runtime_stack_end=0x3fce2ef0; remaining app-alias margin 20,752 bytes.
+
+[x] Image 124 basic read hardware acceptance: [FEATURE SD-SPI 124]1 / [TEST SD-SPI 124],
+[SD V124 transport=spi2 init-hz=400000 read-hz=4000000], ROOT V124 result=0.
+User log confirms mount, ls, two exec replacements, disk and MM; see
+`docs/hardware/sd-spi-v124-excerpt.log`. User reports faster access; no timing
+benchmark supplied. No-card SPI2/bad-volume/card-variation tests remain open.
+
+[x] Image 125 build/host milestone: synchronous CMD24 writes with CRC16,
+bounded busy wait, CMD13 status, full-sector readback and error lockout;
+DEV_WRITE IPC and privileged `patch path offset text` operate end-to-end on
+existing allocated non-executable file data. 1–64 bytes, one sector, no EOF
+growth; metadata remains untouched. Existing card image is compatible.
+All 43 host scripts and three clean builds pass. SD heap remains 192KiB,
+whole-page allocation 188KiB; SD app-alias margin is 17,744 bytes. RAM recovery
+has 416 bytes remaining and excludes the SD-only patch command.
+
+[ ] Image 125 hardware write acceptance: [FEATURE SD-WRITE 125]1 /
+[TEST SD-WRITE 125]. Run `patch /readme 0 SD25`, read both hard links, reboot
+and reread, then `patch /readme 0 CP32` and exec/disk/MM regression. See
+`docs/sd-root.md`. No board/card writes performed by the agent. A failed write
+may have changed media; no automatic retry or power-loss atomicity is claimed.
+
+[ ] Next: writable file lifecycle (allocation/create/growth/truncate, inode
+updates, dirty-buffer ordering/sync and interrupted-write recovery). The
+maintenance patch is not the general MINIX/POSIX write implementation.
+
+[x] Image 125 persistence/restoration hardware evidence retained in
+`docs/hardware/sd-write-v125.log`: startup reads SD25, patch CP32 verifies,
+and reread matches. Initial write/exec regression is absent from this capture.
+User confirms the early restart was intentional to test SD persistence; closed.
+
+[x] Image 126 build/host acceptance: `create /name text`, root only, 14-byte
+names/64-byte initial content, inode and zone allocation, zeroing, ordered
+inode-before-directory publication, duplicate/no-space rejection. Both byte
+orders and every complete-write interruption boundary tested. All 44 host
+scripts and three clean builds pass. SD heap 192 KiB preserved; app-alias
+margin15,248 bytes. RAM keeps416 bytes and omits the SD-only allocator object.
+
+[ ] Image 126 hardware acceptance: [FEATURE FS-CREATE 126]1 /
+[TEST FS-CREATE 126], ROOT/SD V126. Create /note, ls/cat/stat, reboot/reread,
+duplicate rejection, patch, exec/disk/MM. Existing card remains compatible.
+No flashing performed. User clarified the earlier reset was intentional.
+
+[ ] Next: growth/truncation/deletion, nested creation, timestamps, application
+write syscalls, allocation reclamation and interrupted/torn-write recovery.
+Creation may leak reservations after I/O failure; no crash-atomicity claim.
+
+[x] Image 126 basic creation hardware acceptance: docs/hardware/fs-create-v126.log
+shows create /note, ls, cat, stat (inode 13, size 8, links 1). Reboot/duplicate and
+exec regression are not in this capture; keep those acceptance items open.
+[x] Early-reset investigation closed: user intentionally restarted hardware
+while validating SD persistence. It was not a reported spontaneous crash.
+
+[x] Image 127 build/host milestone: `append path text`, 1–64 bytes per call,
+existing non-executable files, direct/single-indirect growth through 263 KiB,
+zeroed zone/table allocation and data-before-size publication. All 44 scripts
+and three clean builds pass. SD 192 KiB heap preserved, margin 13,360 bytes;
+RAM remains 416 bytes. Endpoints recorded in docs/sd-root.md and issues.md.
+
+[ ] Image 127 hardware acceptance: [FEATURE FS-APPEND 127]1 /
+[TEST FS-APPEND 127], ROOT/SD V127. Append ! to /note, cat/stat, reboot/reread,
+then repeated exec/disk/MM. No flashing or media writes performed here.
+[ ] Next: truncate/delete and safe zone reclamation, then writable application
+handles/timestamps/recovery. Failed append can leak reservations or leave an
+unused indirect entry; complete-write fault tests do not establish torn-sector
+or power-loss atomicity.
+
+
+[x] Image 127 persistence evidence: docs/hardware/fs-append-v127.log contains
+ two boots and reads hello SD! from /note after restart. Append/stat commands
+ and the full exec/disk/MM regression are absent; those checks remain open.
+
+[x] Image 128 build/host milestone: shrink-only `truncate path length`,
+ direct/single-indirect reclamation, partial-tail zeroing and released-zone
+ reuse. MINIX link.c/super.c behavior adapted to synchronous detach-before-free
+ ordering. Both byte orders and every complete-write failure boundary tested.
+ All 44 scripts and three clean builds pass; ELF placement checked. SD heap
+ remains 192 KiB, app-alias margin 9,808 bytes; RAM recovery margin 400 bytes.
+
+[ ] Image 128 hardware acceptance: [FEATURE FS-TRUNCATE 128]1 /
+[TEST FS-TRUNCATE 128], ROOT/SD V128. Create /trim, shrink to 5, cat/stat,
+restart/readback, truncate to zero, append reused, restart/readback, then
+repeated exec/disk/MM. See docs/sd-root.md. No board/card writes performed.
+[ ] Next: deletion and inode reclamation, application write handles, nested
+creation, timestamps and recovery. Failed mutations can leak unreachable
+allocations; torn-sector/power-loss atomicity is not established.
+
+
+[x] Image 128 basic hardware acceptance: docs/hardware/fs-truncate-v128.log
+shows truncate /trim 0, empty readback, append reused, relative-path readback,
+and successful exec/disk/MM. Partial-shrink and post-mutation reboot readback
+are absent; those checks remain open. Startup restart cause is not inferred.
+
+[x] Image 129 build/host milestone: MINIX hard links via `link existing /alias`,
+shared inode/data, root-only destination, no allocation, link count persisted
+before directory publication. Both byte orders, shared mutations and every
+complete-write interruption boundary pass. All 44 host scripts and clean
+SPI2/GPIO/RAM builds pass; ELF sections/segments checked. SD heap 192 KiB,
+app-alias margin 8,112 bytes; RAM margin 416 bytes.
+
+[ ] Image 129 hardware acceptance: [FEATURE FS-LINK 129]1 / [TEST FS-LINK 129],
+ROOT/SD V129. Link /trim /trimlink, compare inode/link counts, append through
+alias, read original, restart/readback, duplicate rejection, repeated exec,
+disk and MM. No board/card writes performed. See docs/sd-root.md.
+[ ] Next: unlink and last-link inode reclamation, then application write ABI
+and recovery. Interrupted linking can overcount links; no crash atomicity.
+
+
+[x] Image 129 hardware identity/persistence: docs/hardware/fs-link-v129.log
+shows /trim and /trimlink with inode14, links2, size7, reused! after boot;
+ls/exec/disk/MM pass. Original mutation and duplicate-rejection commands are
+not shown, so their complete acceptance matrix remains open.
+
+[x] Image 130 build/host milestone: `rm path` / `unlink path`, shared-link
+preservation and last-link inode/data/indirect reclamation. Nested one-block
+parents supported; open descriptors rejected pending deferred-last-close port.
+MINIX unlink_file/put_inode/free_inode ordering adapted to synchronous writes.
+All 44 scripts and clean SPI2/GPIO/RAM builds pass; both byte orders, every
+complete-write interruption and remount/reuse checked. SD heap192KiB unchanged;
+app-alias margin6,016 bytes, RAM416 bytes. ELF sections/segments pass.
+
+[ ] Image 130 hardware acceptance: [FEATURE FS-UNLINK 130]1 /
+[TEST FS-UNLINK 130], ROOT/SD V130. Disposable /deltest and /delalias: remove
+one name, restart and check survivor, remove final name, recreate and verify
+reused inode/content after restart. Repeated exec/disk/MM and directory/missing
+name rejection. See docs/sd-root.md. No board/card writes performed.
+[ ] Remaining: deferred open-unlinked inode lifetime, larger directory and
+mapping support, rmdir, writable application ABI, timestamps and recovery.
+Interrupted deletion can leak unreachable allocations; no torn-write guarantee.

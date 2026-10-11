@@ -23,7 +23,7 @@ static unsigned char disk[65536],arena[512];
 typedef struct {int m1_i1,m1_i2,m1_i3;char *m1_p1;} message;
 static int cp32_app_fds[CP32_APP_FILE_MAX];
 static char cp32_shell_cwd[256]="/";
-static unsigned cp32_ramdisk_capacity(void) {return sizeof(disk);}
+static unsigned cp32_root_capacity(void) {return sizeof(disk);}
 static int cp32_shell_disk_read(unsigned off,char *out,int count) {
  if(off>sizeof(disk) || (unsigned)count>sizeof(disk)-off)return -1;
  memcpy(out,disk+off,count);return count;

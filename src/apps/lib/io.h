@@ -7,6 +7,9 @@
  * Writes collect short transfers and return progress if a later call fails. */
 /* Positive MINIX error numbers; scoped names avoid kernel _SIGN macros.
  * Success/EOF does not clear the previous error. Single-threaded runtime. */
+#define CP32_E2BIG 7
+#define CP32_ENOEXEC 8
+#define CP32_ENOMEM 12
 #define CP32_ENOENT 2
 #define CP32_EACCES 13
 #define CP32_ENOTDIR 20
@@ -24,6 +27,10 @@ int cp32_io_init(const struct cp32_app_services *services);
 /* Read-only open; paths resolve against the launching shell's cwd.
  * Seek offsets/results use signed 32-bit bytes; whence 0=start,1=current,2=end.
  * Only application file descriptors can be closed; exit closes any leftovers. */
+/* v8: successful exec never returns; failure preserves image and handles.
+ * Up to nine argv entries including argv[0], 256 bytes total. Fixed initial
+ * HOME/PATH/USER environment is recreated; this is not general execve. */
+int cp32_execv(const char *path,const char *const argv[]);
 int cp32_open(const char *path);
 /* v7: opendir returns an owned fd; readdir returns 1/0/-1 for entry/EOF/error.
  * Records are unchanged on EOF/error. Close directories with cp32_close;

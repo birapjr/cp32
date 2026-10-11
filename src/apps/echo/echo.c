@@ -6,7 +6,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
 {
   unsigned i,n;
   (void)envp;
-  if(!s || (s->version<1 || s->version>7) || !s->write || !s->exit || started) return 1;
+  if(!s || (s->version<1 || s->version>8) || !s->write || !s->exit || started) return 1;
   started=1;
   for(i=1;i<argc;i++) {
     if(i>1 && s->write(" ",1)!=1) return 1;
