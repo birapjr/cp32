@@ -5,7 +5,9 @@
 static unsigned selected,packet_n,head,tail,clocks,init_tries;
 static unsigned version=2,hc=1,absent,stuck,bad_echo,bad_ocr,bad_csd,bad_crc,no_token,read_error;
 static uint8_t packet[6],queue[600];
-static uint32_t read_arg;
+static uint32_t read_arg,write_arg;
+static unsigned writing,write_n,write_reject,write_busy,status_error,command_error;
+static uint8_t written[514];
 static unsigned commands[64];
 static void push(unsigned b) {assert(tail<sizeof(queue));queue[tail++]=(uint8_t)b;}
 static void block(const unsigned char *p,unsigned n) {
@@ -36,13 +38,31 @@ static void process(void) {
     block(bytes,16);break;
   case 17:read_arg=arg;push(read_error ? 4:0);
     if(!read_error && !no_token) {for(unsigned i=0;i<512;i++)bytes[i]=(uint8_t)(i^0xa5);block(bytes,512);}break;
-  default:assert(!"unexpected command (writes are forbidden)");
+  case 24:write_arg=arg;push(command_error ? 4:0);writing=!command_error;write_n=0;break;
+  case 13:push(0);push(status_error);break;
+  default:assert(!"unexpected command");
   }
 }
 static uint8_t transfer(uint8_t b) {
   if(!selected) {assert(b==255);clocks++;return 255;}
   if(absent)return 255;
   if(head<tail)return queue[head++];
+  if(writing) {
+    if(writing==1) {if(b==255)return 255;assert(b==0xfe);writing=2;return 255;}
+    if(writing==3)return write_busy ? 0:255;
+    assert(write_n<514);written[write_n++]=b;
+    if(write_n==514) {
+      /* Independent polynomial long-division check over data plus CRC. */
+      unsigned residue=0;
+      for(unsigned k=0;k<514;k++)for(int bit=7;bit>=0;bit--) {
+        residue=(residue<<1)|((written[k]>>bit)&1);
+        if(residue&0x10000)residue^=0x11021;
+      }
+      assert(!residue);head=tail=0;push(write_reject ? write_reject:5);
+      push(0);push(0);if(!write_busy)push(255);writing=3;
+    }
+    return 255;
+  }
   if(packet_n || (b&0xc0)==0x40) {
     packet[packet_n++]=b;
     if(packet_n==6) {packet_n=0;head=tail=0;process();}
@@ -51,17 +71,32 @@ static uint8_t transfer(uint8_t b) {
 }
 static void select_card(int state) {
   selected=state;
-  if(!state){packet_n=head=tail=0;}
+  if(!state){packet_n=head=tail=writing=0;}
 }
-static void delay(unsigned ms) {assert(ms==10);}
-static const struct cp32_sd_bus bus={transfer,select_card,delay};
+static unsigned delayed,bursts,bulk_failure,fault;
+static void delay(unsigned ms) {assert(ms==10 || ms==1);delayed+=ms;}
+static int receive_bytes(uint8_t *p,unsigned n) {
+ bursts++;if(bulk_failure)return CP32_SD_TIMEOUT;
+ for(unsigned i=0;i<n;i++)p[i]=transfer(255);
+ return 0;
+}
+static int transmit_bytes(const uint8_t *p,unsigned n) {
+ if(bulk_failure)return CP32_SD_TIMEOUT;
+ for(unsigned i=0;i<n;i++)transfer(p[i]);return 0;
+}
+static int error(void) {return fault;}
+static struct cp32_sd_bus bus={transfer,select_card,delay,0,error,0};
 static void reset(void) {
+ writing=write_n=write_reject=write_busy=status_error=command_error=0;
+ delayed=bursts=bulk_failure=fault=0;
  selected=packet_n=head=tail=clocks=init_tries=0;
  absent=stuck=bad_echo=bad_ocr=bad_csd=bad_crc=no_token=read_error=0;
  version=2;hc=1;memset(commands,0,sizeof(commands));
 }
 int main(void) {
  struct cp32_sd card;unsigned char bytes[512];
+ for(unsigned bulk=0;bulk<2;bulk++) {
+ bus.receive=bulk ? receive_bytes:0;bus.transmit=bulk ? transmit_bytes:0;
  for(unsigned mode=0;mode<3;mode++) {
   reset();version=mode==0 ? 1:2;hc=mode==2;
   assert(!cp32_sd_init(&card,&bus) && card.ready && !selected);
@@ -71,7 +106,21 @@ int main(void) {
   assert(cp32_sd_read(&card,(uint32_t)card.sectors,bytes)==CP32_SD_IO);
   bad_crc=1;assert(cp32_sd_read(&card,7,bytes)==CP32_SD_CRC && !selected);bad_crc=0;
   read_error=1;assert(cp32_sd_read(&card,7,bytes)==CP32_SD_IO && !selected);read_error=0;
-  no_token=1;assert(cp32_sd_read(&card,7,bytes)==CP32_SD_TIMEOUT && !selected);
+  delayed=0;no_token=1;assert(cp32_sd_read(&card,7,bytes)==CP32_SD_TIMEOUT && !selected);
+  assert(delayed>=256);no_token=0;
+  assert(!cp32_sd_write(&card,7,bytes) && !selected);
+  assert(write_arg==(hc ? 7:7*512) && !memcmp(written,bytes,512));
+  assert(commands[13]==1);
+  unsigned before=commands[24];
+  assert(cp32_sd_write(&card,(uint32_t)card.sectors,bytes)==CP32_SD_IO && commands[24]==before);
+  write_reject=11;assert(cp32_sd_write(&card,7,bytes)==CP32_SD_CRC && !selected);
+  write_reject=13;assert(cp32_sd_write(&card,7,bytes)==CP32_SD_IO && !selected);write_reject=0;
+  write_busy=1;delayed=0;
+  assert(cp32_sd_write(&card,7,bytes)==CP32_SD_TIMEOUT && !selected && delayed>=1000);write_busy=0;
+  status_error=0x20;assert(cp32_sd_write(&card,7,bytes)==CP32_SD_IO && !selected);status_error=0;
+  command_error=1;write_n=0;
+  assert(cp32_sd_write(&card,7,bytes)==CP32_SD_IO && !selected && !write_n);command_error=0;
+  if(bulk) {bulk_failure=1;assert(cp32_sd_write(&card,7,bytes)==CP32_SD_TIMEOUT && !selected);bulk_failure=0;}
  }
  for(unsigned failure=0;failure<6;failure++) {
   reset();
@@ -80,5 +129,13 @@ int main(void) {
   assert(cp32_sd_init(&card,&bus)<0 && !selected && !card.ready && !card.sectors);
   assert(cp32_sd_read(&card,0,bytes)==CP32_SD_IO);
  }
- puts("SD SPI: SDSC v1/v2, SDHC, command CRC, addressing, CRC16, absent/timeout/error paths pass");
+ reset();assert(!cp32_sd_init(&card,&bus));
+ fault=1;assert(cp32_sd_read(&card,7,bytes)==CP32_SD_IO && !selected);fault=0;
+ if(bulk) {
+  bulk_failure=1;assert(cp32_sd_read(&card,7,bytes)==CP32_SD_TIMEOUT && !selected);
+  reset();bulk_failure=1;
+  assert(cp32_sd_init(&card,&bus)==CP32_SD_TIMEOUT && !card.ready && !selected);
+ }
+ }
+ puts("SD SPI: SDSC v1/v2, SDHC, CMD24/CRC16/status/busy and read/addressing/error paths pass");
 }

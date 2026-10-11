@@ -1,4 +1,4 @@
-"""Production root device IPC rejects SD writes before touching user/card data."""
+"""Production root device IPC validates and transfers bounded SD writes."""
 from pathlib import Path
 import sys,subprocess,tempfile
 sys.dont_write_bytecode=True
@@ -29,10 +29,10 @@ typedef struct {int m_source,DEVICE,m_type,COUNT,PROC_NR;long POSITION;char *ADD
 typedef uintptr_t phys_bytes;
 typedef uintptr_t vir_bytes;
 #define vir2phys(p) ((uintptr_t)(p))
-static unsigned cap=1024,copies,reads;static int fault;
+static unsigned cap=1024,copies,reads,writes;static int fault,writable;
 static unsigned cp32_root_capacity(void){return cap;}
-static int cp32_root_writable(void){return 0;}
-static int cp32_root_write(unsigned o,const void *p,unsigned n){(void)o;(void)p;(void)n;assert(0);return -1;}
+static int cp32_root_writable(void){return writable;}
+static int cp32_root_write(unsigned o,const void *p,unsigned n){(void)p;assert(o+n<=cap && n<=512-o%512);writes++;return fault ? -1:0;}
 static int cp32_root_read(unsigned o,void *p,unsigned n){assert(o+n<=cap);reads++;if(fault)return -1;memset(p,0x5a,n);return 0;}
 static uintptr_t numap(int nr,uintptr_t a,unsigned n){(void)n;return nr==1 ? a:0;}
 static void phys_copy(uintptr_t a,uintptr_t b,unsigned n){copies++;memcpy((void *)b,(void *)a,n);}
@@ -41,6 +41,11 @@ test=r'''
 int main(void){
  char p[1024];message m={1,0,DEV_WRITE,1024,1,0,p};
  assert(cp32_mem_request(&m)==EROFS && !reads && !copies);
+ writable=1;assert(cp32_mem_request(&m)==1024 && writes==16);
+ m.POSITION=510;m.COUNT=64;assert(cp32_mem_request(&m)==64 && writes==18);
+ fault=1;assert(cp32_mem_request(&m)==EIO);fault=0;
+ m.PROC_NR=0;unsigned before=writes;assert(cp32_mem_request(&m)==EFAULT && writes==before);m.PROC_NR=1;
+ m.POSITION=0;m.COUNT=1024;copies=reads=0;
  m.m_type=DEV_READ;assert(cp32_mem_request(&m)==1024 && copies==16 && reads==16);
  m.POSITION=1000;m.COUNT=64;assert(cp32_mem_request(&m)==24);
  m.POSITION=1024;assert(!cp32_mem_request(&m));
@@ -48,7 +53,7 @@ int main(void){
  fault=1;copies=0;assert(cp32_mem_request(&m)==EIO && !copies);
  cap=0;m.m_type=DEV_OPEN;assert(cp32_mem_request(&m)==ENXIO);
  m.m_type=DEV_READ;assert(cp32_mem_request(&m)==ENXIO);
- puts("SD IPC: writes rejected, no-media open/read, bounded copies, EOF and I/O errors pass");
+ puts("SD IPC: writable/readonly policy, sector boundaries, no-media open/read, bounded copies, EOF and I/O errors pass");
 }
 '''
 with tempfile.TemporaryDirectory() as d:

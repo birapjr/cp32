@@ -13,7 +13,7 @@
 #define CP32_ROOT_NAME "ram"
 #else
 #define CP32_ROOT_NAME "sd"
-#define cp32_root_writable() 0
+CP32_IRAM_EXT int cp32_root_writable(void);
 CP32_IRAM_EXT int cp32_root_init(void);
 CP32_IRAM_EXT unsigned cp32_root_capacity(void);
 CP32_IRAM_EXT int cp32_root_read(unsigned,void *,unsigned);

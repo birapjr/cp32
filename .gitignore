@@ -57,6 +57,7 @@ dkms.conf
 # build folder
 src/build/*
 src/build-ram/*
+src/build-sd-soft/*
 
 # minix v2 source
 minix-2.0.0/*

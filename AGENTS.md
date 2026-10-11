@@ -44,8 +44,8 @@ Before modifying kernel/assembly code:
   - `port.c` — temporary ESP32-S3 glue and placeholder `_send`/`_receive` implementations.
   - `esp32s3.ld` — custom linker script placing vectors/code in internal IRAM and data/heap/stack in DRAM.
 - `src/include/` — compatibility headers and MINIX/ESP32-S3 definitions.
-- `src/drivers/sd_spi.c` — bounded read-only SD SPI protocol; GPIO transport is `src/kernel/sdcard.c`.
-- `src/kernel/rootdisk.c` — default SD-backed MINIX root volume; RAM recovery uses `make STORAGE=ram`. See `docs/sd-root.md` for media preparation and hardware acceptance.
+- `src/drivers/sd_spi.c` — bounded SD SPI read/write protocol; SPI2 FIFO transport is `src/drivers/spi_fifo.c`, with platform wiring in `src/kernel/sdcard.c`. `make SD_SPI=soft` retains GPIO recovery.
+- `src/kernel/rootdisk.c` — default SD-backed MINIX root volume with synchronous write/readback verification; RAM recovery uses `make STORAGE=ram`. See `docs/sd-root.md` for media preparation and hardware acceptance.
 - `src/lib/other/printk.c` — small kernel support library source.
 - `docs/` — ESP32-S3 memory map and Xtensa assembly/linker notes.
 - `README.md` — basic build, flash, and serial-console instructions.

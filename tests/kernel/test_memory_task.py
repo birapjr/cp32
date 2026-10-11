@@ -122,11 +122,12 @@ int main(void) {
   unsigned char disk[1024], saved[512], restored[512];
   cp32_ramdisk_reset(); memset(user,0xA5,sizeof(user));
   for(int i=0;i<150;i++) user[1+i]=(unsigned char)(i^0xD3);
+  /* Byte 511 is its own chunk: device writes never cross an SD sector. */
   message m=request(DEV_WRITE,511,150);
-  assert(cp32_mem_request(&m)==150 && copies==3 && max_copy==64);
+  assert(cp32_mem_request(&m)==150 && copies==4 && max_copy==64);
   assert(cp32_ramdisk_read_bytes(511,disk,150)==0 && !memcmp(disk,user+1,150));
   memset(user+1,0x55,1024); copies=0; m.m_type=DEV_READ;
-  assert(cp32_mem_request(&m)==150 && copies==3 && !memcmp(user+1,disk,150));
+  assert(cp32_mem_request(&m)==150 && copies==4 && !memcmp(user+1,disk,150));
   assert(user[0]==0xA5 && user[151]==0x55 && user[1025]==0xA5);
   /* MINIX's usual 1 KiB block spans two backend sectors. */
   for(int i=0;i<1024;i++) user[1+i]=(unsigned char)(i*11+9);

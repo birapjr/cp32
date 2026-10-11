@@ -15,6 +15,12 @@ LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sect
 
 # SD is the default root. RAM remains a separate recovery build.
 STORAGE ?= sd
+SD_SPI ?= hardware
+ifeq ($(SD_SPI),soft)
+CFLAGS += -DCP32_SD_SOFT=1
+else ifneq ($(SD_SPI),hardware)
+$(error SD_SPI must be hardware or soft)
+endif
 ifeq ($(STORAGE),ram)
 STORAGE_SRCS = minix-demo.c ramdisk.c
 CFLAGS += -DCP32_ROOT_RAM=1
@@ -29,7 +35,12 @@ endif
 C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
 MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
-FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c utility.c
+FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
+# Extended-IRAM sections are KEEP'ed: omit the SD-only allocator explicitly
+# from the tightly packed RAM recovery image rather than relying on GC.
+ifeq ($(STORAGE),ram)
+FS_SRCS := $(filter-out create.c,$(FS_SRCS))
+endif
 FS_HEADERS = $(wildcard fs/*.h)
 ANSI_SRCS = memcpy.c memset.c strcpy.c strcmp.c strtol.c
 POSIX_SRCS = opendir.c readdir.c closedir.c rewinddir.c
@@ -39,6 +50,9 @@ LIB_OBJS = $(patsubst lib/other/%.c,$(BUILD_DIR)/%.o,$(LIB_SRCS)) $(patsubst %.c
 
 ifeq ($(STORAGE),sd)
 C_OBJS += $(BUILD_DIR)/drivers/sd_spi.o
+ifneq ($(SD_SPI),soft)
+C_OBJS += $(BUILD_DIR)/drivers/spi_fifo.o
+endif
 endif
 
 TARGET  = cp32
@@ -51,7 +65,7 @@ BUILD_KLIB32_O = $(BUILD_DIR)/klib32.o
 
 # Directories
 SRC_DIR = kernel
-BUILD_DIR = $(if $(filter ram,$(STORAGE)),build-ram,build)
+BUILD_DIR = $(if $(filter ram,$(STORAGE)),build-ram,$(if $(filter soft,$(SD_SPI)),build-sd-soft,build))
 
 # Default target
 all: $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/sdcard.img
@@ -72,11 +86,11 @@ tests:
 	exit $$status
 
 # Compile all .c files
-$(BUILD_DIR)/drivers/%.o: drivers/%.c drivers/sd_spi.h | $(BUILD_DIR)
+$(BUILD_DIR)/drivers/%.o: drivers/%.c drivers/sd_spi.h drivers/spi_fifo.h include/esp32s3/sd_spi2.h | $(BUILD_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(C_OBJS): kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h
+$(C_OBJS): kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h include/esp32s3/sd_spi2.h drivers/spi_fifo.h
 
 $(BUILD_DIR)/lib/posix/%.o: lib/posix/%.c lib/posix/dirent.h $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)

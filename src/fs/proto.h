@@ -61,6 +61,30 @@ CP32_IRAM_EXT int cp32_minix_file_seek(struct cp32_minix_file *file,
                                       long offset, int whence);
 CP32_IRAM_EXT int cp32_fs_read_map(struct cp32_minix_file *file,
                                   unsigned index, unsigned *zone);
+/* Unlink regular files in one-block directories; rejects open descriptors. */
+CP32_IRAM_EXT int cp32_minix_unlink(cp32_disk_reader,cp32_disk_writer,
+    unsigned,const char *);
+/* Add a root-directory name for an existing regular inode; no allocation. */
+CP32_IRAM_EXT int cp32_minix_link_root(cp32_disk_reader,cp32_disk_writer,
+    unsigned,const char *,const char *);
+/* Shrink and reclaim direct/single-indirect mappings; synchronous writer.
+ * On I/O failure, shorter EOF may be visible and reservations may leak. */
+CP32_IRAM_EXT int cp32_minix_truncate(cp32_disk_reader,cp32_disk_writer,
+                                    unsigned,const char *,unsigned);
+/* Append 1..64 bytes to non-executable data files, one-block zones,
+ * direct/single-indirect growth up to263KiB. Synchronous data before size. */
+CP32_IRAM_EXT int cp32_minix_append(cp32_disk_reader,cp32_disk_writer,
+                                  unsigned,const char *,const char *,unsigned);
+/* Create-only root entry, 1..14-byte name and 1..64 bytes of initial data.
+ * One-block zones and existing root directory block; no replacement/growth.
+ * Synchronous writer required. Failed writes may leak reserved resources. */
+CP32_IRAM_EXT int cp32_minix_create_root(cp32_disk_reader,cp32_disk_writer,
+                                       unsigned,const char *,const char *,unsigned);
+/* Privileged maintenance patch: existing non-executable regular file,
+ * 1..64 bytes within one sector and EOF; no allocation or metadata updates.
+ * Writer must complete synchronously; failures can leave media changed. */
+CP32_IRAM_EXT int cp32_minix_patch(cp32_disk_reader,cp32_disk_writer,unsigned,
+                                  const char *,unsigned,const char *,unsigned);
 /* read.c: up to 64 bytes, zero at EOF, negative status on failure. */
 CP32_IRAM_EXT int cp32_minix_file_read(struct cp32_minix_file *file,
                                       char *buffer, unsigned count);

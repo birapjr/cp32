@@ -1,0 +1,19 @@
+Excerpt of the user's image-124 serial log, supplied 2026-10-10.
+User reports that SD access is much faster; no timed benchmark was supplied.
+
+[FEATURE SD-SPI 124]1
+[ROOT V124 backend=sd result=0 capacity=65536]
+[TEST SD-SPI 124]
+[TTY line=ls]
+.
+..
+boot
+readme
+[TTY line=hello --exec]
+Exec PID and file OKHello exit=0
+[TTY line=hello --exec]
+Exec PID and file OKHello exit=0
+[TTY line=disk]
+[DISK IPC V123 result=0]
+[TTY line=mm]
+[MM IPC V44 alloc-release-result=0]

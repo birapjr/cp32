@@ -2922,3 +2922,233 @@ Pending hardware: [FEATURE SD-ROOT 123]1 / [TEST SD-ROOT 123], ROOT result=0,
 SD-backed directory/file/exec and no-card startup tests. See docs/sd-root.md for
 exact media preparation, error codes, acceptance commands and references.
 Writable MINIX allocation/sync/recovery and hardware SPI throughput are next.
+
+
+## Image 123 hardware result and image 124 SPI2 — 2026-10-10
+
+User capture `docs/hardware/sd-root-v123.log` confirms SD mounting, directory
+reads, exec failure recovery, two PID/file-preserving exec replacements,
+exec-to-echo, MM and disk result=0. Separate supplied no-card output confirms
+ROOT V123 result=-2/capacity=0 and shell operation (ls reports a read error).
+This closes basic SD-root acceptance; bad-volume/card-variation tests remain.
+
+Image 124 replaces GPIO clocking with bare-metal SPI2: 400kHz identification,
+4MHz reads and 64-byte FIFO batches, with software CS across command/data/CRC.
+MINIX at_wini.c's bounded-controller-wait contract is preserved using wrapping
+CPU-cycle deadlines; UPDATE/USR stalls latch a transport failure. CRC checking,
+read-only sector IPC, filesystem validation, exec staging, and the 192KiB heap
+remain. GPIO recovery uses SD_SPI=soft and separate build-sd-soft artifacts.
+Hardware register/sequence sources and test commands are in docs/sd-root.md.
+
+Build-only: clean SPI2, GPIO and RAM builds pass without compiler warnings;
+all 43 host scripts pass. New register model covers FIFO packing, unaligned and
+partial buffers, 512-byte batching, UPDATE/start ordering, counter wrap and
+stuck-controller errors. Protocol tests cover burst/scalar paths, bulk errors,
+sticky faults and minimum token timeout; existing FS tests load all six ELFs.
+SPI2 ELF endpoints: _iram_end=0x403743e8, _iram_ext_end=0x40388aa0,
+_heap_start=0x3fc9fee8, _heap_end=0x3fccfee8,
+_runtime_stack_end=0x3fce2ef0 (20,752-byte app-alias margin).
+
+Hardware: pending for image 124; no board/card writes performed. Markers:
+[FEATURE SD-SPI 124]1, [TEST SD-SPI 124], [ROOT V124 ...],
+[SD V124 transport=spi2 init-hz=400000 read-hz=4000000]. The GPIO build reports
+[SD V124 transport=gpio]. Read-hz is configured speed, not measured throughput.
+
+
+## Image 124 hardware acceptance; image 125 persistent patches — 2026-10-10
+
+The user confirms much faster SD access. Image-124 log proves successful mount,
+ls, repeated PID/file-preserving exec, disk and MM checks; retained excerpt is
+`docs/hardware/sd-spi-v124-excerpt.log`. No benchmark, no-card SPI2 or bad-volume
+results were supplied. The SD transport diagnostic was suppressed by a
+`!defined(CP32_ROOT_RAM)` guard (the header defines it to 0); image 125 fixes
+that guard to test the value. Feature/test identifiers remain authoritative.
+
+Image 125 adds SD CMD24/CRC16, response/busy/CMD13 validation, FIFO transmit,
+and synchronous root-sector read/modify/write with full readback verification.
+DEV_WRITE remains owned by FS; copied chunks stop at sector boundaries.
+A failed device update invalidates cached bytes and disables writes until
+reboot. `patch` maps existing regular-file zones through the FS and device IPC,
+rejecting executables, holes, EOF growth, >64 bytes and sector crossings.
+This privileged maintenance command leaves metadata unchanged; application
+write permissions/syscalls, allocation, timestamps and crash recovery remain
+unimplemented. It is SD-only to preserve the tight RAM-recovery SRAM budget.
+
+Tests: all 43 scripts pass, with new CMD24 CRC/busy/status rejection tests,
+readback mismatch/write lockout, cached hard-link reads, remount persistence,
+unchanged surrounding bytes and metadata, direct/indirect writes, failure
+handling and command parsing. Memory-task tests now expect a separate chunk
+at sector boundaries. All three clean builds pass without compiler warnings;
+initial missing hosted strlen reference was replaced with bounded scanning.
+ELF sections/segments and image layout checks pass. SD endpoints:
+_iram_end=0x403743f8, _iram_ext_end=0x40389368,
+_heap_start=0x3fca0aa8, _heap_end=0x3fcd0aa8,
+_runtime_stack_end=0x3fce3ab0; margin 17,744 bytes. Heap 192 KiB remains.
+RAM recovery runtime-stack end=0x3fce7e60, leaving 416 bytes.
+
+Hardware writes/reboot persistence: pending. Markers [FEATURE SD-WRITE 125]1,
+[TEST SD-WRITE 125], ROOT/SD/DISK V125. Follow docs/sd-root.md using the existing
+card. Boot/disk diagnostics remain read-only. No flashing or SD writes were
+performed here. An unsuccessful write can still have changed media; this is
+not a transactional or power-loss-safe filesystem.
+
+
+## Image 125 hardware / image 126 root-file creation — 2026-10-11
+
+`docs/hardware/sd-write-v125.log` retains the user's two boots. Second boot
+reads SD25 from /readme, patches CP32 with verified completion, and rereads
+CP32. The initial SD25 write is outside this capture. First boot stops during
+CORE diagnostics and is followed by a reset dump: cause undetermined; no
+watchdog/manual-reset diagnosis is inferred. Recurrence needs a full capture.
+
+Image 126 adds `create /name text`, allocating a MINIX inode and one data zone
+for up to64 bytes in a root entry with a14-byte name. Existing names cannot be
+overwritten. Root directory uses its existing first block, including deleted
+slots. Larger geometries/directories are rejected before writes. Bitmap
+reservations and zeroed data precede inode persistence; directory publication
+is last, matching MINIX new_node's ordering. Failed operations can leak
+reservations or have completed publication: no unsafe rollback or automatic
+retry is attempted. General POSIX writes/recovery remain incomplete.
+
+Clean SPI2/GPIO/RAM builds and44 host scripts pass. Tests cover endian maps,
+allocation limits, duplicate/exhaustion handling, remount, unchanged existing
+files, full-write failures before/after every step and parser validation.
+Initial RAM build exceeded its alias limit because the linker KEEP retains
+extended IRAM functions. Makefile now omits only the SD-only create object
+from RAM recovery. All heaps/stacks and existing RAM commands are preserved.
+SD endpoints: _iram_end=0x403743f8, _iram_ext_end=0x40389c94,
+_heap_start=0x3fca1470, _heap_end=0x3fcd1470,
+_runtime_stack_end=0x3fce4470 (15,248-byte margin). RAM end0x3fce7e60.
+Markers [FEATURE FS-CREATE 126]1 / [TEST FS-CREATE 126], ROOT/SD V126.
+Hardware creation/reboot validation pending; no board or card writes performed.
+
+
+## Image 126 hardware and image 127 append/growth — 2026-10-11
+
+User clarification closes the early-reset investigation: the restart in the
+image 125 capture was intentional to verify persistence after a full restart.
+Do not treat it as an unexplained watchdog/kernel failure. Latest capture
+`docs/hardware/fs-create-v126.log` verifies creation of /note, ls/cat/stat,
+inode 13, size 8, links 1. Reboot and duplicate rejection are not in this log.
+
+Image 127 adds privileged `append path text` with relative/nested pathname
+resolution, 1–64 bytes per command, direct/single-indirect zone allocation and
+size publication after verified data writes. Preserves the old prefix and
+metadata other than size/pointers. File limit 263 KiB/one-block zones, constrained
+by actual free volume space. Rejects executable/directory targets, sparse EOF,
+stale unused pointers, larger geometries and growth beyond supported mapping.
+No POSIX write handles, truncation, timestamps or recovery claim is made.
+
+Validation: 44 host scripts, clean SPI2/GPIO/RAM builds and ELF section/segment
+checks pass without warnings. Tests cover both byte orders, empty/sector/zone
+boundaries, new/existing indirect table, final single-indirect slot, poisoned
+free-zone zeroing, space/error preflight and every complete-write interruption.
+FS->root->SD mock remount verifies appended content and retains all six ELF
+loads. Parser tests cover literal spaces, lengths, relative paths and errors.
+SD: _iram_end=0x403743f8, _iram_ext_end=0x4038a3a4,
+_heap_start=0x3fca1bc8, _heap_end=0x3fcd1bc8,
+_runtime_stack_end=0x3fce4bd0, margin 13,360 bytes; heap 192 KiB unchanged.
+RAM end=0x3fce7e60 (416-byte margin); SD-only allocator remains excluded.
+
+Markers [FEATURE FS-APPEND 127]1 / [TEST FS-APPEND 127], ROOT/SD V127.
+Hardware append/reboot validation pending; no board/card writes performed.
+After I/O failure, reserved space or an indirect pointer beyond EOF may remain;
+no automatic rollback/retry or torn-sector/power-loss guarantee is provided.
+
+
+## Image 127 persistence / image 128 truncation — 2026-10-11
+
+The user's latest two-boot capture is retained in docs/hardware/fs-append-v127.log.
+It reads hello SD! from /note after restart. This confirms persisted appended
+content, but does not show the append command, stat or full regression matrix.
+
+Image 128 implements privileged shrink-only `truncate path length` through
+shell, filesystem, device IPC and verified SD writes. It validates all direct
+and single-indirect mappings before mutation, publishes the reduced size,
+detaches discarded mappings, zeros partial-zone tail bytes and only then frees
+zones. Emptying a file releases its indirect table too. Same-size truncation
+can clean still-referenced unused mappings after failed append. Existing inode,
+links and non-size metadata remain intact. No application write ABI is added.
+
+All 44 host scripts and clean SPI2/GPIO/RAM builds pass without compiler warnings;
+ELF sections/segments pass. Both endian formats, partial/zero/same-size cases,
+indirect reclamation, released-space reuse, parser rejection and every complete-
+write interruption are covered. Failure tests ensure no remaining mapping points
+to freed storage. Root/SD mock remount and all six ELF loads pass.
+SD endpoints: _iram_end=0x403743f8, _iram_ext_end=0x4038ad08,
+_heap_start=0x3fca29b0, _heap_end=0x3fcd29b0,
+_runtime_stack_end=0x3fce59b0 (9,808-byte margin). Heap remains 192 KiB.
+The static mapping snapshot uses 1,056 bytes. RAM recovery excludes the SD-only
+allocator and ends at0x3fce7e70 (400-byte margin); GPIO SD ends at0x3fce5580.
+
+Markers [FEATURE FS-TRUNCATE 128]1 / [TEST FS-TRUNCATE 128], ROOT/SD V128.
+Hardware acceptance pending; no board/card writes performed. I/O failure can
+leave the shorter size visible and leak unreachable zones. No rollback/retry,
+whole-volume cross-inode validation, torn-sector recovery or power-loss
+atomicity is claimed. Documentation includes a disposable /trim reboot test.
+
+
+## Image 128 hardware / image 129 hard links — 2026-10-11
+
+Retained docs/hardware/fs-truncate-v128.log verifies truncate-to-zero, empty
+readback, append/read reused, exec, disk and MM. Partial shrink and restart
+readback after these writes are not shown. A first startup is interrupted by
+another boot; cause is not established by this capture. Earlier image-125
+intentional-reset clarification is preserved and not generalized to this log.
+
+Image 129 ports MINIX link.c:do_link, preserving shared inode identity and
+LINK_MAX=127. `link existing /alias` accepts existing regular files and a new
+root name, reuses directory slots, and allocates no inode or data zone.
+CP32 uses synchronous verified writes: increased link count precedes entry
+publication, preventing an undercount at every complete-write failure point.
+Failure can overcount or leave an unpublished entry; no automatic rollback,
+recovery or power-loss/torn-sector atomicity is claimed. Directory links and
+root growth beyond its first block remain unsupported. This is a privileged
+shell operation; the application syscall ABI and timestamps are unchanged.
+
+All 44 host scripts and clean SPI2/GPIO/RAM builds pass without warnings.
+Tests cover endian metadata, shared append/truncate visibility, unchanged
+allocation maps, invalid/duplicate/full/limit checks, deleted-slot reuse,
+every before/after write failure, parser validation and SD-mock remount.
+All six ELF applications still load. ELF sections/segments checked.
+SD: _iram_end=0x403743f8, _iram_ext_end=0x4038b344,
+_heap_start=0x3fca3048, _heap_end=0x3fcd3048,
+_runtime_stack_end=0x3fce6050 (8,112-byte margin); heap stays 192 KiB.
+RAM end=0x3fce7e60 (416-byte margin).
+Markers [FEATURE FS-LINK 129]1 / [TEST FS-LINK 129], ROOT/SD V129.
+Hardware pending; no board/card writes performed. Next is unlink with safe
+last-link reclamation rather than treating shell maintenance as full POSIX FS.
+
+
+## Image 129 hardware / image 130 file and link deletion — 2026-10-11
+
+Retained docs/hardware/fs-link-v129.log confirms both names persist with inode14,
+links2, size7 and reused!, plus ls/exec/disk/MM. The actual link/append commands
+are absent, so the log is readback evidence rather than a complete test matrix.
+
+Image130 adds rm/unlink through shell -> FS -> device IPC -> verified SD writes.
+Preflight rejects directories, invalid names, unsupported geometry and open
+inodes. Removing a shared name only decrements links; last-link removal clears
+the inode, releases data/indirect zones, then frees the inode bit. Name and inode
+references are detached before storage becomes reusable. Root/nested one-block
+parents work; directory size stays unchanged and deleted slots are reusable.
+The existing truncation snapshot is shared for last-link mapping validation.
+MINIX link.c:unlink_file and inode.c:put_inode/free_inode are the reference.
+Open-file deletion is busy (13), not POSIX deferred last-close reclamation.
+
+All44 host scripts and clean SPI2/GPIO/RAM builds pass without warnings.
+Tests cover byte orders, shared/nested/busy/invalid cases, empty/direct/indirect/
+sparse reclamation, inode/zone/name reuse, parser handling and every before/after
+complete-write fault. SD mock remount checks both deletion stages and reuse;
+all six ELF applications still load. ELF sections/segments checked.
+_iram_end=0x403743f8, _iram_ext_end=0x4038bb18,
+_heap_start=0x3fca3880, _heap_end=0x3fcd3880,
+_runtime_stack_end=0x3fce6880 (6,016-byte SD margin). Heap192KiB retained.
+RAM runtime end0x3fce7e60 (416 bytes). Markers [FEATURE FS-UNLINK 130]1 /
+[TEST FS-UNLINK 130], ROOT/SD V130. No board/card writes; hardware pending.
+
+An error can occur after the name disappears and leave leaked allocations or
+an overcount. No automatic retry, fsck, torn-sector/power-loss guarantee or
+secure erasure. Last-link double/triple-indirect files and larger parent
+directories remain unsupported, as does directory deletion. Device I/O lockout
+until reboot remains unchanged. Follow docs/sd-root.md disposable-file test.

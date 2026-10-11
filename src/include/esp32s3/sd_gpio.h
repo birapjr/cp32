@@ -8,6 +8,7 @@
 #define SD_GPIO_REG(offset) (*(volatile uint32_t *)(0x60004000UL+(offset)))
 #define SD_GPIO_MUX(pin) (*(volatile uint32_t *)(0x60009004UL+4*(pin)))
 #define SD_GPIO_FUNC(pin) SD_GPIO_REG(0x554+4*(pin))
+#define SD_GPIO_INPUT(signal) SD_GPIO_REG(0x154+4*(signal))
 #define SD_GPIO_OUT_SET 0x08
 #define SD_GPIO_OUT_CLEAR 0x0c
 #define SD_GPIO_OUT1_SET 0x14

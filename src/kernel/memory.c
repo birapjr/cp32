@@ -39,6 +39,7 @@ CP32_IRAM_EXT PRIVATE int cp32_mem_request(const message *request)
   while (transferred < count) {
     unsigned chunk = count - transferred;
     if (chunk > sizeof(buffer)) chunk = sizeof(buffer);
+    if (chunk > 512-(offset+transferred)%512) chunk=512-(offset+transferred)%512;
     if (request->m_type == DEV_READ) {
       if (cp32_root_read(offset + transferred, buffer, chunk) != 0)
         return EIO;
@@ -59,7 +60,7 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_mem_request(const message *request, int re
   static unsigned requests;
   if (++requests <= 8 || requests % 5000 == 0) {
     int saved_ps = lock_save();
-    usbj_print("[DISK V123 op="); usbj_print_u32((uint32_t)request->m_type);
+    usbj_print("[DISK V125 op="); usbj_print_u32((uint32_t)request->m_type);
     usbj_print(" result="); usbj_print_u32((uint32_t)result);
     usbj_print(" n="); usbj_print_u32(requests); usbj_print("]\r\n");
     restore_lock(saved_ps);

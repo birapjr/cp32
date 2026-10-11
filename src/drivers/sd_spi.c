@@ -2,11 +2,14 @@
  * MINIX disk-driver boundary: fixed blocks with bounded device errors, not FS
  * pathname operations. Supports SD v1/v2 SDSC and block-addressed SDHC/SDXC. */
 #include "sd_spi.h"
+CP32_IRAM_EXT static int bus_error(struct cp32_sd *s)
+{ return s->bus->error && s->bus->error(); }
 CP32_IRAM_EXT static void finish(struct cp32_sd *s)
 { s->bus->select(0); s->bus->transfer(0xff); }
 CP32_IRAM_EXT static int command(struct cp32_sd *s,unsigned cmd,uint32_t arg)
 {
   unsigned i,j;uint8_t packet[5],crc=0,r;
+  if(bus_error(s))return CP32_SD_IO;
   finish(s);s->bus->select(1);
   for(i=0;i<4096;i++)if(s->bus->transfer(0xff)==0xff)break;
   if(i==4096)return CP32_SD_TIMEOUT;
@@ -18,21 +21,30 @@ CP32_IRAM_EXT static int command(struct cp32_sd *s,unsigned cmd,uint32_t arg)
     s->bus->transfer(packet[i]);
   }
   s->bus->transfer((uint8_t)((crc<<1)|1));
-  for(i=0;i<16;i++) {r=s->bus->transfer(0xff);if(!(r&0x80))return r;}
+  for(i=0;i<16;i++) {r=s->bus->transfer(0xff);if(bus_error(s))return CP32_SD_IO;if(!(r&0x80))return r;}
   return CP32_SD_TIMEOUT;
 }
 CP32_IRAM_EXT static int data(struct cp32_sd *s,unsigned char *p,unsigned n)
 {
   unsigned i,j;uint8_t r;uint16_t crc=0,wire;
-  /* 65536 polling bytes at <=400kHz permit >1s, exceeding read timeout. */
-  for(i=0;i<65536;i++) {r=s->bus->transfer(0xff);if(r!=0xff)break;}
+  /* At any bus speed allow at least 256ms for a read token. Delays only
+   * apply to a card still returning FF, never to the sector payload. */
+  for(i=0;i<65536;i++) {
+    r=s->bus->transfer(0xff);if(bus_error(s))return CP32_SD_IO;
+    if(r!=0xff)break;if((i&255)==255)s->bus->delay_ms(1);
+  }
   if(i==65536)return CP32_SD_TIMEOUT;
   if(r!=0xfe)return CP32_SD_IO;
+  if(s->bus->receive) {
+    int result=s->bus->receive(p,n);if(result)return result;
+  }
   for(i=0;i<n;i++) {
-    p[i]=s->bus->transfer(0xff);crc^=(uint16_t)p[i]<<8;
+    if(!s->bus->receive)p[i]=s->bus->transfer(0xff);
+    crc^=(uint16_t)p[i]<<8;
     for(j=0;j<8;j++)crc=(crc&0x8000) ? (uint16_t)((crc<<1)^0x1021):(uint16_t)(crc<<1);
   }
   wire=(uint16_t)s->bus->transfer(0xff)<<8;wire|=s->bus->transfer(0xff);
+  if(bus_error(s))return CP32_SD_IO;
   return crc==wire ? 0:CP32_SD_CRC;
 }
 CP32_IRAM_EXT int cp32_sd_init(struct cp32_sd *s,const struct cp32_sd_bus *bus)
@@ -74,6 +86,7 @@ CP32_IRAM_EXT int cp32_sd_init(struct cp32_sd *s,const struct cp32_sd_bus *bus)
     if(bits<9 || bits>11) {r=CP32_SD_UNSUPPORTED;goto fail;}
     s->sectors=((uint64_t)size+1)<<(mult+2+bits-9);
   } else {r=CP32_SD_UNSUPPORTED;goto fail;}
+  if(bus_error(s)) {r=CP32_SD_IO;goto fail;}
   s->ready=1;return 0;
 fail:
   finish(s);s->sectors=0;s->ready=0;return r<0 ? r:CP32_SD_IO;
@@ -85,5 +98,39 @@ CP32_IRAM_EXT int cp32_sd_read(struct cp32_sd *s,uint32_t lba,unsigned char p[51
      (!s->block_addressed && lba>0x7fffffU))return CP32_SD_IO;
   r=command(s,17,s->block_addressed ? lba:lba*512U);
   if(!r)r=data(s,p,512);else if(r>0)r=CP32_SD_IO;
-  finish(s);return r;
+  finish(s);return bus_error(s) ? CP32_SD_IO:r;
+}
+
+/* CMD24 single-block write. Completion means accepted data, released busy
+ * and clean CMD13 R2 status; it does not imply power-loss atomicity. */
+CP32_IRAM_EXT int cp32_sd_write(struct cp32_sd *s,uint32_t lba,const unsigned char p[512])
+{
+  unsigned i,j;uint16_t crc=0;int r;uint8_t token;
+  if(!s || !s->ready || !p || (uint64_t)lba>=s->sectors ||
+     (!s->block_addressed && lba>0x7fffffU))return CP32_SD_IO;
+  r=command(s,24,s->block_addressed ? lba:lba*512U);
+  if(r)goto done;
+  for(i=0;i<512;i++) {
+    crc^=(uint16_t)p[i]<<8;
+    for(j=0;j<8;j++)crc=(crc&0x8000) ? (uint16_t)((crc<<1)^0x1021):(uint16_t)(crc<<1);
+  }
+  s->bus->transfer(0xff);s->bus->transfer(0xfe);
+  if(s->bus->transmit) {
+    r=s->bus->transmit(p,512);if(r)goto done;
+  } else for(i=0;i<512;i++)s->bus->transfer(p[i]);
+  s->bus->transfer((uint8_t)(crc>>8));s->bus->transfer((uint8_t)crc);
+  token=s->bus->transfer(0xff);
+  if(bus_error(s)) {r=CP32_SD_IO;goto done;}
+  if((token&31)!=5) {r=(token&31)==11 ? CP32_SD_CRC:CP32_SD_IO;goto done;}
+  /* At least one second at any SPI/CPU rate; bounded even if removed/busy. */
+  for(i=0;i<1000;i++) {
+    token=s->bus->transfer(0xff);
+    if(bus_error(s)) {r=CP32_SD_IO;goto done;}
+    if(token==0xff)break;s->bus->delay_ms(1);
+  }
+  if(i==1000) {r=CP32_SD_TIMEOUT;goto done;}
+  r=command(s,13,0);
+  if(!r && s->bus->transfer(0xff))r=CP32_SD_IO;
+done:
+  finish(s);return bus_error(s) || r>0 ? CP32_SD_IO:r;
 }
