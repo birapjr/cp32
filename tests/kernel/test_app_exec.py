@@ -8,7 +8,7 @@ from test_idle_handoff import extract_function
 sys.path.insert(0,str(root/'tools'))
 from make_minix_demo import build_image
 shell=root/'src/kernel/cp32-shell.c'
-code='\n'.join(extract_function(shell,n) for n in ('cp32_shell_open_file','cp32_shell_app_files_reset','cp32_app_file_error','cp32_shell_exec_open','cp32_shell_exec_close','cp32_shell_app_file','cp32_shell_app_read'))
+code='\n'.join(extract_function(shell,n) for n in ('cp32_shell_app_files_reset','cp32_shell_app_files_exec','cp32_shell_exec_open','cp32_shell_exec_close','cp32_shell_app_file','cp32_shell_app_read'))
 replace=extract_function(root/'src/kernel/application.c','application_replace')
 # Only physical-address accesses and instruction synchronization are modeled.
 replace=replace.replace('memcpy(&copy,request->m1_p1,sizeof(copy));','memcpy(&copy,live_data+(p-CP32_APP_DATA),sizeof(copy));')
@@ -47,14 +47,24 @@ struct proc {
 };
 static unsigned char disk[65536],live_text[16384],live_data[16384],staging[32768];
 static unsigned char old_text[16384],old_data[16384];
-static int cp32_app_fds[CP32_APP_FILE_MAX];
-static char cp32_shell_cwd[256]="/";
+#include "fproc.h"
+static struct cp32_fproc cp32_shell_state={.pid=1,.root_inode=1,.cwd="/"};
+static struct cp32_fproc cp32_app_state={.pid=123,.root_inode=1,.mask=0022,.cwd="/"};
+
+#define cp32_shell_cwd cp32_app_state.cwd
 static unsigned cp32_root_capacity(void) {return sizeof(disk);}
 static int read_count,fail_read;
+static int cp32_shell_disk_write(unsigned off,const char *p,int n) {
+ if(off>sizeof(disk) || (unsigned)n>sizeof(disk)-off)return -1;
+ memcpy(disk+off,p,n);return n;
+}
 static int cp32_shell_disk_read(unsigned off,char *out,int count) {
  if(++read_count==fail_read)return -1;
  if(off>sizeof(disk) || (unsigned)count>sizeof(disk)-off)return -1;
  memcpy(out,disk+off,count);return count;
+}
+static int disk_write(unsigned off,const char *data,int n) {
+ assert(n>0 && off+(unsigned)n<=sizeof(disk));memcpy(disk+off,data,n);return n;
 }
 static struct proc child;
 static uint32_t floor_value,break_value;
@@ -126,7 +136,11 @@ int main(int argc,char **argv) {
  strcpy(q.path,"/readme");attempt(&q,-13);
  strcpy(q.path,"/boot");attempt(&q,-13);
  strcpy(q.path,"/boot/echo");attempt(&q,-8); /* executable, invalid ELF */
- strcpy(q.path,"/boot/hello");alloc_fail=1;attempt(&q,-12);alloc_fail=0;
+ strcpy(q.path,"/boot/hello");
+ assert(!cp32_minix_chmod(cp32_shell_disk_read,disk_write,sizeof(disk),q.path,0644));
+ int before_allocs=allocs;attempt(&q,-13);assert(allocs==before_allocs);
+ assert(!cp32_minix_chmod(cp32_shell_disk_read,disk_write,sizeof(disk),q.path,0555));
+ alloc_fail=1;attempt(&q,-12);alloc_fail=0;
  q.argc=10;attempt(&q,-7);q.argc=2;
  memset(q.args,'x',sizeof(q.args));attempt(&q,-7);memset(q.args,0,sizeof(q.args));memcpy(q.args,"alias\0argument",15);
  q.path[255]='x';attempt(&q,-36);q.path[255]=0;
@@ -137,11 +151,16 @@ int main(int argc,char **argv) {
  setup();attempt(&q,0);int reads=read_count,failed=0;
  for(int i=1;i<=reads;i++) {
   setup();fail_read=i;
+  assert(!cp32_shell_app_file(CP32_APP_SETFD,6,0,CP32_FD_CLOEXEC));
   int r=attempt(&q,999);fail_read=0;
-  if(r)failed++;
+  if(r) {failed++;assert(cp32_shell_app_file(CP32_APP_GETFD,6,0,0)==1);}
+  else {
+    assert(cp32_shell_app_file(CP32_APP_GETFD,6,0,0)==-9);
+    assert(cp32_shell_app_file(CP32_APP_OPEN,0,"/readme",8)==6);
+  }
   assert(cp32_shell_app_file(CP32_APP_SEEK_CUR,3,0,0)==5);
  }
- assert(failed>5);
+ assert(failed>5);assert(!cp32_shell_app_file(CP32_APP_SETFD,6,0,0));
  for(int i=0;i<40;i++) {setup();attempt(&q,0);assert(cp32_shell_app_file(CP32_APP_SEEK_CUR,3,0,0)==5);}
  assert(allocs==releases+1);
  setup();struct cp32_app_services api={8,put,0,0,0,0,get,bridge};assert(!cp32_io_init(&api));
@@ -154,7 +173,26 @@ int main(int argc,char **argv) {
  char big[257];memset(big,'a',256);big[256]=0;const char *large[]={big,0};
  assert(cp32_execv("/boot/hello",large)==-1 && cp32_errno==CP32_E2BIG);
  assert(cp32_execv(big,args)==-1 && cp32_errno==CP32_ENAMETOOLONG);
- cp32_shell_app_files_reset();puts("exec: rollback on disk/MM/image/request failures; PID/frame/argv/BSS and full fd-table preservation pass");
+ cp32_shell_app_files_reset();cp32_app_state.pid=123;
+ struct cp32_app_open_request w={"/wexec",CP32_O_RDWR|CP32_O_CREAT|CP32_O_EXCL,0600};
+ assert(cp32_shell_app_file(CP32_APP_OPEN_MODE,0,&w,sizeof(w))==3);
+ assert(cp32_shell_app_file(CP32_APP_WRITE,3,"before",6)==6);
+ assert(cp32_shell_app_file(CP32_APP_DUP,3,0,0)==4);
+ assert(cp32_shell_app_file(CP32_APP_DUP,3,0,0)==5);
+ assert(!cp32_shell_app_file(CP32_APP_SETFD,5,0,CP32_FD_CLOEXEC));
+ assert(!cp32_shell_app_file(CP32_APP_CHDIR,0,"/boot",6));
+ assert(cp32_shell_app_file(CP32_APP_UMASK,0,0,0077)==0022);
+ strcpy(q.path,"/missing");setup();attempt(&q,-2);
+ assert(cp32_shell_app_file(CP32_APP_GETFD,5,0,0)==1);
+ strcpy(q.path,"hello");setup();attempt(&q,0);
+ assert(cp32_shell_app_file(CP32_APP_GETFD,5,0,0)==-9);
+ assert(cp32_app_state.pid==123 && cp32_app_state.mask==0077 && !strcmp(cp32_app_state.cwd,"/boot"));
+ assert(cp32_shell_app_file(CP32_APP_WRITE,4,"after",5)==5);
+ assert(cp32_shell_app_file(CP32_APP_SEEK_CUR,3,0,0)==11);
+ assert(cp32_shell_app_file(CP32_APP_SEEK_SET,3,0,0)==0);
+ char written[12]={0};assert(cp32_shell_app_file(CP32_APP_READ,4,written,11)==11);
+ assert(!strcmp(written,"beforeafter"));
+ cp32_shell_app_files_reset();cp32_app_state.pid=123;puts("exec: rollback on disk/MM/image/request failures; PID/frame/argv/BSS and full fd-table preservation pass");
 }
 '''
 # Valid two-segment fixture with multiple payload reads and BSS.
@@ -168,5 +206,5 @@ elf[380:]=bytes([0x22])*4
 with tempfile.TemporaryDirectory() as folder:
  p=Path(folder);(p/'disk').write_bytes(build_image(True,hello=elf,echo=b'bad ELF'))
  (p/'test.c').write_text(pre+code+extract_function(root/'src/kernel/context.c','cp32_exec_frame')+replace+test)
- subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=undefined','-fno-sanitize-recover=all','-I'+str(root/'src/fs'),'-I'+str(root/'src/mm'),'-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'src/mm/image.c'),str(root/'src/mm/exec.c'),str(root/'src/apps/lib/io.c'),*[str(f) for f in (root/'src/fs').glob('*.c')],'-o',str(p/'test')],check=True)
+ subprocess.run(['cc','-DCP32_ROOT_RAM=0','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=undefined','-fno-sanitize-recover=all','-I'+str(root/'src/fs'),'-I'+str(root/'src/mm'),'-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'src/mm/image.c'),str(root/'src/mm/exec.c'),str(root/'src/apps/lib/io.c'),*[str(f) for f in (root/'src/fs').glob('*.c')],'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test'),str(p/'disk')],check=True)

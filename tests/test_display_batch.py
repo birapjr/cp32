@@ -7,7 +7,7 @@ import sys
 sys.dont_write_bytecode=True
 from test_idle_handoff import extract_function
 ROOT=Path(__file__).resolve().parents[1]
-names=['cardputer_display_clear','cardputer_display_begin_batch','cardputer_display_end_batch',
+names=['display_cursor_hide','cardputer_display_cursor','cardputer_display_clear','cardputer_display_begin_batch','cardputer_display_end_batch',
        'glyph_scaled','cardputer_display_layout_char','cardputer_display_putc',
        'cardputer_display_defer_newline','cardputer_display_write']
 bodies=[extract_function(ROOT/'src/kernel/display.c',n) for n in names]
@@ -21,6 +21,7 @@ PRELUDE=r'''
 #define DC 1
 #define CS 2
 static unsigned x,y,ready,spi_fault,display_batch,display_redraw_pending;
+static unsigned cursor_visible,cursor_active,cursor_x,cursor_y,cursor_tick;
 static char textbuf[12][16], painted[12][16];
 static uint16_t pixels[240*135], expected_pixels[240*135];
 static char expected_text[12][16];
@@ -40,6 +41,7 @@ static void px(uint16_t value) {
 TESTS=r'''
 static void reset(void) {
   x=y=display_batch=display_redraw_pending=spi_fault=clears=cells=0; ready=1;
+  cursor_visible=cursor_active=cursor_x=cursor_y=cursor_tick=0;
   memset(textbuf,' ',sizeof(textbuf)); memset(painted,' ',sizeof(painted)); memset(pixels,0,sizeof(pixels));
   memset(cell_writes,0,sizeof(cell_writes));
 }
@@ -265,6 +267,46 @@ int main(void) {
       assert(pixels[py*240+px]==(stroke ? 0xffff : 0));
     }
   }
+  /* Cursor is a pixel overlay: solid 10x10 square, never stored in text. */
+  reset();cardputer_display_write("$ ");
+  memcpy(expected_pixels,pixels,sizeof(pixels));memcpy(expected_text,textbuf,sizeof(textbuf));
+  unsigned before=cells;
+  cardputer_display_cursor(1,100);assert(cursor_visible && cells==before+1 && x==30 && y==0);
+  for(unsigned row=0;row<10;row++)for(unsigned col=0;col<15;col++)
+    assert(pixels[row*240+30+col]==(col>=2 && col<12 ? 0xffff:0));
+  assert(!memcmp(expected_text,textbuf,sizeof(textbuf)));
+  cardputer_display_cursor(1,129);assert(cells==before+1);
+  cardputer_display_cursor(1,130);assert(!cursor_visible && cursor_active);
+  assert(!memcmp(expected_pixels,pixels,sizeof(pixels)));
+  cardputer_display_cursor(1,160);assert(cursor_visible);
+  cardputer_display_putc('A');assert(!cursor_visible && !cursor_active && x==45);
+  cardputer_display_cursor(1,161);assert(cursor_visible && cursor_x==45);
+  cardputer_display_write("\b \b");assert(!cursor_visible && x==30);
+  cardputer_display_cursor(1,162);assert(cursor_x==30);
+  cardputer_display_cursor(0,163);assert(!cursor_visible && !cursor_active);
+  /* Restore a nonblank underlying cell, including a pending wrap at column16. */
+  reset();cardputer_display_write("abcdefghijklmnop");
+  memcpy(expected_pixels,pixels,sizeof(pixels));
+  cardputer_display_cursor(1,0);assert(x==240 && cursor_x==225);
+  cardputer_display_cursor(1,30);assert(!memcmp(expected_pixels,pixels,sizeof(pixels)));
+  cardputer_display_cursor(1,60);cardputer_display_putc('Q');
+  cardputer_display_cursor(1,61);assert(x==15 && y==11 && cursor_x==15 && cursor_y==11);
+  /* Deferred Enter/scroll cannot be committed by blinking. */
+  reset();seed_distinct_rows();cardputer_display_write("$ ");
+  cardputer_display_cursor(1,0);cardputer_display_defer_newline();
+  assert(!cursor_visible && display_redraw_pending);before=cells;
+  cardputer_display_cursor(1,100);assert(cells==before && display_redraw_pending);
+  cardputer_display_write("done\n$ ");
+  cardputer_display_cursor(1,101);assert(cursor_visible && cursor_y==121);
+  cardputer_display_clear();assert(!cursor_visible && !cursor_active && !x && !y);
+  for(unsigned i=0;i<240*135;i++)assert(!pixels[i]);
+  /* Unsigned elapsed ticks handle wrap; batches/faults never draw a cursor. */
+  reset();cardputer_display_cursor(1,0xfffffff0U);before=cells;
+  cardputer_display_cursor(1,13);assert(cells==before);
+  cardputer_display_cursor(1,14);assert(!cursor_visible && cells==before+1);
+  cardputer_display_begin_batch();before=cells;
+  cardputer_display_cursor(1,50);assert(cells==before);cardputer_display_end_batch();
+  spi_fault=1;cardputer_display_cursor(1,100);assert(cells==before);
   reset(); spi_fault=1; cardputer_display_write("hidden\n");
   assert(!display_batch && clears==0 && x==0 && y==0);
   printf("LCD model: zero scroll clears, %u versus %u cell writes, pixel/cursor/wrap/erasure checks passed\n",batchedcells,oldcells);

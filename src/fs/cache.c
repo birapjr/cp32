@@ -9,7 +9,7 @@ static struct {
 static unsigned victim, device_capacity;
 static cp32_disk_reader device_reader;
 
-CP32_IRAM_EXT void cp32_cache_invalidate(void)
+CP32_FS_TEXT void cp32_cache_invalidate(void)
 {
   unsigned i;
   for(i=0;i<4;i++) blocks[i].valid=0;
@@ -19,7 +19,7 @@ CP32_IRAM_EXT void cp32_cache_invalidate(void)
 /* Parser transfers are at most 64 bytes. Stage even cross-block reads so
  * an I/O failure never publishes partial output or a partially filled block.
  * The backing reader must be uncached and must not reenter this cache. */
-CP32_IRAM_EXT int cp32_cache_read(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_cache_read(cp32_disk_reader read, unsigned capacity,
                                  unsigned offset, char *out, int count)
 {
   char staged[64];

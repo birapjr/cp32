@@ -639,7 +639,7 @@ CP32_IRAM_EXT PRIVATE int blocked_handoff_eligible(struct proc *rp)
   if (rp != NIL_PROC && rp->p_reg.sp != 0 &&
       (rp->p_reg.sp & 0x0F) == 0)
     reasons |= 1u << 7;
-  if (rp != NIL_PROC && rp->p_reg.a[15] != 0) reasons |= 1u << 8;
+  if (rp != NIL_PROC && rp->p_reg.a[1] == rp->p_reg.sp) reasons |= 1u << 8;
   if (rp != NIL_PROC && rp->p_blocked_frame_valid &&
       rp->p_blocked_frame_pc == rp->p_reg.pc &&
       rp->p_blocked_frame_psw == rp->p_reg.psw &&
@@ -652,7 +652,7 @@ CP32_IRAM_EXT PRIVATE int blocked_handoff_eligible(struct proc *rp)
          proc_ptr == rp && current_proc == rp &&
          rp->p_reg.sp != 0 &&
          (rp->p_reg.sp & 0x0F) == 0 &&
-         rp->p_reg.a[15] != 0 &&
+         rp->p_reg.a[1] == rp->p_reg.sp &&
          rp->p_blocked_frame_valid &&
          rp->p_blocked_frame_pc == rp->p_reg.pc &&
          rp->p_blocked_frame_psw == rp->p_reg.psw &&
@@ -661,7 +661,7 @@ CP32_IRAM_EXT PRIVATE int blocked_handoff_eligible(struct proc *rp)
   if (cp32_user_probe_mode && !eligible &&
       !cp32_blocked_handoff_reason_reported) {
     cp32_blocked_handoff_reason_reported = 1;
-    usbj_print("[CTX V100 blocked-handoff-mask=");
+    usbj_print("[CTX V141 blocked-handoff-mask=");
     usbj_print_u32(reasons);
     usbj_print("]\r\n");
   }
@@ -865,8 +865,7 @@ CP32_IRAM_EXT PUBLIC int cp32_irq_return_frame_check(void)
 
   if (rp == NIL_PROC || rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
       rp->p_flags != 0 || rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
-      (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp ||
-      rp->p_reg.a[15] == 0)
+      (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp)
     return FALSE;
   if (current_proc != rp || proc_ptr != rp)
     return FALSE;
@@ -881,7 +880,7 @@ CP32_IRAM_EXT PUBLIC int cp32_saved_context_check(void)
     if (rp->p_flags != P_SLOT_FREE &&
         (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
          (rp->p_reg.pc & 0x03) != 0 || (rp->p_reg.sp & 0x0F) != 0 ||
-         rp->p_reg.a[1] != rp->p_reg.sp || rp->p_reg.a[15] == 0 ||
+         rp->p_reg.a[1] != rp->p_reg.sp ||
          rp->p_reg.psw == 0 || rp->p_nr != i - NR_TASKS ||
          pproc_addr[rp->p_nr + NR_TASKS] != rp ||
          (rp->p_blocked_frame_valid &&
@@ -1338,7 +1337,7 @@ PRIVATE void pick_proc()
     if (rdy_head[q] != NIL_PROC) {
       rp = rdy_head[q];
       if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
-          (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[15] == 0)) {
+          (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp)) {
         next_queue = (q + 1) % NQ;
         continue;
       }

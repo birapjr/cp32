@@ -21,7 +21,7 @@ class Entry(C.Structure):
 with tempfile.TemporaryDirectory(prefix='cp32-dirent-') as tmp:
     binary = str(Path(tmp) / 'dirent.so')
     sources = [ROOT / 'src/fs' / name for name in
-               ('super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c')]
+               ('super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c','create.c','write.c','cache.c')]
     sources += [ROOT / 'src/lib/posix' / name for name in
                 ('opendir.c','readdir.c','closedir.c','rewinddir.c')]
     sources += [ROOT / 'src/lib/other' / name for name in ('seekdir.c','telldir.c')]

@@ -28,4 +28,11 @@ if nm and elf.exists():
  assert symbols['_heap_end']-symbols['_heap_start']==192*1024
  assert symbols['_runtime_stack_end']<=0x3fce8000
  assert 0x40378000<=symbols['cp32_sd_init']<symbols['_iram_ext_end']
+ # Reachable filesystem entry points must remain in internal extended IRAM.
+ for name in ('cp32_minix_rmdir','cp32_minix_mkdir','cp32_minix_file_read','cp32_minix_stat'):
+  assert 0x40378000<=symbols[name]<symbols['_iram_ext_end'],name
+ assert 'cp32_minix_create_root' not in symbols # unused compatibility wrapper
+ assert symbols['_iram_end']<=0x40378000
+ # ABI v9 spends part of the former 4 KiB margin; preserve at least 2 KiB.
+ assert 0x3fce8000-symbols['_runtime_stack_end']>=2048
 print('SD image/build: partition payload, invalid input, safe output and SRAM/ELF contract pass')

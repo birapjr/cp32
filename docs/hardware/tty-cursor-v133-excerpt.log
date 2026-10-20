@@ -1,0 +1,12 @@
+# Excerpt of user-supplied image133 log; intervening diagnostics omitted.
+# User visual report: "the blink cursor is really good".
+[FEATURE TTY-CURSOR 133]1
+[SD V133 transport=spi2 init-hz=400000 read-hz=4000000]
+[ROOT V133 backend=sd result=0 capacity=65536]
+[TEST TTY-CURSOR 133]
+[TTY line=hello --line]
+Line: [TTY WRITE V48 bytes=6 ticks=7]
+eeeeeeeeeeeeee
+Hello exit=0
+[TTY line=pwd]
+/

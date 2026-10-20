@@ -101,11 +101,13 @@ static inline int cp32_irq_handoff_allowed(int bridge_enabled, int nested,
          selected_runnable && work_pending;
 }
 
+/* call0 requires aligned a1/SP. a15 is a preserved general register,
+ * not a mandatory frame pointer: optimized C may legitimately hold zero. */
 static inline int cp32_user_frame_contract_valid(const cp32_user_frame_t *frame)
 {
   return frame != (const cp32_user_frame_t *)0 && frame->pc != 0 &&
          frame->sp != 0 && (frame->sp & 0x0F) == 0 &&
-         frame->a[1] == frame->sp && frame->a[15] != 0;
+         frame->a[1] == frame->sp;
 }
 
 #endif

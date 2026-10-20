@@ -3,6 +3,8 @@
 /* Byte-oriented device reader: count/error result, offsets in bytes. */
 typedef int (*cp32_disk_reader)(unsigned offset, char *buffer, int count);
 typedef int (*cp32_disk_writer)(unsigned offset, const char *buffer, int count);
+/* The linker places filesystem object function sections in extended internal IRAM.
+ * Keep functions separate so --gc-sections can discard unreachable code. */
 #ifndef CP32_IRAM_EXT
 #if defined(__XTENSA__)
 #define CP32_IRAM_EXT __attribute__((section(".iram_ext.text")))
@@ -10,6 +12,7 @@ typedef int (*cp32_disk_writer)(unsigned offset, const char *buffer, int count);
 #define CP32_IRAM_EXT
 #endif
 #endif
+#define CP32_FS_TEXT
 /* Bounded metadata result; not the complete MINIX struct stat ABI. */
 struct cp32_minix_stat {
   unsigned inode, mode, links, uid, gid, size, atime, mtime, ctime;

@@ -505,7 +505,7 @@ with tempfile.TemporaryDirectory(prefix='cp32-memory-task-') as folder:
                     '-I' + str(ROOT / 'src/kernel'), '-I' + str(ROOT / 'src/fs'), '-I' + str(p), str(p / 'test.c'),
                     str(ROOT / 'src/kernel/ramdisk.c'),
                     *[str(ROOT / 'src/fs' / name) for name in
-                      ('cache.c','super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c')],
+                      ('cache.c','super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c','create.c','write.c')],
                     *[str(ROOT / 'src/lib/posix' / name) for name in ('opendir.c','readdir.c','closedir.c','rewinddir.c')],
                     str(ROOT / 'src/lib/other/seekdir.c'), str(ROOT / 'src/lib/other/telldir.c'),
                     str(p/'strtol.o'), str(ROOT/'src/lib/other/errno.c'),

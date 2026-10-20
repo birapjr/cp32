@@ -54,8 +54,8 @@ SECTIONS {
     -------------------------------------------------- */
     .text : ALIGN(4) {
         _text_start = .;
-        *(.literal .literal.*)
-        *(.text .text.*)
+        EXCLUDE_FILE (*/fs/*.o) *(.literal .literal.*)
+        EXCLUDE_FILE (*/fs/*.o) *(.text .text.*)
         . = ALIGN(4);
         _text_end = .;
     } > iram AT > irom
@@ -66,6 +66,9 @@ SECTIONS {
     /* Optional post-bootstrap code in the ESP-IDF-style D/IRAM window. */
     .iram_ext.text : ALIGN(4) {
         _iram_ext_start = .;
+        /* FS stays internal, with independent sections for reachability GC. */
+        */fs/*.o(.literal .literal.*)
+        */fs/*.o(.text .text.*)
         KEEP(*(.iram_ext.text))
         KEEP(*(.iram_ext.text.*))
         . = ALIGN(4);

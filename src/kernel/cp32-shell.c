@@ -3,6 +3,7 @@
 #include <sys/ioctl.h>
 #include "rootdisk.h"
 #include "../fs/fs.h"
+#include "../fs/fproc.h"
 #include "../lib/posix/dirent.h"
 #include "tty.h"
 #include "application.h"
@@ -15,7 +16,9 @@
 extern int _sendrec(int dest, message *m);
 static int cp32_shell_input_fd=-1;
 static char cp32_tty_line[64];
-static char cp32_shell_cwd[CP32_MINIX_PATH_MAX+1] = "/";
+static struct cp32_fproc cp32_shell_state={.pid=1,.root_inode=1,.mask=0022,.cwd="/"};
+static struct cp32_fproc cp32_app_state;
+#define cp32_shell_cwd cp32_shell_state.cwd
 static char cp32_shell_previous[CP32_MINIX_PATH_MAX+1];
 static unsigned cp32_tty_line_len;
 static char cp32_shell_output[256];
@@ -93,7 +96,115 @@ CP32_IRAM_EXT static int cp32_shell_disk_read(unsigned offset, char *buffer, int
 #if !CP32_ROOT_RAM
 CP32_IRAM_EXT static int cp32_shell_disk_write(unsigned offset,const char *p,int n)
 { return cp32_shell_disk_io(DEV_WRITE,offset,(char *)p,n); }
-CP32_IRAM_EXT static void cp32_shell_unlink(const char *args)
+#if CP32_UPDATE_APPS
+#include "app-update.h"
+#include "app-payload.h"
+CP32_IRAM_EXT static void cp32_shell_update_apps(void)
+{
+  unsigned i;int r;
+  cp32_shell_print("Updating /boot applications; keep power on.\r\n");
+  for(i=0;i<sizeof(cp32_update_entries)/sizeof(cp32_update_entries[0]);i++) {
+    cp32_shell_print(cp32_update_entries[i].path);cp32_shell_flush();
+    r=cp32_update_one(cp32_shell_disk_read,cp32_shell_disk_write,
+                      cp32_root_capacity(),&cp32_update_entries[i]);
+    if(r<0) {
+      char number[4];unsigned error=-r;
+      number[0]='0'+error/10;number[1]='0'+error%10;number[2]=0;
+      cp32_shell_print(" failed FS=");cp32_shell_print(number);
+      cp32_shell_print("; stopped. Reboot before retry after IO error.\r\n");return;
+    }
+    cp32_shell_print(r==1 ? " unchanged\r\n":" installed\r\n");
+  }
+  cp32_shell_print("Apps update OK\r\n");
+}
+#endif
+CP32_IRAM_EXT static void cp32_shell_chmod(const char *args)
+{
+  char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
+  unsigned mode=0,digits=0,n=0;int r;
+  while(*args==' ' || *args=='\t')args++;
+  while(*args>='0' && *args<='7') {
+    if(digits==4)goto usage;
+    mode=mode*8+(unsigned)(*args++-'0');digits++;
+  }
+  if(!digits || mode>0777 || (*args!=' ' && *args!='\t'))goto usage;
+  while(*args==' ' || *args=='\t')args++;
+  while(*args && *args!=' ' && *args!='\t') {
+    if(n==CP32_MINIX_PATH_MAX)goto usage;name[n++]=*args++;
+  }
+  name[n]=0;if(!n)goto usage;
+  while(*args==' ' || *args=='\t')args++;
+  if(*args)goto usage;
+  r=cp32_minix_abspath(cp32_shell_cwd,name,path);
+  if(!r)r=cp32_minix_chmod(cp32_shell_disk_read,cp32_shell_disk_write,
+                          cp32_root_capacity(),path,mode);
+  if(r<0) {
+    cp32_shell_print("Chmod failed: ");cp32_shell_print_u32((uint32_t)-r);
+    if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; inspect after reboot)");
+  } else cp32_shell_print("Mode updated");
+  cp32_shell_print("\r\n");return;
+usage:
+  cp32_shell_print("Usage: chmod octal-mode path (000-777)\r\n");
+}
+CP32_IRAM_EXT static void cp32_shell_rename(const char *args)
+{
+  char name[CP32_MINIX_PATH_MAX+1],paths[2][CP32_MINIX_PATH_MAX+1];
+  unsigned k,n,start;int r;
+  for(k=0;k<2;k++) {
+    n=start=0;
+    while(*args==' ' || *args=='\t')args++;
+    while(*args && *args!=' ' && *args!='\t') {
+      if(n==CP32_MINIX_PATH_MAX)goto usage;
+      if(*args=='/')start=n+1;name[n++]=*args++;
+    }
+    name[n]=0;
+    if(n==start || (n-start==1 && name[start]=='.') ||
+       (n-start==2 && name[start]=='.' && name[start+1]=='.'))goto usage;
+    r=cp32_minix_abspath(cp32_shell_cwd,name,paths[k]);if(r)goto failure;
+  }
+  while(*args==' ' || *args=='\t')args++;
+  if(*args)goto usage;
+  r=cp32_minix_rename(cp32_shell_disk_read,cp32_shell_disk_write,
+                      cp32_root_capacity(),paths[0],paths[1]);
+failure:
+  if(r<0) {
+    cp32_shell_print("Rename failed: ");cp32_shell_print_u32((uint32_t)-r);
+    if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; inspect both names after reboot)");
+  } else {cp32_shell_print("Rename OK");}
+  cp32_shell_print("\r\n");return;
+usage:
+  cp32_shell_print("Usage: mv oldpath newpath (regular file; no replacement)\r\n");
+}
+CP32_IRAM_EXT static void cp32_shell_copy(const char *args)
+{
+  char name[CP32_MINIX_PATH_MAX+1],paths[2][CP32_MINIX_PATH_MAX+1];
+  unsigned k,n,start;int r;
+  for(k=0;k<2;k++) {
+    n=start=0;
+    while(*args==' ' || *args=='\t')args++;
+    while(*args && *args!=' ' && *args!='\t') {
+      if(n==CP32_MINIX_PATH_MAX)goto usage;
+      if(*args=='/')start=n+1;name[n++]=*args++;
+    }
+    name[n]=0;
+    if(n==start || (n-start==1 && name[start]=='.') ||
+       (n-start==2 && name[start]=='.' && name[start+1]=='.'))goto usage;
+    r=cp32_minix_abspath(cp32_shell_cwd,name,paths[k]);if(r)goto failure;
+  }
+  while(*args==' ' || *args=='\t')args++;
+  if(*args)goto usage;
+  r=cp32_minix_copy(cp32_shell_disk_read,cp32_shell_disk_write,
+                      cp32_root_capacity(),paths[0],paths[1]);
+failure:
+  if(r<0) {
+    cp32_shell_print("Copy failed: ");cp32_shell_print_u32((uint32_t)-r);
+    if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; destination may be partial; inspect after reboot)");
+  } else {cp32_shell_print("Copy OK");}
+  cp32_shell_print("\r\n");return;
+usage:
+  cp32_shell_print("Usage: cp source destination (new regular file)\r\n");
+}
+CP32_IRAM_EXT static void cp32_shell_mkdir(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned n=0,start=0;int r;
@@ -107,43 +218,79 @@ CP32_IRAM_EXT static void cp32_shell_unlink(const char *args)
   if(*args || n==start || (n-start==1 && name[start]=='.') ||
      (n-start==2 && name[start]=='.' && name[start+1]=='.'))goto usage;
   r=cp32_minix_abspath(cp32_shell_cwd,name,path);
-  if(!r)r=cp32_minix_unlink(cp32_shell_disk_read,cp32_shell_disk_write,
+  if(!r)r=cp32_minix_mkdir(cp32_shell_disk_read,cp32_shell_disk_write,
                            cp32_root_capacity(),path);
   if(r<0) {
-    cp32_shell_print("Unlink failed: ");cp32_shell_print_u32((uint32_t)-r);
+    cp32_shell_print("Mkdir failed: ");cp32_shell_print_u32((uint32_t)-r);
+    if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; inspect after reboot)");
+  } else {cp32_shell_print("Created directory ");cp32_shell_print(path);}
+  cp32_shell_print("\r\n");return;
+usage:
+  cp32_shell_print("Usage: mkdir path (parent must exist)\r\n");
+}
+CP32_IRAM_EXT static void cp32_shell_remove(const char *args,int directory)
+{
+  char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
+  unsigned n=0,start=0;int r;
+  while(*args==' ' || *args=='\t')args++;
+  while(*args && *args!=' ' && *args!='\t') {
+    if(n==CP32_MINIX_PATH_MAX)goto usage;
+    if(*args=='/')start=n+1;name[n++]=*args++;
+  }
+  name[n]=0;
+  while(*args==' ' || *args=='\t')args++;
+  if(*args || n==start || (n-start==1 && name[start]=='.') ||
+     (n-start==2 && name[start]=='.' && name[start+1]=='.'))goto usage;
+  r=cp32_minix_abspath(cp32_shell_cwd,name,path);
+  if(!r)r=directory ?
+    cp32_minix_rmdir(cp32_shell_disk_read,cp32_shell_disk_write,
+                     cp32_root_capacity(),path,cp32_shell_cwd):
+    cp32_minix_unlink(cp32_shell_disk_read,cp32_shell_disk_write,
+                     cp32_root_capacity(),path);
+  if(r<0) {
+    cp32_shell_print(directory ? "Rmdir failed: ":"Unlink failed: ");cp32_shell_print_u32((uint32_t)-r);
     if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; inspect after reboot)");
   } else {cp32_shell_print("Removed ");cp32_shell_print(path);}
   cp32_shell_print("\r\n");return;
 usage:
-  cp32_shell_print("Usage: rm path (regular file; unlink path also accepted)\r\n");
+  cp32_shell_print(directory ? "Usage: rmdir path (empty directory)\r\n":
+    "Usage: rm path (regular file; unlink path also accepted)\r\n");
 }
+CP32_IRAM_EXT static void cp32_shell_unlink(const char *args)
+{ cp32_shell_remove(args,0); }
+CP32_IRAM_EXT static void cp32_shell_rmdir(const char *args)
+{ cp32_shell_remove(args,1); }
 CP32_IRAM_EXT static void cp32_shell_link(const char *args)
 {
-  char source[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1],name[15];
-  unsigned n=0;int r;
+  char source[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1],name[CP32_MINIX_PATH_MAX+1],destination[CP32_MINIX_PATH_MAX+1];
+  unsigned n=0,start=0;int r;
   while(*args==' ' || *args=='\t')args++;
   while(*args && *args!=' ' && *args!='\t') {
     if(n==CP32_MINIX_PATH_MAX)goto usage;source[n++]=*args++;
   }
   source[n]=0;if(!n)goto usage;
   while(*args==' ' || *args=='\t')args++;
-  if(*args!='/')goto usage;args++;n=0;
+  n=0;
   while(*args && *args!=' ' && *args!='\t') {
-    if(n==14 || *args=='/')goto usage;name[n++]=*args++;
+    if(n==CP32_MINIX_PATH_MAX)goto usage;
+    if(*args=='/')start=n+1;name[n++]=*args++;
   }
-  name[n]=0;if(!n)goto usage;
+  name[n]=0;if(n==start || n-start>14 ||
+    (n-start==1 && name[start]=='.') ||
+    (n-start==2 && name[start]=='.' && name[start+1]=='.'))goto usage;
   while(*args==' ' || *args=='\t')args++;
   if(*args)goto usage;
   r=cp32_minix_abspath(cp32_shell_cwd,source,path);
-  if(!r)r=cp32_minix_link_root(cp32_shell_disk_read,cp32_shell_disk_write,
-                              cp32_root_capacity(),path,name);
+  if(!r)r=cp32_minix_abspath(cp32_shell_cwd,name,destination);
+  if(!r)r=cp32_minix_link(cp32_shell_disk_read,cp32_shell_disk_write,
+                              cp32_root_capacity(),path,destination);
   if(r<0) {
     cp32_shell_print("Link failed: ");cp32_shell_print_u32((uint32_t)-r);
     if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; inspect after reboot)");
-  } else {cp32_shell_print("Linked /");cp32_shell_print(name);}
+  } else {cp32_shell_print("Linked ");cp32_shell_print(destination);}
   cp32_shell_print("\r\n");return;
 usage:
-  cp32_shell_print("Usage: link existing /name (root destination, name <=14)\r\n");
+  cp32_shell_print("Usage: link existing newpath (parent must exist)\r\n");
 }
 CP32_IRAM_EXT static void cp32_shell_truncate(const char *args)
 {
@@ -204,29 +351,34 @@ usage:
 }
 CP32_IRAM_EXT static void cp32_shell_create(const char *args)
 {
-  char name[15];unsigned length=0,n;int r;
+  char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
+  unsigned length=0,start=0,n;int r;
   while(*args==' ' || *args=='\t')args++;
-  if(*args++!='/')goto usage;
   while(*args && *args!=' ' && *args!='\t') {
-    if(length==14 || *args=='/')goto usage;
+    if(length==CP32_MINIX_PATH_MAX)goto usage;
+    if(*args=='/')start=length+1;
     name[length++]=*args++;
   }
-  name[length]=0;if(!length || !*args)goto usage;
-  args++;
+  name[length]=0;
+  if(length==start || length-start>14 ||
+     (length-start==1 && name[start]=='.') ||
+     (length-start==2 && name[start]=='.' && name[start+1]=='.'))goto usage;
+  if(*args)args++;
   for(n=0;n<=64 && args[n];n++){}
-  if(!n || n>64)goto usage;
-  r=cp32_minix_create_root(cp32_shell_disk_read,cp32_shell_disk_write,
-                          cp32_root_capacity(),name,args,n);
+  if(n>64)goto usage;
+  r=cp32_minix_abspath(cp32_shell_cwd,name,path);
+  if(!r)r=cp32_minix_create(cp32_shell_disk_read,cp32_shell_disk_write,
+                           cp32_root_capacity(),path,args,n);
   if(r<0) {
     cp32_shell_print("Create failed: ");cp32_shell_print_u32((uint32_t)-r);
     if(r==-CP32_SUPER_IO)cp32_shell_print(" (I/O failure; inspect after reboot)");
   } else {
-    cp32_shell_print("Created /");cp32_shell_print(name);cp32_shell_print(": ");
+    cp32_shell_print("Created ");cp32_shell_print(path);cp32_shell_print(": ");
     cp32_shell_print_u32((uint32_t)r);cp32_shell_print(" bytes");
   }
   cp32_shell_print("\r\n");return;
 usage:
-  cp32_shell_print("Usage: create /name text (root only, name <=14, text 1-64 bytes)\r\n");
+  cp32_shell_print("Usage: create path [text] (name <=14, text 0-64 bytes)\r\n");
 }
 CP32_IRAM_EXT static void cp32_shell_patch(const char *args)
 {
@@ -260,7 +412,7 @@ CP32_IRAM_EXT static void cp32_shell_patch(const char *args)
   }
   return;
 usage:
-  cp32_shell_print("Usage: patch path offset text (1-64 bytes, one sector, within file)\r\n");
+  cp32_shell_print("Usage: patch path offset text (1-64 bytes, within file)\r\n");
 }
 #endif
 
@@ -527,7 +679,7 @@ CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count)
   /* TTY copies into the FS caller's mapped stack, then FS copies into the
    * already validated application buffer while that child remains blocked. */
   cp32_shell_flush();
-  result=cp32_shell_input_fd>=0 ? cp32_fd_read(cp32_shell_input_fd,input,count) :
+  result=cp32_app_state.input ? cp32_fd_read(cp32_app_state.input-1,input,count) :
          cp32_shell_tty_io(DEV_READ,input,count);
   if(result>0 && (unsigned)result<=count) memcpy(buffer,input,result);
   return result;
@@ -535,40 +687,22 @@ CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count)
 
 /* Child fd 3..6 never exposes the shell's executable or redirected input fd.
  * Store backing fd+1 so zero-initialized state is empty. */
-static int cp32_app_fds[CP32_APP_FILE_MAX];
 CP32_IRAM_EXT void cp32_shell_app_files_reset(void)
+{ cp32_fproc_exit(&cp32_app_state); }
+CP32_IRAM_EXT int cp32_shell_app_files_start(unsigned pid)
 {
-  unsigned i;
-  for(i=0;i<CP32_APP_FILE_MAX;i++) if(cp32_app_fds[i]) {
-    cp32_fd_close(cp32_app_fds[i]-1);cp32_app_fds[i]=0;
-  }
+  int r;
+  cp32_shell_state.input=cp32_shell_input_fd+1;
+  r=cp32_fproc_clone(&cp32_app_state,&cp32_shell_state,pid);
+  cp32_shell_state.input=0; /* shell launch owns the original redirect handle */
+  return r;
 }
-CP32_IRAM_EXT static int cp32_app_file_error(int r)
-{
-  switch(-r) {
-    case CP32_FILE_NOT_FOUND:return -2;
-    case CP32_FILE_IS_DIR:return -21;
-    case CP32_FILE_NOT_DIR:return -20;
-    case CP32_FILE_NAME:return -36;
-    case CP32_FILE_BAD_FD:return -9;
-    case CP32_FILE_LIMIT:return -24;
-    default:return -5;
-  }
-}
-/* Internal backing descriptor, independent of the child's four open handles. */
+CP32_IRAM_EXT void cp32_shell_app_files_exec(void)
+{ cp32_fproc_exec(&cp32_app_state); }
+CP32_IRAM_EXT int cp32_shell_app_files_owner(unsigned pid)
+{ return pid && cp32_app_state.pid==pid; }
 CP32_IRAM_EXT int cp32_shell_exec_open(const char *name,unsigned *size)
-{
-  char path[CP32_MINIX_PATH_MAX+1];struct cp32_minix_stat info;
-  int r,fd;
-  if(!*name)return -2;
-  r=cp32_minix_abspath(cp32_shell_cwd,name,path);
-  if(r)return cp32_app_file_error(r);
-  fd=cp32_shell_open_file(path);
-  if(fd<0)return fd==-CP32_FILE_IS_DIR ? -13 : cp32_app_file_error(fd);
-  r=cp32_fd_fstat(fd,&info);
-  if(r || !(info.mode & 0111)) {cp32_fd_close(fd);return r ? -5 : -13;}
-  *size=info.size;return fd;
-}
+{ return cp32_fproc_exec_open(&cp32_app_state,cp32_shell_disk_read,cp32_root_capacity(),name,size); }
 CP32_IRAM_EXT void cp32_shell_exec_close(int fd) {cp32_fd_close(fd);}
 
 /* Both records are nine 32-bit unsigned fields in the same declared order. */
@@ -576,62 +710,15 @@ typedef char cp32_stat_layout_check[(sizeof(struct cp32_app_stat)==
                                     sizeof(struct cp32_minix_stat)) ? 1 : -1];
 CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned arg)
 {
-  int r,slot;
-  unsigned position;
-  if(op==CP32_APP_STAT) {
-    char path[CP32_MINIX_PATH_MAX+1];
-    struct cp32_minix_stat info;
-    if(!*(char *)buffer)return -2;
-    r=cp32_minix_abspath(cp32_shell_cwd,buffer,path);
-    if(!r)r=cp32_minix_stat(cp32_shell_disk_read,cp32_root_capacity(),path,&info);
-    if(!r)memcpy((char *)buffer+256,&info,sizeof(info));
-    return r ? cp32_app_file_error(r) : 0;
-  }
-  if(op==CP32_APP_OPEN || op==CP32_APP_OPENDIR) {
-    char path[CP32_MINIX_PATH_MAX+1];
-    struct cp32_minix_stat info;
-    if(!*(char *)buffer)return -2;
-    for(slot=0;slot<CP32_APP_FILE_MAX;slot++)if(!cp32_app_fds[slot])break;
-    if(slot==CP32_APP_FILE_MAX)return -24;
-    r=cp32_minix_abspath(cp32_shell_cwd,buffer,path);
-    if(r)return cp32_app_file_error(r);
-    r=op==CP32_APP_OPENDIR ? cp32_fd_open(cp32_shell_disk_read,cp32_root_capacity(),path) :
-                           cp32_shell_open_file(path);
-    if(r<0)return cp32_app_file_error(r);
-    fd=r;r=cp32_fd_fstat(fd,&info);
-    if(!r && op==CP32_APP_OPENDIR && (info.mode & 0170000)!=0040000) {
-      cp32_fd_close(fd);return -20;
-    }
-    if(r || !(info.mode & 0444)) {
-      cp32_fd_close(fd);return r ? cp32_app_file_error(r) : -13;
-    }
-    cp32_app_fds[slot]=fd+1;return slot+3;
-  }
-  if(fd<3 || fd>=3+CP32_APP_FILE_MAX || !cp32_app_fds[fd-3])return -9;
-  slot=fd-3;fd=cp32_app_fds[slot]-1;
-  if(op==CP32_APP_FSTAT) {
-    struct cp32_minix_stat info;
-    r=cp32_fd_fstat(fd,&info);
-    if(!r)memcpy(buffer,&info,sizeof(info));
-  } else if(op==CP32_APP_READDIR) {
-    struct cp32_app_dirent entry;
-    memset(&entry,0,sizeof(entry));
-    r=cp32_fd_readdir(fd,&entry.inode,entry.name);
-    if(r==1)memcpy(buffer,&entry,sizeof(entry));
-  } else if(op==CP32_APP_CLOSE) {
-    r=cp32_fd_close(fd);
-    if(!r)cp32_app_fds[slot]=0;
-  } else if(op==CP32_APP_READ) {
-    char data[64];
-    if(arg>sizeof(data))return -22;
-    r=cp32_fd_read(fd,data,arg);
-    if(r>0)memcpy(buffer,data,r);
-  } else if(op>=CP32_APP_SEEK_SET && op<=CP32_APP_SEEK_END) {
-    r=cp32_fd_seek(fd,(int)arg,op-CP32_APP_SEEK_SET,&position);
-    if(!r)return position;
-    if(r==-CP32_SUPER_INVALID)return -22;
-  } else return -22;
-  return r<0 ? cp32_app_file_error(r) : r;
+#if CP32_ROOT_RAM
+  cp32_disk_writer write=0;
+#else
+  cp32_disk_writer write=cp32_shell_disk_write;
+#endif
+  if(op==CP32_APP_RMDIR)return cp32_fproc_rmdir(&cp32_app_state,&cp32_shell_state,
+      cp32_shell_disk_read,write,cp32_root_capacity(),buffer);
+  return cp32_fproc_file(&cp32_app_state,cp32_shell_disk_read,write,
+                          cp32_root_capacity(),op,fd,buffer,arg);
 }
 
 CP32_IRAM_EXT static void cp32_shell_app_output(const char *buffer,unsigned count)
@@ -1096,6 +1183,25 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
              (line[0]=='c' && line[1]=='m' && line[2]=='p' && line[3]==' ')) {
     cp32_shell_cmp(line[3] ? line+4 : "");
 #if !CP32_ROOT_RAM
+  } else if (strcmp(line,"rmdir")==0 ||
+             (line[0]=='r' && line[1]=='m' && line[2]=='d' && line[3]=='i' &&
+              line[4]=='r' && (line[5]==' ' || line[5]=='\t'))) {
+    cp32_shell_rmdir(line[5] ? line+6 : "");
+  } else if (strcmp(line,"mkdir")==0 ||
+             (line[0]=='m' && line[1]=='k' && line[2]=='d' && line[3]=='i' &&
+              line[4]=='r' && (line[5]==' ' || line[5]=='\t'))) {
+    cp32_shell_mkdir(line[5] ? line+6 : "");
+  } else if (strcmp(line,"chmod")==0 ||
+             (line[0]=='c' && line[1]=='h' && line[2]=='m' && line[3]=='o' &&
+              line[4]=='d' && (line[5]==' ' || line[5]=='\t'))) {
+    cp32_shell_chmod(line[5] ? line+6 : "");
+  } else if (strcmp(line,"mv")==0 ||
+             (line[0]=='m' && line[1]=='v' && (line[2]==' ' || line[2]=='\t'))) {
+    cp32_shell_rename(line[2] ? line+3 : "");
+  } else if (strcmp(line,"rename")==0 ||
+             (line[0]=='r' && line[1]=='e' && line[2]=='n' && line[3]=='a' &&
+              line[4]=='m' && line[5]=='e' && (line[6]==' ' || line[6]=='\t'))) {
+    cp32_shell_rename(line[6] ? line+7 : "");
   } else if (strcmp(line,"rm")==0 ||
              (line[0]=='r' && line[1]=='m' && (line[2]==' ' || line[2]=='\t'))) {
     cp32_shell_unlink(line[2] ? line+3 : "");
@@ -1107,6 +1213,9 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
              (line[0]=='l' && line[1]=='i' && line[2]=='n' && line[3]=='k' &&
               (line[4]==' ' || line[4]=='\t'))) {
     cp32_shell_link(line[4] ? line+5 : "");
+  } else if (!strcmp(line,"cp") ||
+             (line[0]=='c' && line[1]=='p' && (line[2]==' ' || line[2]=='\t'))) {
+    cp32_shell_copy(line[2] ? line+3 : "");
   } else if (strcmp(line,"truncate")==0 ||
              (line[0]=='t' && line[1]=='r' && line[2]=='u' && line[3]=='n' &&
               line[4]=='c' && line[5]=='a' && line[6]=='t' && line[7]=='e' &&
@@ -1127,6 +1236,10 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 #endif
   } else if (strcmp(line, "fsinfo") == 0) {
     cp32_shell_fsinfo();
+#if CP32_UPDATE_APPS
+  } else if (strcmp(line,"apps")==0) {
+    cp32_shell_update_apps();
+#endif
   } else if (strcmp(line, "disk") == 0) {
     int result = cp32_shell_disk_check();
     cp32_shell_print("[DISK IPC V125 result=");

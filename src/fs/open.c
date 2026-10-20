@@ -2,7 +2,7 @@
  * These are read-only helper handles, not the complete MINIX open syscall. */
 #include "fs.h"
 
-CP32_IRAM_EXT int cp32_minix_root_open(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_minix_root_open(cp32_disk_reader read, unsigned capacity,
                                       struct cp32_minix_dir *dir)
 {
   struct cp32_minix_super super;
@@ -10,7 +10,7 @@ CP32_IRAM_EXT int cp32_minix_root_open(cp32_disk_reader read, unsigned capacity,
   return result ? -result : cp32_fs_open_directory(read, &super, 1, dir);
 }
 
-CP32_IRAM_EXT int cp32_minix_dir_open(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_minix_dir_open(cp32_disk_reader read, unsigned capacity,
                                      const char *path, struct cp32_minix_dir *dir)
 {
   struct cp32_minix_super super;
@@ -19,7 +19,7 @@ CP32_IRAM_EXT int cp32_minix_dir_open(cp32_disk_reader read, unsigned capacity,
   return result ? result : cp32_fs_open_directory(read, &super, number, dir);
 }
 
-CP32_IRAM_EXT int cp32_minix_file_open(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_minix_file_open(cp32_disk_reader read, unsigned capacity,
                                       const char *name, struct cp32_minix_file *file)
 {
   struct cp32_minix_super super;
@@ -33,7 +33,7 @@ CP32_IRAM_EXT int cp32_minix_file_open(cp32_disk_reader read, unsigned capacity,
 /* MINIX open.c:do_lseek responsibility, on caller-owned read-only handles.
  * Keep the target's signed 32-bit offset range even on a 64-bit host. Seeking
  * beyond EOF is valid; negative positions and overflow never change state. */
-CP32_IRAM_EXT int cp32_minix_file_seek(struct cp32_minix_file *file,
+CP32_FS_TEXT int cp32_minix_file_seek(struct cp32_minix_file *file,
                                       long offset, int whence)
 {
   unsigned base, position;

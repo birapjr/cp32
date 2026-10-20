@@ -77,8 +77,10 @@ int cp32_exec_stack(unsigned char *b,unsigned cap,uint32_t base,unsigned argc,
  (void)b; assert(cap==512 && base==CP32_APP_TOP-512 && argc==3 && envc==3);
  assert(!strcmp(argv[0],args[0]) && !strcmp(argv[1],"one") && !strcmp(argv[2],"two")); if(stacking) return -1; *sp=CP32_APP_TOP-32;return 0;
 }
-static int resets;
-static void cp32_shell_app_files_reset(void) {resets++;}
+static int resets,fs_pid;
+static int cp32_shell_app_files_start(unsigned pid) {assert(!fs_pid);fs_pid=pid;return 0;}
+static int cp32_shell_app_files_owner(unsigned pid) {return pid==(unsigned)fs_pid;}
+static void cp32_shell_app_files_reset(void) {resets++;fs_pid=0;}
 static int application_replace(struct proc *p,message *m,uint32_t *f,uint32_t *b) {(void)p;(void)m;(void)f;(void)b;return -8;}
 static int application_file_request(message *m) {(void)m;return -22;}
 static int receive(int nr,message *m) {

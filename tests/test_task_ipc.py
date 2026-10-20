@@ -84,6 +84,9 @@ static int cp32_user_frame_contract_valid(const cp32_user_frame_t *f) {
   return f && f->pc && f->sp && !(f->sp&15) && f->a[1]==f->sp && f->a[15];
 }
 '''
+# Exercise the actual frame contract, not a host duplicate that can drift.
+start=PRELUDE.index('static int cp32_user_frame_contract_valid')
+PRELUDE=PRELUDE[:start]+extract_function(ROOT/'src/kernel/irq_frame.h', 'cp32_user_frame_contract_valid')+'\n'
 TESTS = r'''
 static void reset(void) {
   memset(proc,0,sizeof(proc)); memset(rdy_head,0,sizeof(rdy_head)); memset(rdy_tail,0,sizeof(rdy_tail));
@@ -96,7 +99,7 @@ static void reset(void) {
     struct proc *p=proc_addr(active[i]); p->p_flags=0;
     p->p_reg.pc=0x40378000+i*256; p->p_reg.psw=0x110;
     p->p_reg.sp=0x3fcd0000+i*4096; p->p_reg.a[1]=p->p_reg.sp;
-    p->p_reg.a[15]=p->p_reg.sp; p->p_reg.sar=17+i;
+    p->p_reg.a[15]=0; /* optimized call0 code may save zero here */ p->p_reg.sar=17+i;
     p->p_reg.lbeg=123; p->p_reg.lend=456; p->p_reg.lcount=11+i;
   }
   cp32_context_restore_gate=cp32_context_handoff_gate=cp32_blocked_handoff_gate=1;
@@ -110,6 +113,7 @@ static void invoke(struct proc *p,int op,int endpoint,message *m) {
   reg_t oldpc=frame.pc;
   assert(cp32_task_ipc_dispatch(p,&frame,1)==OK);
   assert(p->p_reg.pc==oldpc+3);
+  assert(p->p_reg.a[15]==frame.a[15]);
   assert(p->p_reg.sp==frame.sp && p->p_reg.sar==frame.sar && p->p_reg.lcount==frame.lcount);
   assert(cp32_irq_return_frame_check());
   assert(cp32_ipc_state_check()); assert(cp32_ready_queue_check());
@@ -265,6 +269,14 @@ static void task_queue_fairness(void) {
   }
 }
 int main(void) {
+  cp32_user_frame_t valid={0};valid.pc=0x40374360;valid.sp=0x3fce5000;valid.a[1]=valid.sp;
+  assert(cp32_user_frame_contract_valid(&valid)); /* a15 zero is valid */
+  valid.a[15]=0x12345678;assert(cp32_user_frame_contract_valid(&valid));
+  valid.a[1]++;assert(!cp32_user_frame_contract_valid(&valid));valid.a[1]--;
+  valid.sp++;valid.a[1]++;assert(!cp32_user_frame_contract_valid(&valid));
+  valid.sp--;valid.a[1]--;valid.pc=0;assert(!cp32_user_frame_contract_valid(&valid));
+  assert(!cp32_user_frame_contract_valid(0));
+
   for (int i=0;i<100;i++) { exchange(i&1,TTY_PROC_NR); exchange(i&1,MM_PROC_NR); exchange(i&1,SYSTASK); exchange(i&1,MEM); hardware_receive(i&1); }
   hardware_filtered_receive();
   suspended_tty_read(0); suspended_tty_read(1);

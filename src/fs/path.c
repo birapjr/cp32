@@ -2,7 +2,7 @@
  * Iterative directory traversal; relative paths start at root for now. */
 #include "fs.h"
 
-CP32_IRAM_EXT int cp32_fs_resolve_path(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_fs_resolve_path(cp32_disk_reader read, unsigned capacity,
     const char *path, struct cp32_minix_super *super, unsigned *number)
 {
   struct cp32_minix_dir dir;
@@ -42,7 +42,7 @@ CP32_IRAM_EXT int cp32_fs_resolve_path(cp32_disk_reader read, unsigned capacity,
   return 0;
 }
 
-CP32_IRAM_EXT int cp32_minix_root_next(struct cp32_minix_dir *dir,
+CP32_FS_TEXT int cp32_minix_root_next(struct cp32_minix_dir *dir,
                                       unsigned *inode, char name[15])
 {
   unsigned char raw[16];
@@ -87,7 +87,7 @@ CP32_IRAM_EXT int cp32_minix_root_next(struct cp32_minix_dir *dir,
 
 /* Compose without collapsing dot components: README/.. must still fail
  * during inode traversal. Caller supplies a PATH_MAX+1 byte output buffer. */
-CP32_IRAM_EXT int cp32_minix_abspath(const char *cwd, const char *path, char *out)
+CP32_FS_TEXT int cp32_minix_abspath(const char *cwd, const char *path, char *out)
 {
   char next[CP32_MINIX_PATH_MAX+1];
   unsigned n=0, i=0;

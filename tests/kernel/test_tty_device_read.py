@@ -53,6 +53,9 @@ struct winsize {unsigned short ws_row,ws_col,ws_xpixel,ws_ypixel;};
 enum {OK=0,EFAULT=-14,EINVAL=-22,EIO=-5,EAGAIN=-11,SUSPEND=-998,TASK_REPLY=100,REVIVE=101,TTY=-9};
 typedef struct {int m_source,PROC_NR,COUNT,TTY_FLAGS; char *ADDRESS;} message;
 static volatile int cp32_console_ready;
+static int cursor_calls,cursor_enabled;
+static unsigned get_uptime(void) {return 123;}
+static void cardputer_display_cursor(int active,unsigned ticks) {assert(ticks==123);cursor_calls++;cursor_enabled=!!active;}
 static int notifications,depth,used,replies,types[8],statuses[8],mask;
 static unsigned char events[64];
 static unsigned event_count,event_pos;
@@ -92,6 +95,7 @@ prototypes=prototypes.replace('static int cp32_cardputer_key();', 'static int cp
 tests=r'''
 static tty_t *reset(int count) {
  tty_t *t=tty_table; memset(t,0,sizeof(*t)); tty_init(t);
+ cursor_calls=cursor_enabled=0;
  notifications=depth=used=replies=event_pos=event_count=mask=0;
  allowed=count; memset(destination,0x55,sizeof(destination));
  return t;
@@ -116,10 +120,13 @@ int main(void) {
  assert(t->tty_termios.c_cc[VINTR]==3 && t->tty_termios.c_cc[VERASE]==127);
  cp32_console_ready=0; cp32_tty_poll_tick(); assert(!notifications);
  cp32_console_ready=1; cp32_tty_poll_tick();assert(notifications==1 && t->tty_events);
+ assert(!cursor_calls); /* clock notification alone never performs display I/O */
  read_request(t,64,0); assert(replies==1 && statuses[0]==SUSPEND);
+ assert(cursor_calls && cursor_enabled);
  key('l');key('x');key('\b');key('s');handle_events(t);
  assert(replies==1 && t->tty_incount==2 && !t->tty_eotct);
  key('\n');cp32_tty_poll_tick();handle_events(t);
+ assert(!cursor_enabled);
  assert(replies==2 && types[1]==REVIVE && statuses[1]==3);
  assert(!memcmp(destination+1,"ls\n",3) && destination[4]==0x55);
  assert(!memcmp(output,"lx\b \bs\r\n",8) && used==8 && !depth);
@@ -133,7 +140,7 @@ int main(void) {
  assert(statuses[1]==3 && !memcmp(destination+1,"ok\n",3));
  t=reset(64);read_request(t,64,0);input(t,"\004");
  assert(replies==2 && types[1]==REVIVE && statuses[1]==0);
- t=reset(1);t->tty_termios.c_lflag=0;read_request(t,1,0);key('\b');handle_events(t);
+ t=reset(1);t->tty_termios.c_lflag=0;read_request(t,1,0);assert(!cursor_enabled);key('\b');handle_events(t);
  assert(replies==2 && statuses[1]==1 && destination[1]=='\b');
  t=reset(64);for(int i=0;i<10;i++)key('a');cp32_console_read(t);
  assert(event_pos==8 && t->tty_incount==8);cp32_console_read(t);assert(event_pos==10);

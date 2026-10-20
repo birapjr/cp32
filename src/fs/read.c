@@ -5,7 +5,7 @@
 /* MINIX V2 indirect entries occupy one 1024-byte block, even when a
  * zone spans several blocks. Decode four bytes explicitly for Xtensa and
  * opposite-endian images; never allocate a full block on the task stack. */
-CP32_IRAM_EXT static int cp32_read_indirect(struct cp32_minix_file *file,
+CP32_FS_TEXT static int cp32_read_indirect(struct cp32_minix_file *file,
     unsigned table, unsigned index, unsigned parent, unsigned *zone)
 {
   unsigned char raw[4];
@@ -29,7 +29,7 @@ CP32_IRAM_EXT static int cp32_read_indirect(struct cp32_minix_file *file,
   return 0;
 }
 
-CP32_IRAM_EXT int cp32_fs_read_map(struct cp32_minix_file *file,
+CP32_FS_TEXT int cp32_fs_read_map(struct cp32_minix_file *file,
                                       unsigned index, unsigned *zone)
 {
   unsigned table, excess;
@@ -44,7 +44,7 @@ CP32_IRAM_EXT int cp32_fs_read_map(struct cp32_minix_file *file,
   return cp32_read_indirect(file, table, excess % 256, file->double_indirect, zone);
 }
 
-CP32_IRAM_EXT int cp32_minix_file_read(struct cp32_minix_file *file,
+CP32_FS_TEXT int cp32_minix_file_read(struct cp32_minix_file *file,
                                       char *buffer, unsigned count)
 {
   char bytes[64];
