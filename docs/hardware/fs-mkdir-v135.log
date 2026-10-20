@@ -1,0 +1,431 @@
+=> CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x00104006
+vector word 6: 0x000FE106
+checking call0 stack                    ...
+stack bottom:  0x3FCD4B30
+stack pointer: 0x3FCDCB10
+stack top:     0x3FCDCB30
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+init TASKS                              ...
+systemer irq start                      ...
+[FEATURE FS-MKDIR 135]1
+[KBD probe=1]
+[MM probe alloc=1 release=1 deny=1 zero=1 huge=1 adjacent=1 merge=1 owned=1 clear=1]
+[KBD V122 init=1 stale=0 int=0 status=1 fifo=0]
+[SD V135 transport=spi2 init-hz=400000 read-hz=4000000]
+[ROOT V135 backend=sd result=0 capacity=65536]
+[LCD clear-done]
+[TTY user-ready nr=1 pc=0x4037D678 sp=0x3FCE6B30 flags=0]
+[BOOT SYSTIMER V44 conf=0xC7000000 target=0x00000000 ena=0x00000001 raw=0x00000000]
+[TEST SCHEDULER 2]
+[CORE readyq=1]
+[CORE heldq=1]
+[CORE blockedowner=1]
+[CORE blockedframe=1]
+[CORE runtime=1]
+[CORE maps=1]
+[CORE flags=1]
+[CORE contexts=1]
+[CORE owners=1]
+[CORE ipcstate=1]
+[CORE ipcqueue=1]
+[CORE ipclinks=1]
+[CORE proctab=1]
+[CORE tasks=1]
+[CORE systask=1]
+[TEST FS-MKDIR 135]
+
+STABLE idle-entry                       ...
+[SCHED return-state owner=4294967287 flags=0 selected=4294967287 fs=4294967295]
+[RFE publish target=4294967287 current=4294967287 seq=1]
+[RFE target=4294967287 current=4294967287 seq=1 pc=0x40383068 ps=0x00000100]
+[SYSTIMER V44 n=1 before now=0x00000000:0x09A95240 target=0x00000000:0x09A95122 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=1 after now=0x00000000:0x09A95446 target=0x00000000:0x09AD64F9 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x09AD64F9 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x40383068 sp=0x3FCD9B30 psout=0x00000100 frame=1]
+[IRQ V68 count=1 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=0]
+[IPC count=1 op=2 src=132]
+[IPC V44 op=2 n=1 owner=4294967287 blocked=1 next=0 frame=1]
+[MM_TASK]
+[SCHED fs-selected pc=0x4037D678 sp=0x3FCE6B30 nest=0]
+[TTY user-entry]
+[IPC blocked-resume=1 owner=4294967287 result=0]
+[IPC V44 op=3 n=1 owner=1 blocked=1 next=4294967293 frame=1]
+[CLOCK_TASK]
+[SYSTIMER V44 n=2 before now=0x00000000:0x09AD6616 target=0x00000000:0x09AD64F9 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=2 after now=0x00000000:0x09AD681C target=0x00000000:0x09B178D0 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x09B178D0 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x40372A22 sp=0x3FCD9A20 psout=0x00000100 frame=1]
+[IPC V44 op=1 n=1 owner=4294967287 blocked=0 next=4294967287 frame=1]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[CTX kernel-running ticks=1323 heartbeat=1]
+[TTY READ V46 reply=11 n=1]
+[TTY line=mkdir work]
+[DISK V125 op=3 result=1024 n=1]
+[DISK V125 op=3 result=1024 n=2]
+[DISK V125 op=3 result=1024 n=3]
+[DISK V125 op=3 result=1024 n=4]
+[SCHED fs-publish flags=0 pc=0x40374363 sp=0x3FCE61F0 owner=1]
+[IRQ return-frame=1 owner=1]
+[CTX V44 FS-RETURN n=1 tick=2768 pc=0x40374363 sp=0x3FCE61F0 a0=0x403722E1 a15=0x3FCE61F0 sar=0x00000020 lcount=0x00000000 frame=1]
+[DISK V125 op=3 result=1024 n=5]
+[DISK V125 op=4 result=64 n=6]
+[DISK V125 op=3 result=1024 n=7]
+[DISK V125 op=4 result=2 n=8]
+Created directory /work
+[TTY WRITE V48 bytes=27 ticks=30]
+[CTX V44 FS-RETURN n=2 tick=2906 pc=0x40374363 sp=0x3FCE6A40 a0=0x403722E1 a15=0x3FCE6A40 sar=0x00000016 lcount=0x00000000 frame=1]
+[CTX kernel-running ticks=2934 heartbeat=2]
+[TTY line=cd work]
+[TTY WRITE V48 bytes=2 ticks=2]
+          --flash-mode dio \
+          --flash-freq 40m \
+          --flash-size 8MB \
+          build/cp32.elf
+esptool v5.5.0
+Creating ESP32-S3 image...
+Merged 3 ELF sections.
+Successfully created ESP32-S3 image.
+python3 ../tools/check_image_layout.py build/cp32.elf build/cp32.bin
+IRAM end: 0x40374624
+IRAM boundary: 0x403E0000
+IRAM margin: 440796 bytes
+image layout check: PASS
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,build/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c lib/ansi/memcpy.c -o build/hello.elf
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,build/echo.map apps/hello/start.S apps/echo/echo.c -o build/echo.elf
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,build/cat.map apps/hello/start.S apps/cat/cat.c apps/lib/io.c lib/ansi/memcpy.c -o build/cat.elf
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,build/wc.map apps/hello/start.S apps/wc/wc.c apps/lib/output.c apps/lib/stream.c apps/lib/io.c lib/ansi/memcpy.c -o build/wc.elf
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,build/ls.map apps/hello/start.S apps/ls/ls.c apps/lib/output.c apps/lib/io.c lib/ansi/memcpy.c -o build/ls.elf
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,build/exec.map apps/hello/start.S apps/exec/exec.c apps/lib/io.c lib/ansi/memcpy.c -o build/exec.elf
+python3 ../tools/make_minix_demo.py --image build/minix-demo.img --header build/minix-demo.h --hello build/hello.elf --echo build/echo.elf --cat build/cat.elf --wc build/wc.elf --ls build/ls.elf --exec build/exec.elf
+python3 ../tools/make_sd_image.py build/minix-demo.img build/sdcard.img
+build/sdcard.img: 1114112 bytes, MINIX partition at sector 2048
+esptool --chip esp32s3 --port /dev/cu.usbmodem2101 write-flash 0x0 build/cp32.bin
+esptool v5.5.0
+Connected to ESP32-S3 on /dev/cu.usbmodem2101:
+Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz, Embedded Flash 8MB (GD)
+Crystal frequency:  40MHz
+USB mode:           USB-Serial/JTAG
+MAC:                3c:0f:02:ea:14:64
+
+Stub flasher running.
+
+Configuring flash size...
+Flash will be erased from 0x00000000 to 0x0001bfff...
+Wrote 111968 bytes (58843 compressed) at 0x00000000 in 0.8 seconds (1122.4 kbit/s).
+Hash of data verified.
+
+Hard resetting via RTS pin...
+Erase set to delete.
+Kill set to control-U (^U).
+Interrupt set to control-C (^C).
+rm -rf build
+mkdir -p build
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/context.c -o build/context.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/application.c -o build/application.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/start.c -o build/start.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/hardware_init.c -o build/hardware_init.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/main.c -o build/main.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/cp32-shell.c -o build/cp32-shell.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/misc.c -o build/misc.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/proc.c -o build/proc.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/serial.c -o build/serial.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/wdt.c -o build/wdt.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/klib.c -o build/klib.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/port.c -o build/port.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/clock.c -o build/clock.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/system.c -o build/system.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/tty.c -o build/tty.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/memory.c -o build/memory.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/cardputer.c -o build/cardputer.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/display.c -o build/display.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/sdcard.c -o build/sdcard.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c kernel/rootdisk.c -o build/rootdisk.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/misc.c -o build/fs/misc.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/filedes.c -o build/fs/filedes.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/cache.c -o build/fs/cache.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/stadir.c -o build/fs/stadir.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/super.c -o build/fs/super.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/inode.c -o build/fs/inode.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/path.c -o build/fs/path.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/open.c -o build/fs/open.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/read.c -o build/fs/read.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/write.c -o build/fs/write.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/create.c -o build/fs/create.o
+mkdir -p build/fs
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c fs/utility.c -o build/fs/utility.o
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/main.c -o build/mm/main.o
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/alloc.c -o build/mm/alloc.o
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/exec.c -o build/mm/exec.o
+mkdir -p build/mm
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c mm/image.c -o build/mm/image.o
+mkdir -p build/drivers
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c drivers/sd_spi.c -o build/drivers/sd_spi.o
+mkdir -p build/drivers
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c drivers/spi_fifo.c -o build/drivers/spi_fifo.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/printk.c -o build/printk.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/seekdir.c -o build/seekdir.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/telldir.c -o build/telldir.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/other/errno.c -o build/errno.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/memcpy.c -o build/lib/ansi/memcpy.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/memset.c -o build/lib/ansi/memset.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/strcpy.c -o build/lib/ansi/strcpy.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/strcmp.c -o build/lib/ansi/strcmp.o
+mkdir -p build/lib/ansi
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/ansi/strtol.c -o build/lib/ansi/strtol.o
+mkdir -p build/lib/posix
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/posix/opendir.c -o build/lib/posix/opendir.o
+mkdir -p build/lib/posix
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/posix/readdir.c -o build/lib/posix/readdir.o
+mkdir -p build/lib/posix
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/posix/closedir.c -o build/lib/posix/closedir.o
+mkdir -p build/lib/posix
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel -c lib/posix/rewinddir.c -o build/lib/posix/rewinddir.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -mabi=call0 -c kernel/mpx32.S -o build/mpx32.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -mabi=call0 -mno-text-section-literals -c kernel/vectors.S -o build/vectors.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -mabi=call0 -c kernel/irq.S -o build/irq.o
+xtensa-esp32s3-elf-gcc -ffreestanding -nostdlib -nostartfiles -mabi=call0 -c kernel/klib32.S -o build/klib32.o
+xtensa-esp32s3-elf-gcc -T kernel/esp32s3.ld -Wl,-Map=build/cp32.map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc -Wl,--defsym=__cp32_heap_bytes=196608 build/context.o build/application.o build/start.o build/hardware_init.o build/main.o build/cp32-shell.o build/misc.o build/proc.o build/serial.o build/wdt.o build/klib.o build/port.o build/clock.o build/system.o build/tty.o build/memory.o build/cardputer.o build/display.o build/sdcard.o build/rootdisk.o build/fs/misc.o build/fs/filedes.o build/fs/cache.o build/fs/stadir.o build/fs/super.o build/fs/inode.o build/fs/path.o build/fs/open.o build/fs/read.o build/fs/write.o build/fs/create.o build/fs/utility.o build/mm/main.o build/mm/alloc.o build/mm/exec.o build/mm/image.o build/drivers/sd_spi.o build/drivers/spi_fifo.o build/printk.o build/seekdir.o build/telldir.o build/errno.o build/lib/ansi/memcpy.o build/lib/ansi/memset.o build/lib/ansi/strcpy.o build/lib/ansi/strcmp.o build/lib/ansi/strtol.o build/lib/posix/opendir.o build/lib/posix/readdir.o build/lib/posix/closedir.o build/lib/posix/rewinddir.o build/mpx32.o build/vectors.o build/irq.o build/klib32.o -lgcc -o build/cp32.elf
+esptool --chip esp32s3 elf2image \
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[BOOT V74 console=usb]
+-- WDT register dump --
+TG0_WDTCONFIG0:  0x00000000
+TG1_WDTCONFIG0:  0x00000000
+RTC_WDTCONFIG0:  0x00000000
+RTC_WDTWPROTECT: 0x00000000
+RTC_SWD_CONF:    0xC0000000
+RTC_SWD_WPROTECT:0x00000000
+reset reason:    0x0000F555
+-- raw RTC offsets --
+RTC+0xAC: 0x00000000
+RTC+0xB0: 0x00000000
+RTC+0xB4: 0xC0000000
+RTC+0xB8: 0x00000000
+RTC+0xBC: 0x00000000
+RTC+0xC0: 0x00000000
+-- end dump --
+
+ => CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x00104006
+vector word 6: 0x000FE106
+checking call0 stack                    ...
+stack bottom:  0x3FCD4B30
+stack pointer: 0x3FCDCB10
+stack top:     0x3FCDCB30
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+init TASKS                              ...
+[BOOT V74 console=usb]
+-- WDT register dump --
+TG0_WDTCONFIG0:  0x00000000
+TG1_WDTCONFIG0:  0x00000000
+RTC_WDTCONFIG0:  0x00000000
+RTC_WDTWPROTECT: 0x00000000
+RTC_SWD_CONF:    0xC0000000
+RTC_SWD_WPROTECT:0x00000000
+reset reason:    0x0000F041
+-- raw RTC offsets --
+RTC+0xAC: 0x00000000
+RTC+0xB0: 0x00000000
+RTC+0xB4: 0xC0000000
+RTC+0xB8: 0x00000000
+RTC+0xBC: 0x00000000
+RTC+0xC0: 0x00000000
+-- end dump --
+
+ => CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x00104006
+vector word 6: 0x000FE106
+checking call0 stack                    ...
+stack bottom:  0x3FCD4B30
+stack pointer: 0x3FCDCB10
+stack top:     0x3FCDCB30
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+init TASKS                              ...
+systemer irq start                      ...
+[FEATURE FS-MKDIR 135]1
+[KBD probe=1]
+[MM probe alloc=1 release=1 deny=1 zero=1 huge=1 adjacent=1 merge=1 owned=1 clear=1]
+[KBD V122 init=1 stale=10 int=0 status=1 fifo=0]
+[SD V135 transport=spi2 init-hz=400000 read-hz=4000000]
+[ROOT V135 backend=sd result=0 capacity=65536]
+[LCD clear-done]
+[TTY user-ready nr=1 pc=0x4037D678 sp=0x3FCE6B30 flags=0]
+[BOOT SYSTIMER V44 conf=0xC7000000 target=0x00000000 ena=0x00000001 raw=0x00000000]
+[TEST SCHEDULER 2]
+[CORE readyq=1]
+[CORE heldq=1]
+[CORE blockedowner=1]
+[CORE blockedframe=1]
+[CORE runtime=1]
+[CORE maps=1]
+[CORE flags=1]
+[CORE contexts=1]
+[CORE owners=1]
+[CORE ipcstate=1]
+[CORE ipcqueue=1]
+[CORE ipclinks=1]
+[CORE proctab=1]
+[CORE tasks=1]
+[CORE systask=1]
+[TEST FS-MKDIR 135]
+
+STABLE idle-entry                       ...
+[SCHED return-state owner=4294967287 flags=0 selected=4294967287 fs=4294967295]
+[RFE publish target=4294967287 current=4294967287 seq=1]
+[RFE target=4294967287 current=4294967287 seq=1 pc=0x40383068 ps=0x00000100]
+[SYSTIMER V44 n=1 before now=0x00000000:0x0EF3DD6D target=0x00000000:0x0EF3DC4F conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=1 after now=0x00000000:0x0EF3DF72 target=0x00000000:0x0EF7F026 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x0EF7F026 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x40383068 sp=0x3FCD9B30 psout=0x00000100 frame=1]
+[IRQ V68 count=1 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=0]
+[IPC count=1 op=2 src=132]
+[IPC V44 op=2 n=1 owner=4294967287 blocked=1 next=0 frame=1]
+[MM_TASK]
+[SCHED fs-selected pc=0x4037D678 sp=0x3FCE6B30 nest=0]
+[TTY user-entry]
+[IPC blocked-resume=1 owner=4294967287 result=0]
+[IPC V44 op=3 n=1 owner=1 blocked=1 next=4294967293 frame=1]
+[CLOCK_TASK]
+[SYSTIMER V44 n=2 before now=0x00000000:0x0EF7F143 target=0x00000000:0x0EF7F026 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=2 after now=0x00000000:0x0EF7F349 target=0x00000000:0x0EFC03FC conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x0EFC03FC ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x403727F1 sp=0x3FCD99D0 psout=0x00000100 frame=1]
+[IPC V44 op=1 n=1 owner=4294967287 blocked=0 next=4294967287 frame=1]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[CTX kernel-running ticks=1456 heartbeat=1]
+[TTY READ V46 reply=19 n=1]
+[TTY line=cat /work/sub/note]
+[DISK V125 op=3 result=1024 n=1]
+[DISK V125 op=3 result=1024 n=2]
+[DISK V125 op=3 result=1024 n=3]
+[DISK V125 op=3 result=1024 n=4]
+[DISK V125 op=3 result=1024 n=5]
+[DISK V125 op=3 result=1024 n=6]
+[DISK V125 op=3 result=1024 n=7]
+[DISK V125 op=3 result=1024 n=8]
+hello sd
+[TTY WRITE V48 bytes=12 ticks=11]
+[SCHED fs-publish flags=0 pc=0x40374363 sp=0x3FCE6A40 owner=1]
+[IRQ return-frame=1 owner=1]
+[CTX V44 FS-RETURN n=1 tick=1518 pc=0x40374363 sp=0x3FCE6A40 a0=0x403722E1 a15=0x3FCE6A40 sar=0x0000000F lcount=0x00000000 frame=1]
+[CTX V44 FS-RETURN n=2 tick=1520 pc=0x40374363 sp=0x3FCE6A60 a0=0x403722E1 a15=0x3FCE6A60 sar=0x0000000F lcount=0x00000000 frame=1]

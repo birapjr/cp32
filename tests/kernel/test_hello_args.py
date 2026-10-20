@@ -20,6 +20,7 @@ static int denied,missing,statfail,exitcode;
 static int opens,closes,runs,expected,fail;
 static char printed[128];
 static int cp32_shell_input_fd=-1,redirected;
+static struct {int input;} cp32_app_state;
 static int cp32_fd_read(int fd,char *b,unsigned n){assert(fd==3 && n==64);memcpy(b,"file",4);return 4;}
 static int flushed,input_result=5;
 static void cp32_shell_flush(void) {flushed=1;}
@@ -44,6 +45,7 @@ static int cp32_application_run(int read,void *ctx,uint32_t size,unsigned argc,
  (void)read;(void)out;assert(*(int *)ctx==2 && size==100 && argc==(unsigned)expected);
  assert(!strcmp(argv[0],expected_name));
  if(argc==3) assert(!strcmp(argv[1],"one") && !strcmp(argv[2],"two"));
+ cp32_app_state.input=cp32_shell_input_fd+1;
  if(redirected) {char b[64];assert(cp32_shell_input_fd==3 && cp32_shell_app_input(b,64)==4 && !memcmp(b,"file",4));}
  runs++;*status=exitcode;return fail;
 }

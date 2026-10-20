@@ -730,6 +730,9 @@ tty_t *tp;			/* TTY to check for events. */
 	cp32_trace_tty_read((unsigned)tp->tty_incum);
 	tp->tty_inleft = tp->tty_incum = 0;
   }
+  if(tp==tty_addr(0))
+    cardputer_display_cursor(tp->tty_inleft>0 &&
+      (tp->tty_termios.c_lflag & ECHO), (unsigned)get_uptime());
 }
 
 

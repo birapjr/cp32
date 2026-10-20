@@ -148,9 +148,40 @@ void cardputer_display_init(void){
   x=y=0;ready=1;
   { unsigned row,col; for(row=0;row<12;row++) for(col=0;col<16;col++) textbuf[row][col]=' '; }
 }
+static void glyph_scaled(char c);
+static unsigned cursor_visible,cursor_active,cursor_x,cursor_y,cursor_tick;
+/* MINIX console.c:flush keeps cursor state separate from text. ST7789 has no
+ * text cursor, so restore the painted cell before any layout/output changes. */
+static void display_cursor_hide(int reset){
+  unsigned saved_x=x,saved_y=y;
+  if(cursor_visible && ready && !spi_fault) {
+    x=cursor_x;y=cursor_y;glyph_scaled(painted[y/11][x/15]);
+    x=saved_x;y=saved_y;
+  }
+  cursor_visible=0;
+  if(reset)cursor_active=0;
+}
+void cardputer_display_cursor(int active,unsigned ticks){
+  unsigned col,row;
+  if(!active || !ready || spi_fault || display_batch || display_redraw_pending) {
+    display_cursor_hide(1);return;
+  }
+  if(cursor_active && (unsigned)(ticks-cursor_tick)<30)return;
+  cursor_tick=ticks;
+  if(cursor_active && cursor_visible) {display_cursor_hide(0);return;}
+  cursor_active=cursor_visible=1;
+  /* Pending wrap stays on the final cell, like a terminal's wrap latch.
+   * Do not consume the newline or force a scroll just to paint a cursor. */
+  cursor_x=x<240 ? x:225;cursor_y=y;
+  win(cursor_x,cursor_y,cursor_x+14,cursor_y+9);out(DC,1);out(CS,0);
+  for(row=0;row<10;row++)for(col=0;col<15;col++)
+    px(col>=2 && col<12 ? 0xFFFF:0x0000);
+  out(CS,1);
+}
 void cardputer_display_clear(void){
   unsigned n,row,col;
   if(!ready||spi_fault)return;
+  display_cursor_hide(1);
   win(0,0,239,134);
   out(DC,1); out(CS,0);
   for(n=0;n<240u*135u;n++) px(0x0000);
@@ -164,6 +195,7 @@ static void glyph_scaled(char c);
  * echo-newline scrolling belongs to the next batch, so begin must retain it.
  * At outer commit, paint each changed cell once at its final screen position. */
 void cardputer_display_begin_batch(void){
+  if(!display_batch)display_cursor_hide(1);
   display_batch++;
 }
 void cardputer_display_end_batch(void){
@@ -255,6 +287,7 @@ void cardputer_display_putc(char c){
  * whole scroll just before the command response. The next write/echo commits
  * that scroll together with its own layout; no batch is held across IPC. */
 void cardputer_display_defer_newline(void){
+  display_cursor_hide(1);
   cardputer_display_layout_char('\n');
 }
 void cardputer_display_write(const char *s){

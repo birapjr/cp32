@@ -1,117 +1,109 @@
-# CP32 MINIX 2.0.0 port status
+# CP32 MINIX port status
 
-Review date: 2026-09-28. Snapshot: working tree through **HELLO-ARGV 89**, including uncommitted work. Reference: local `minix-2.0.0`. Review performed using the `review-minix-port` skill. No source, plan or issues changes were made.
+> Image146 update: image145 hardware confirms writable application tests.
+> Per-process FS records/lifecycle and ABI10 are now implemented; image146
+> hardware validation is pending. The detailed review below remains the
+> historical image142 baseline; see README for current scope and limits.
+
+> Implementation update, image143: writable application descriptors are now
+> implemented and host-tested (ABI v9). See README for scope and hardware
+> acceptance. The review below records the image142 baseline; its first
+> recommended milestone has been implemented, with hardware validation pending.
+
+
+Review date: 2026-10-13. Baseline: working tree through **FS-EMPTY 142**, including uncommitted changes. Reference: `minix-2.0.0/src`. Review performed using the review-minix-port skill. This review changes only this report; source, plan and issues are unchanged.
 
 ## Summary
 
-**Estimated overall functional completion: approximately 35% (judgment range 30–40%).** The narrower kernel/platform foundation is approximately **62% (roughly 60–65%)**. Neither is a measured percentage of source lines, an official MINIX metric, a reliability score, or a prediction of remaining development time.
+CP32 has an operational bare-metal kernel foundation and a useful, persistent **subset of the MINIX V2 filesystem**. It is not yet a complete MINIX filesystem service or general multi-process Unix environment. The largest gap is **writable application descriptors and per-process FS state**, not another shell command.
 
-CP32 has crossed a significant boundary: it boots on Cardputer, schedules tasks, exchanges real blocking IPC, reads a MINIX V2 filesystem, and loads a separate Xtensa executable that prints, receives arguments, exits and returns to the shell. It is still a trusted, single-foreground-application system with a kernel-linked command interpreter. Most of the general MINIX process-management, mutable filesystem, application ABI, libc and user environment remain incomplete or absent.
+The shell can create, copy, append, patch, shrink, link, rename, remove and inspect files on SD. Applications have read-only file/directory handles and a trusted callback/IPC ABI. Those are different levels of completeness: a shell command calling a helper does not implement the corresponding MINIX system call for arbitrary processes.
 
-The latest user-supplied image-89 capture proves both `hello` and `hello um dois` execute, print the expected argument strings, report `Hello exit=0`, and permit another shell interaction. This supersedes the image-89 hardware-pending note at the end of `issues.md`; that file is intentionally unchanged during this review. The capture does not prove maximum-argument behavior, fault containment, concurrency or long-duration stability.
+The latest supplied image142 log confirms `create e` produces size0/links1, `append e hi` changes size to2, `cat e` returns hi, and unlink removes it. There is one boot in this capture: persistence across reboot and allocation bitmap contents are not directly demonstrated by it. Source and host tests cover zero-data-zone allocation. Image141's retained log confirms repeated cat and cleanup without recurrence of the image140 exception, but not exhaustive context stress.
 
-### Scoring method and scope
-
-The denominator is a representative MINIX 2 operating-system environment adapted to Cardputer: kernel mechanisms, servers, filesystem, devices, runtime, utilities and networking. PC-specific implementations are excluded, but their portable responsibilities remain. Weights below are reviewer choices, not a canonical feature inventory. Partial credit requires substantive source implementation; the report states separately which paths have hardware evidence. Full credit requires substantially matching the category's applicable behavior, not just a matching filename or symbol. Dependencies overlap conceptually, so this estimate must not be interpreted as an independent statistical measurement.
-
-| Category | Weight in whole system | Estimated category completion | Weighted points | Basis |
-| --- | ---: | ---: | ---: | --- |
-| Platform startup, image and memory layout | 5 | 90% | 4.50 | Running bare-metal image, vectors, SRAM layout, reset/console startup; remaining hardening |
-| Context switching, scheduling and IPC | 15 | 75% | 11.25 | Real blocked exchanges and application contexts; broader stress/exception validation incomplete |
-| Clock, system services and signal infrastructure | 10 | 45% | 4.50 | Active clock/SYS loops, timer and queries; legacy lifecycle/signal handlers incomplete |
-| MM and general process lifecycle | 15 | 20% | 3.00 | Owner-tagged allocation and single fixed-slot executable launch; no general fork/exec/wait server |
-| Filesystem services | 20 | 25% | 5.00 | Substantial read-only V2 subset; no mutable/per-process FS service |
-| Device I/O and terminal services | 10 | 45% | 4.50 | Cardputer console, TTY IPC and RAM block device; missing persistence/general device coverage |
-| Application ABI and C library | 10 | 10% | 1.00 | Small freestanding library, call0 startup and trusted write/exit callbacks |
-| User shell, utilities and system environment | 10 | 10% | 1.00 | Kernel-linked command subset and separate hello; no full user shell/init/login/tool suite |
-| Networking | 5 | 0% | 0.00 | No corresponding CP32 protocol stack or NIC path |
-| **Total** | **100** | | **34.75 ≈ 35%** | |
-
-The kernel/platform number uses only startup, scheduling/IPC, clock/SYS and devices: 24.75 points out of 40 = 61.875%. It excludes MM/FS servers and the user environment and therefore must not be reported as whole-MINIX completion. Excluding networking from the whole-system scope gives about 36.6%, not a dramatic change. Different reasonable category weights explain the 30–40% judgment range. No line-count or file-count fraction was used.
+No percentage is assigned: file counts and historical estimates obscure the difference between a working subset and complete syscall semantics. Previous build/test evidence is recorded in `plan.md` and `issues.md` (44 host scripts and SPI2/GPIO/RAM builds); no new build was needed or run for this documentation-only review.
 
 ## Implemented
 
-These are implemented **bounded features**, not assertions that their entire MINIX subsystem is complete.
+These are implemented within the stated CP32 scope, not claims of full subsystem equivalence.
 
-- **Bare-metal startup:** `src/kernel/mpx32.S`, `start.c`, `vectors.S`, `hardware_init.c`, `esp32s3.ld`: initialized image, BSS clearing, stack/vector setup, call0 execution, watchdog setup and SRAM reservations. User image-89 sentinels, alignment and CORE checks pass. MINIX reference responsibilities are in `kernel/start.c`, `main.c`, `mpx386.s`.
-- **Production IPC path:** `src/kernel/port.c` `_send/_receive/_sendrec`, `proc.c` `sys_call/mini_send/mini_rec`, and exception assembly implement actual task suspension and reply resumption. This is no longer the old cooperative stub. `issues.md` image 33 records the first real TTY exchange; later CLOCK/MM/SYS/TTY/MEM and application captures corroborate use.
-- **SYSTIMER-driven execution:** `src/kernel/clock.c` `systimer_irq_start/cp32_timer_irq_dispatch/clock_task` implements the CP32 timer replacement. Repeated IRQ/CLOCK progress is hardware evidenced; MINIX's 8253 implementation is not required.
-- **Interactive device-backed console:** `tty.c` `scr_init` installs `cp32_console_read/write/echo`; Cardputer keyboard/LCD and USB diagnostics work. The earlier claim that `scr_init` installs no-op handlers is obsolete. Images 44–48, 74 and subsequent captures cover normal I/O and console bring-up.
-- **Read-only V2 filesystem subset:** `src/fs/super.c`, `inode.c`, `path.c`, `read.c`, `stadir.c`, `filedes.c`, `cache.c`: pathname resolution, directories, regular-file reads including indirect/double-indirect and sparse regular data, stat/fstat, seek, bounded descriptors, dup/dup2 and selected fcntl operations. `src/lib/posix/dirent.h` and related files supply caller-owned directory streams. These are CP32 helper interfaces, not full POSIX filesystem syscalls.
-- **Owner-tagged heap service:** `src/mm/alloc.c` `cp32_mem_alloc/free/owned` and `main.c` allocation/release IPC. Repeated MM round trips and host allocation/coalescing checks exist.
-- **First separate executable:** `src/mm/image.c` validates/stages Xtensa ELF, `exec.c` builds the argument stack; `src/kernel/application.c` launches a dedicated slot and handles child output/exit through FS IPC; `src/apps/hello/start.S` and `hello.c` are separately linked. Images 87 and 89 demonstrate repeat launch and argument passing. These deserve application-execution credit even though the full MM `execve` syscall is absent.
+- **Bare-metal platform and IPC:** `src/kernel/mpx32.S`, `vectors.S`, `irq.S`, `proc.c` implement startup, saved Xtensa contexts, task queues and blocking SEND/RECEIVE/BOTH. `clock.c` supplies SYSTIMER ticks; `cardputer.c`, `tty.c`, `display.c` supply keyboard, canonical input, console output and blinking cursor. Logs show live scheduling during filesystem I/O.
+- **SD block access:** `src/drivers/sd_spi.c`, `spi_fifo.c`, `src/kernel/sdcard.c`, `rootdisk.c` implement SD SPI access, volume selection, bounded reads and synchronous sector write/readback verification. Root storage is not copied wholesale into SRAM. GPIO transport and RAM recovery are separate builds.
+- **V2 decoding and reads:** `src/fs/super.c:cp32_minix_super_read`, `inode.c`, `path.c`, `read.c:cp32_fs_read_map` decode either byte order, validate metadata, traverse paths and read direct/single-/double-indirect regular-file mappings, including sparse zeros. `cache.c` caches four clean 1KiB blocks.
+- **Metadata and read handles:** `stadir.c` implements path stat, descriptor stat and cwd resolution. `filedes.c` implements bounded read handles, shared offsets, close, seek, directory iteration and selected fcntl operations; `misc.c` supplies dup/dup2. Directory-stream wrappers exist in `src/lib/posix` and `src/lib/other`.
+- **Bounded mutations:** `src/fs/create.c` implements create, zero-zone empty create, append, shrink/reclaim, hard link, unlink, mkdir/rmdir, regular-file rename, chmod and independent copy. `write.c:cp32_minix_patch` overwrites existing non-executable data across sector boundaries. Details and limits below.
+- **Trusted application lifecycle:** `src/kernel/application.c`, `src/mm/image.c`, `exec.c`, `src/kernel/context.c` implement ELF loading, argv/environment setup, one foreground app, normal exit cleanup and staged image replacement retaining PID/open files. App programs and runtime exist under `src/apps`; the repository guide's statement that there are no applications is obsolete.
 
-## Partially implemented
+## Partially Implemented
 
-| Subsystem and CP32 evidence | MINIX reference and original behavior | Current boundary, architectural considerations and remaining work |
-| --- | --- | --- |
-| Contexts/scheduler: `kernel/proc.c` `sched/pick_proc/mini_send/mini_rec`; `proc.h`; `irq.S`, `vectors.S` | `kernel/proc.c`, `mpx386.s`: scheduling, IPC, interrupts and complete saved context | Working integer call0 contexts including SAR and loop registers, three queue classes and real application handoff. Xtensa frame layout replaces x86 registers/segments. Need concurrent application fairness, register-pressure stress, nested/fatal exception policy and any extension state required by the supported app compiler options. Do not infer arbitrary CPU-feature support from hello. |
-| Clock/SYS: `kernel/clock.c`, `system.c` `sys_task/do_times/do_getsp` | `kernel/clock.c`, `system.c`: time, alarms, system-task process/map/copy/signal services | Active loops and read-only queries have evidence. Alarm/signal delivery, broad SYS operations and accounting need integration/validation. `clock_stop` is implemented, not missing. Separate legacy syscall handlers from the working application launcher. |
-| MM: `mm/main.c` `cp32_mm_handle_request`, `alloc.c`; `kernel/application.c` | `mm/main.c`, `table.c`, `alloc.c`, `forkexit.c`, `exec.c`, `mproc.h` | MM dispatcher only exposes allocate/release. Execution is currently coordinated by the FS shell and kernel helper with one fixed slot. Needs process table/parent relations, general exec transaction, fork, wait variants, brk and cleanup. Fixed SRAM/call0 constraints are legitimate adaptations, not reasons to omit portable process semantics. |
-| ELF/runtime: `mm/image.c` `cp32_image_read/load`, `mm/exec.c` `cp32_exec_stack`, `apps/hello/*` | `mm/exec.c` `read_header/load_seg/patch_ptr`, `lib/i386/rts/crtso.s` | Fixed RX/RW regions, bounded argument staging and trusted callbacks work. Xtensa ELF replaces x86 a.out appropriately. No path-selected general execution, application environment, stable syscall libc, multiple simultaneous image placements or fault isolation. Current shell always opens `/boot/hello`; file mode metadata is not a credential-enforced exec permission model. |
-| FS: `fs/filedes.c`, `path.c`, `read.c`, `cache.c`, `stadir.c` | `fs/main.c`, `table.c`, `fproc.h`, `filedes.c`, `read.c`, `write.c`, `mount.c` | Eight-entry single-client descriptors, clean four-block cache and read-only V2 operations. No general FS receive/dispatch server, per-process descriptors/cwd/credentials, dirty buffers, writes or mount lifecycle. RAM-backed disk is valid for bring-up; the same logical FS services are still needed. |
-| Terminal/device: `kernel/tty.c`, `cardputer.c`, `display.c`, `serial.c`, `memory.c`, `ramdisk.c` | `kernel/tty.c`, `console.c`, `keyboard.c`, `rs232.c`, `pty.c`, `memory.c`, `driver.c` | Cardputer replaces PC keyboard/display and USB diagnostic transport replaces the development serial console. Termios/TTY device paths exist; complete terminal modes, cancellation, signals, PTYs and application read/ioctl ABI remain incomplete or insufficiently evidenced. RAM writes do not imply filesystem write support. |
-| Library/commands: `lib/ansi/*`, `lib/posix/*`, `kernel/cp32-shell.c` | `lib/ansi`, `lib/posix`, `lib/stdio`; `commands/sh`, `commands/ash`, `commands/simple` | Tested bounded helpers, directory streams and kernel-linked ls/cat/tail/head/wc/cmp/stat/cd. No comprehensive stdio, malloc/user heap API, POSIX syscall wrappers, general user shell, pipelines, redirection or shell scripts. Kernel builtins are useful partial functional credit, not ports of independently executable MINIX commands. |
+| Area | CP32 evidence | MINIX reference and original behavior | Remaining work / CP32 considerations |
+|---|---|---|---|
+| FS service and application ABI | `src/kernel/cp32-shell.c:cp32_shell_app_file`, `src/apps/hello/abi.h`, `src/fs/filedes.c` | `fs/main.c`, `table.c`, `fproc.h`, `filedes.c`: per-process requests, descriptors, cwd/root, credentials and shared open descriptions | CP32's eight backend slots and four foreground-app handles are bounded global tables. Implement independent clients, descriptor ownership/lifecycle and the missing request operations. Static limits are acceptable on SRAM; global state is not a substitute for per-process semantics. |
+| Writable open/read/write | `src/fs/filedes.c:cp32_fd_open`, `write.c`, `create.c`; app ABI has OPEN/READ/CLOSE/SEEK but no file WRITE | `fs/open.c:common_open`, `read.c:read_write/rw_chunk`, `write.c`: access modes, creation/truncation, positioned writes and growth | Add O_WRONLY/O_RDWR/O_CREAT/O_EXCL/O_TRUNC/O_APPEND, write-at-offset, offset updates, partial counts and allocation on writes beyond EOF. Console `write` is not file write. Preserve existing metadata-before/after-data ordering and bounded buffers. |
+| File growth/reclamation | `create.c:cp32_minix_append`, `cp32_minix_truncate`, `snapshot_zones`; `read.c` | `fs/write.c:new_block`, `read.c:read_map`, `link.c:truncate`: full supported map allocation/reclamation | Growth/shrink use one-block zones and direct/single-indirect mappings, up to263KiB; append is at most64 bytes per call. Reads can reach double-indirect data, but growth/reclamation are not equivalent. Patch cannot allocate holes or extend EOF. Generalize mapping mutations and coherent open-file size/map state. |
+| Directory operations | `create.c:mutation_location`, `create_node`, `remove_node` | `fs/path.c:search_dir`, `open.c:do_mkdir`, `link.c:do_unlink`: searchable, growing directories | Mutation parents must fit one1024-byte block (64 entries including dot names). Add directory growth/allocation beyond this block, corresponding reclamation and boundary tests. Longer reads do not remove the mutation limit. |
+| Rename | `create.c:cp32_minix_rename` | `fs/link.c:do_rename`: directory movement, replacement checks and ancestry rules | CP32 accepts regular files only; existing different destinations are refused. Add directory rename, dot-dot/parent link changes, cycle prevention and replacement semantics, with failure ordering. Current same-inode no-op is implemented. |
+| Unlink and open inodes | `create.c:remove_node`, `filedes.c:cp32_fd_close` | `fs/link.c:unlink_file`, `inode.c:put_inode`: unlink a name while an open file survives until last close | CP32 rejects open target inodes. Add inode lifetime/reference management and deferred last-close reclamation before concurrent writers. Preserve detached-before-reuse safety. |
+| Mode/identity/time | `create.c:cp32_minix_chmod`, `stadir.c:stat_inode`; zero uid/gid/time initialization | `fs/protect.c:forbidden/do_chmod/do_chown/do_umask`, `time.c`, inode timestamp updates | Mode metadata exists and execute bits gate loading, but read/write/search permission enforcement, per-process identities, umask, ownership changes and automatic timestamps are absent. Clock time support exists in `kernel/clock.c`; connecting filesystem time does not inherently require an RTC. |
+| Cache and durability | `cache.c:cp32_cache_read`, `rootdisk.c:cp32_root_write`, `create.c:store` | `fs/cache.c`, `misc.c:do_sync`, inode dirty flushing | Four clean blocks with mutation invalidation; synchronous verified writes latch failures. Partial operations can leave reservations, extra links or partial copies. Define sync/unmount contracts and recovery. A dirty write-back cache is optional for correctness, not a mandatory first step. Verification is not power-loss atomicity. |
+| Process lifecycle and FS integration | `kernel/application.c`, `mm/main.c:cp32_mm_handle_request`, `filedes.c:cp32_fd_fcntl` | `mm/forkexit.c`, `mm/exec.c`, `fs/misc.c:do_fork/do_exec/do_exit` | Real foreground exec exists; general fork/wait, concurrent apps, descriptor inheritance and credential-aware exec do not. CLOEXEC is stored in backend metadata but not exposed/consumed as complete app exec semantics. MM dispatch currently handles allocation/release, not a full POSIX MM service. |
+| User environment | `kernel/cp32-shell.c`, `src/apps/*` | `commands`, libc and MINIX shell/init | Shell is kernel-linked; cp and mutation helpers are not general user utilities/syscalls. No general pipelines, redirection, job/session environment or complete libc. These depend on writable descriptors, pipes and process lifecycle. |
 
 ## Missing
 
-“Missing” here means the full expected service is absent, even where some low-level helper exists.
+Confirmed absent from the current production FS request path, not inferred merely from absent filenames.
 
-| Feature | Reference and expected functionality | Suggested CP32 location | Nature |
-| --- | --- | --- | --- |
-| General process management | `mm/forkexit.c`, `mproc.h`, `table.c`: fork, exit cleanup, parent/wait/zombie semantics; `mm/exec.c`: general execve | `src/mm/` plus shared kernel context installation | Mostly architecture-independent orchestration; context/image mechanics Xtensa-specific |
-| User heap and credentials/session APIs | `mm/break.c`, `getset.c`: brk, PID/UID/GID/session interfaces | `src/mm/` and application syscall library | Mostly portable policy; SRAM limits matter |
-| Complete signals and application fault recovery | `mm/signal.c`, `trace.c`, kernel exception/signal support | `src/mm/`, `src/kernel/system.c`, exception dispatcher | Portable semantics plus Xtensa signal frame/trap adaptation |
-| Per-process FS syscall server | `fs/main.c`, `table.c`, `fproc.h`, `device.c`: process ownership and syscall/device dispatch | `src/fs/` | Mostly portable |
-| Mutable filesystem | `fs/write.c`, `link.c`, `open.c`, `inode.c`, `cache.c`: create/write/truncate, allocation, link/unlink/rename, mkdir/rmdir, dirty cache | `src/fs/` | Portable on-disk behavior; persistence requires a device |
-| Mount, permissions and metadata mutation | `fs/mount.c`, `protect.c`, `time.c`: mount/unmount, access/umask/chmod/chown, timestamps | `src/fs/` | Portable policy |
-| Pipes, file locking and general character-device semantics | `fs/pipe.c`, `lock.c`, `device.c`; `kernel/pty.c` | `src/fs/`, `src/kernel/` | Mostly portable |
-| Persistent storage integration | MINIX block-driver + FS interfaces; CP32 only has RAM storage currently | Appropriate Cardputer SD/flash block driver | Hardware-specific replacement; no need to port PC ATA/floppy literally |
-| Application libc/syscall surface | `lib/posix`, `lib/stdio`, runtime/allocator sources | `src/lib/` and a reusable app runtime | Portable API plus call0/IPC stubs |
-| Full user environment | `commands/sh`, `commands/ash`, `commands/simple`, `src/etc`, `src/test` | Future `src/commands/`, root image/configuration | Portable programs after their APIs exist; much of the utility/test suite absent |
-| Network stack | `src/inet/`, network utilities and drivers | Future `src/inet/` plus suitable NIC driver | Protocols portable; ESP32 network hardware integration distinct from PC NICs |
+| Feature | MINIX reference / expected function | Suggested CP32 location | Nature |
+|---|---|---|---|
+| Pipes and FIFOs | `fs/pipe.c`, `open.c`: buffered IPC streams, endpoint counts, EOF/broken-pipe, blocking/revival | `src/fs/pipe.c`, descriptor and app request layer | Architecture-independent, depends on scheduling/signals |
+| Device-special files | `fs/open.c:do_mknod`, `device.c`, `table.c:dmap`: file descriptors routed to character/block drivers | `src/fs` device routing and namespace | Generic semantics; Cardputer/SD drivers are platform-specific and already partly available |
+| Mount/unmount namespace | `fs/mount.c`, `super.c`: mounted-device table, mount traversal, busy checks and read-only policy | `src/fs` mount/super state | Mostly architecture-independent; CP32 currently selects one root volume at boot |
+| Access/ownership/root APIs | `fs/protect.c`, `stadir.c`: access, chown, umask, chroot with process credentials | `src/fs` protection layer and per-process state | Architecture-independent; no hardware reason to omit semantics |
+| File record locking | `fs/lock.c`, `misc.c:do_fcntl`: F_GETLK/F_SETLK/F_SETLKW and wakeup | `src/fs/filedes.c` plus lock manager | Architecture-independent; CP32 explicitly returns unsupported |
+| Full FS time interface | `fs/time.c`: time/stime/utime and timestamp policy | FS metadata updates plus clock service | Timekeeping source partly platform-specific; timestamp semantics generic |
+| Filesystem checking/repair tools | `commands/simple/fsck.c`, `fsck1.c`, `mkfs.c`: validate/reconcile maps, references and disk format | Start with offline host tooling under `tools`, later target utilities | Architecture-independent; current image generators are not a checker/repair service |
+| General FS fork/exit/signal-revival integration | `fs/misc.c`, `pipe.c`, `main.c`: clone/release client state, unpause and revive blocked calls | Per-process FS service plus MM/app lifecycle | Generic semantics with Xtensa context implementation |
 
-## Not applicable to CP32
+Do not count symlinks, journaling or modern Linux-specific syscalls as required MINIX2 parity without a matching reference implementation. Journaling would be an additional durability design; repair and well-defined crash behavior are practical priorities even without it. Similarly, expanding truncate is a useful product extension, not proof that this historical reference exported modern ftruncate semantics.
 
-Do not subtract points for absent BIOS boot, x86 protected-mode setup/LDT, 8259 PIC, 8253 PIT, VGA text memory, PC keyboard controller, or specific PC floppy/ATA/printer hardware. CP32 must preserve boot/context/interrupt/console/storage responsibilities with its own implementations. No requirement to introduce ESP-IDF as a runtime follows from using Espressif documentation. SMP is not counted as a missing MINIX 2 requirement merely because ESP32-S3 has two cores. Dynamic linking and modern demand-paged virtual memory are not assumed mandatory MINIX 2 milestones in this score.
+## Not Applicable to CP32
 
-Networking is not a blocker for the first hello, but remains applicable to a broad whole-system comparison. Drivers tied to hardware not present are excluded rather than each counted as a missing feature.
+PC BIOS startup, x86 descriptors/segmentation, 8259 PIC, 8253 PIT, floppy/IDE controllers and PC video are not missing CP32 ports. Xtensa reset/vectors/call0, direct ESP32-S3 peripheral registers, SYSTIMER, SPI SD and Cardputer LCD/keyboard replace those responsibilities. The replacement must preserve context, IPC, bounded memory access and filesystem consistency, not reproduce x86 instructions. No ESP-IDF migration is needed.
 
-## Requires hardware validation
+The absence of PC-style process isolation cannot be solved by copying segment-register code. CP32's trusted single-app model is explicit; expanding it needs an ESP32-S3 protection/fault-containment design as well as generic process bookkeeping. Hardware-specific system calls and inherited signal/trace routines require a dedicated audit before broad exposure.
 
-| CP32 function/path | Expected behavior and needed test | Existing evidence and limits |
-| --- | --- | --- |
-| `application.c` `cp32_application_run`; `apps/hello/start.S` | Max args, repeated varied args, nonzero exit, malformed executable/load error followed by good launch | Latest image-89 user capture proves no-arg and two-arg success; image-87 evidence in `issues.md` proves two launches then disk/MM. Error branches mainly host-modeled. |
-| `proc.c`, `irq.S`, `vectors.S` | Multiple runnable applications, long preemption/register stress, nested interrupt cases | CORE checks and long timer/task operation exist; hello does not certify every saved CPU extension or concurrent-user workload. |
-| `clock.c` alarm handlers / `system.c` signal handlers | Alarm triggers, delivery to correct process, handler return with intact registers | CLOCK time/IPC progress evidenced. General signals currently need implementation corrections before hardware acceptance testing. |
-| `tty.c` termios/cancel/control flows | Raw/canonical edge cases, backpressure, cancellation and device faults without deadlock | Normal keyboard, echo, DEV_READ/WRITE and scrolling evidenced; host models cover additional branches. |
-| `system.c` legacy fork/exec/newmap/copy services | Correct fresh/duplicated context, ownership, negative cases and cleanup | SYS_GETSP/TIMES evidence (image 39) does not validate all SYS handlers. Fix known mismatches first. |
-| `display.c` exclamation glyph | Visual confirmation on LCD | Image-88 serial capture includes `!`, but serial cannot establish glyph pixels. No explicit visual confirmation in latest captures. |
+## Requires Hardware Validation
 
-Review validation: reran `make -C src tests`; **30/30 scripts pass**. This includes modeled lifecycle, production filesystem/image loading and host hello behavior. Some tests replace hardware/IPC boundaries; passing them is not equivalent to executing Xtensa assembly. No clean rebuild or flash was necessary for this documentation-only review; previous image-89 build evidence is in `issues.md` and the current hardware capture. Existing application ELF integration tests used the available build artifact.
+| CP32 path | Existing evidence | Remaining evidence needed |
+|---|---|---|
+| `create.c:create_node`, first append | Latest image142 user log: size0 → size2, hi readback, unlink | Restart between empty create and first append; empty copy and full-medium behavior. Host bitmap checks are not direct hardware observations. |
+| `proc.c`, `irq_frame.h` context fix | Image140 IPC SYSCALL halt; image141 repeated cat/cleanup/SD/MM succeeds | Long mixed I/O/context stress under optimized code, exec regression. Exact rejected a15 was not captured in image140. |
+| `write.c:cp32_minix_patch` | Small patches confirmed; image139 capture uses169-byte file | Cross-sector/noncontiguous/indirect boundary overwrite and reboot verification; do not mark covered by a short-file test. |
+| `create.c:cp32_minix_copy` | Image140 Copy OK, independent hi/yo demonstrated before later context halt; image141 reads persisted contents | Larger and empty copies, ENOSPC/read/write errors, repeated executable copies and cleanup. |
+| link/rename/chmod/rmdir | `issues.md` records positive cases and some restart readback; latest logs show nonempty rejection and cleanup | Full negative matrices, cwd/open rejection, count consistency, mode persistence and repeated resource reuse. |
+| `rootdisk.c`, SD driver | SPI2 read/write and persistence evidence across prior logs | Card removal/error behavior, varied cards/full media and controlled power-loss checks; mocked complete-write failures do not model torn sectors. |
+| memory/layout | Latest recorded ELF: runtime end0x3fce6be0, 5152-byte placement margin; heap192KiB | Long-run stack/allocation pressure. Placement headroom is not extra heap capacity and is small for a general FS service. |
 
-## Suspicious or incomplete code
+## Suspicious or Incomplete Code
 
-1. **Confirmed Xtensa mismatch in legacy fork:** `src/kernel/system.c:do_fork` sets `rpc->p_reg.a[1] = 0` with a comment describing the child's fork return value. `proc.h` defines a1 as the stack register; CP32's call0 result is a2. This path must not be treated as a working fork port. It is distinct from the tested `application.c` path.
-2. **Incomplete legacy exec context installation:** `system.c:do_exec` changes `p_reg.sp` and `pc` but does not synchronize a1/a15 or reset the complete special-register/blocked-frame state as `application.c` does. General SYS_EXEC is not validated by hello.
-3. **Signal ABI remains suspicious:** `system.c:do_sendsig` retains generic historical frame logic, uses a2 as a frame-related register and updates SP/PC without matching the fresh call0 context contract. `do_sigreturn` exists, but neither presence nor compilation proves correct Xtensa signal delivery. Full frame audit required.
-4. **Reset service placeholder:** `system.c:system_reset` loops forever. This does not mean all reset is missing: `hardware_init.c:cp32_hardware_reset` implements RTC reset and `serial.c` uses it for the G0/USB workflow. General SYS reboot remains disconnected from that implementation.
-5. **Legacy scheduler entry:** `proc.c:schedule` labels itself a stub and directly manipulates `proc[1]`. The running scheduler is `sched/pick_proc`; verify/remove or replace the legacy entry before using it. Do not characterize all scheduling as stubbed.
-6. **Incomplete device branch:** `tty.c:rs_init` installs `tty_devnop`; `scr_init` correctly installs the Cardputer implementation. PC UART and USB diagnostic behavior must not be conflated.
-7. **Metadata-only fcntl portions:** `fs/filedes.c:cp32_fd_fcntl` stores APPEND/NONBLOCK and close-on-exec flags, but has no writable files/pipes/general exec integration to supply all effects. Record-lock commands explicitly return unsupported.
-8. **Trusted execution boundaries:** `application.c` exposes native kernel callback pointers, accepts only one fixed slot, has no timeout/kill/fault recovery, and can wait indefinitely for a nonexiting child. Its pointer checks constrain serviced writes, not arbitrary CPU memory access. No protection claim is justified.
-9. **Inactive-slot loading only:** `mm/image.c:cp32_image_load` clears and fills the slot and clears partial copies on failure. It is not rollback-preserving replacement of an existing running image; its API documents that restriction.
-10. **Diagnostic/conditional scaffolding:** `proc.c` retains `CP32_ENABLE_*_PROBE` paths and extensive counters; normal builds do not thereby gain the test-only functionality. `port.c` has stale “disabled during bring-up” commentary while main enables runtime gates. Classify active behavior from callers/build flags.
-11. **Documentation drift:** the beginning of `plan.md` claims FS/app/runtime work is absent, and AGENTS describes obsolete frame sizes/placeholder IPC. `apps/hello/abi.h` still says the bridge/lifecycle are unimplemented. Later issues and actual source supersede these claims. This review leaves those files untouched as required.
+- `src/fs/filedes.c` says “no exec exists yet”; real foreground exec exists. Its CLOEXEC warning is still relevant, its historical claim is not.
+- `src/fs/super.c` says “no allocator yet”; allocation now lives in `create.c`. `file.h` remains read-only state, while shell mutations bypass it: coherent mutable inode state must be designed before exposing writable handles.
+- `src/kernel/proc.c` retains a “Minimal scheduler stub” comment despite real scheduling and IPC. `CP32_VERBOSE_HANDOFF_DIAGNOSTICS=0` disables historical probe blocks; these are not missing production scheduling.
+- `src/kernel/system.c:system_reset` loops forever. It is not a completed hardware reset implementation. Inherited signal/trace routines existing in source do not establish a complete, tested Xtensa user signal ABI.
+- `src/mm/main.c` dispatches only allocation/release and rejects other messages. Exec staging elsewhere does not turn this into the full MINIX MM server.
+- `plan.md` opening status still describes image126/127, read-only FS and no writable filesystem; later entries supersede it. Old unchecked milestones coexist with later acceptance entries. Use function bodies and dated evidence rather than the opening summary or old percentage estimates.
+- Global descriptor/cache state and static `create.c` mutation scratch are intentional serialization assumptions. They need ownership/serialization analysis before multiple FS clients; the review does not claim a current concurrent corruption bug.
+- No new confirmed blocker to the currently demonstrated image142 boot/create/append/remove path was identified. Source review does not prove absence of all faults.
 
-## Recommended next steps
+## Recommended Next Steps
 
-1. **Consolidate the working executable path into a reusable process lifecycle.** Preserve hardware-proven launch/write/exit/argv while adding path-based launch and explicit process/image ownership. Unify context installation before enabling the legacy SYS_FORK/EXEC paths; correct a1/a2 and signal-frame mismatches.
-2. **Add safe abnormal completion.** Define app-fault, cancellation and nonzero-exit reporting; ensure parent resumes and queues/descriptors/memory are reclaimed. Test it in host models before hardware. Continue describing execution as trusted until a protection design exists.
-3. **Introduce MM process metadata and public services.** General exec/exit/wait, parent/PID tracking, environment and user heap; decide constrained fork semantics for SRAM. The current `app_busy`/single-slot lifecycle is a useful milestone, not the final MM server.
-4. **Move file ownership into a real FS service.** Per-process descriptors/cwd/credentials and application read/open/close/stat interfaces, then device-node and terminal integration. Keep existing V2 read tests as regressions.
-5. **Implement writable filesystem operations and persistence.** Zone/inode allocation, mutation, dirty cache and failure handling; add an appropriate persistent block device. Do not confuse the already writable RAM device with a writable MINIX FS.
-6. **Grow the reusable application runtime and user environment.** Syscall wrappers, errno discipline, stdio/heap, more independently linked utilities, then a user shell with pipes/redirection and init/session support.
-7. **Broaden hardware stress and optional subsystems.** Concurrent contexts, signals/alarms, terminal modes and resource exhaustion; networking and lower-priority drivers after the core user/server interfaces stabilize.
+1. **Consolidate stability and memory evidence.** Keep the a15 regression; run short repeated I/O/exec tests and account for stack/static growth before adding a service. Do not reduce safety checks or heap/stacks merely to fit features.
+2. **Implement writable application descriptors as the next end-to-end FS milestone.** Start with open flags, create/exclusive open, write/append, offsets, close and error translation through the existing app IPC boundary. Use a small application that creates a file, writes twice, seeks, reads it back and closes it; reboot verifies persistence. Stage broader overwrite/hole behavior explicitly rather than pretending the current patch helper is POSIX write.
+3. **Introduce coherent inode/open-description lifetime and per-process state.** Add independent descriptor tables, cwd/root, access modes, shared offsets, fork/exec/exit hooks and close-on-exec. Then implement unlink-while-open with deferred reclamation.
+4. **Remove structural disk limits.** Grow parent directories beyond one block; unify map allocation/reclamation, including double-indirect mappings and supported zone sizes. Exercise ENOSPC and partial writes at each boundary.
+5. **Complete namespace and protection semantics.** Directory rename/replacement, credentials/permission checks, umask/chown/access and timestamps.
+6. **Add pipes/FIFOs and device descriptors**, enabling redirection and pipelines after process lifecycle support is ready.
+7. **Define sync/mount/unmount and recovery tooling.** Start with an offline checker before claiming robust writable storage; optimize caching only after correctness contracts are clear.
+8. **Broaden compatibility and userland** after those foundations: general syscall ABI, utilities, init/session shell and optional filesystem formats.
 
-The latest hello result is a real application milestone. It substantially improves the execution subset, but does not by itself port the many services those future applications will need.
+A complete CP32 filesystem need not implement every historical disk driver or copy MINIX's cache policy. It does need a documented application API, correct descriptor/inode lifetimes, permission and namespace semantics, supported allocation limits, and tested persistence/error behavior. Today it is a working SD filesystem with a substantial maintenance shell, not yet that complete service.

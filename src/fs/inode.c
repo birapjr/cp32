@@ -2,7 +2,7 @@
  * directory or regular-file inode state. No inode cache or reference table yet. */
 #include "fs.h"
 
-CP32_IRAM_EXT int cp32_fs_open_directory(cp32_disk_reader read,
+CP32_FS_TEXT int cp32_fs_open_directory(cp32_disk_reader read,
     const struct cp32_minix_super *super, unsigned number, struct cp32_minix_dir *dir)
 {
   struct cp32_minix_dir next;
@@ -54,7 +54,7 @@ CP32_IRAM_EXT int cp32_fs_open_directory(cp32_disk_reader read,
   return 0;
 }
 
-CP32_IRAM_EXT int cp32_fs_file_inode(cp32_disk_reader read,
+CP32_FS_TEXT int cp32_fs_file_inode(cp32_disk_reader read,
     const struct cp32_minix_super *super, unsigned number, struct cp32_minix_file *file)
 {
   struct cp32_minix_file next;
@@ -71,7 +71,7 @@ CP32_IRAM_EXT int cp32_fs_file_inode(cp32_disk_reader read,
   mode = cp32_fs_u16(raw, swap) & 0170000;
   if (mode == 0040000) return -CP32_FILE_IS_DIR;
   if (mode != 0100000) return -CP32_SUPER_UNSUPPORTED;
-  if (!cp32_fs_u16(raw + 2, swap)) return -CP32_SUPER_INVALID;
+  if (!cp32_fs_u16(raw + 2, swap) && !cp32_fd_inode_open(read,number)) return -CP32_SUPER_INVALID;
   next.size = cp32_fs_u32(raw + 8, swap);
   next.zone_bytes = 1024U << super->log_zone_size;
   if (next.size > super->max_size) return -CP32_SUPER_INVALID;

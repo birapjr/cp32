@@ -16,6 +16,15 @@ LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sect
 # SD is the default root. RAM remains a separate recovery build.
 STORAGE ?= sd
 SD_SPI ?= hardware
+UPDATE_APPS ?= 0
+ifeq ($(UPDATE_APPS),1)
+ifneq ($(STORAGE),sd)
+$(error updater requires STORAGE=sd)
+endif
+CFLAGS += -DCP32_UPDATE_APPS=1
+else ifneq ($(UPDATE_APPS),0)
+$(error UPDATE_APPS must be 0 or 1)
+endif
 ifeq ($(SD_SPI),soft)
 CFLAGS += -DCP32_SD_SOFT=1
 else ifneq ($(SD_SPI),hardware)
@@ -26,7 +35,7 @@ STORAGE_SRCS = minix-demo.c ramdisk.c
 CFLAGS += -DCP32_ROOT_RAM=1
 else ifeq ($(STORAGE),sd)
 STORAGE_SRCS = sdcard.c rootdisk.c
-LDFLAGS += -Wl,--defsym=__cp32_heap_bytes=196608
+LDFLAGS += -Wl,--defsym=__cp32_heap_bytes=$(if $(filter 1,$(UPDATE_APPS)),163840,196608)
 else
 $(error STORAGE must be sd or ram)
 endif
@@ -35,9 +44,8 @@ endif
 C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
 MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
-FS_SRCS = misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
-# Extended-IRAM sections are KEEP'ed: omit the SD-only allocator explicitly
-# from the tightly packed RAM recovery image rather than relying on GC.
+FS_SRCS = appfile.c fproc.c misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
+# The recovery image exposes no SD mutation commands.
 ifeq ($(STORAGE),ram)
 FS_SRCS := $(filter-out create.c,$(FS_SRCS))
 endif
@@ -55,6 +63,9 @@ C_OBJS += $(BUILD_DIR)/drivers/spi_fifo.o
 endif
 endif
 
+ifeq ($(UPDATE_APPS),1)
+C_OBJS += $(BUILD_DIR)/app-update.o
+endif
 TARGET  = cp32
 
 # Assembly objects
@@ -65,7 +76,7 @@ BUILD_KLIB32_O = $(BUILD_DIR)/klib32.o
 
 # Directories
 SRC_DIR = kernel
-BUILD_DIR = $(if $(filter ram,$(STORAGE)),build-ram,$(if $(filter soft,$(SD_SPI)),build-sd-soft,build))
+BUILD_DIR = $(if $(filter ram,$(STORAGE)),build-ram,$(if $(filter soft,$(SD_SPI)),build-sd-soft,build))$(if $(filter 1,$(UPDATE_APPS)),-updater,)
 
 # Default target
 all: $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/sdcard.img
@@ -107,10 +118,15 @@ $(BUILD_DIR)/mm/%.o: mm/%.c $(MM_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Filesystem C has no interrupt-entry/register-frame responsibilities.
+# Optimize this bounded service for SRAM size; kernel/assembly remain -O0.
 $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -Os -c $< -o $@
 
+# Shell/FS services are ordinary call0 C, with no IRQ frame construction.
+# Use the same size policy as FS to retain heap/stacks as the service grows.
+$(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
 $(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf $(BUILD_DIR)/cat.elf $(BUILD_DIR)/wc.elf $(BUILD_DIR)/ls.elf $(BUILD_DIR)/exec.elf | $(BUILD_DIR)
@@ -240,3 +256,18 @@ $(BUILD_DIR)/exec.elf: apps/hello/start.S apps/exec/exec.c apps/lib/io.c apps/li
 sdimage: $(BUILD_DIR)/sdcard.img
 $(BUILD_DIR)/sdcard.img: $(BUILD_DIR)/minix-demo.h ../tools/make_sd_image.py
 	python3 ../tools/make_sd_image.py $(BUILD_DIR)/minix-demo.img $@
+
+# Opt-in maintenance firmware: normal builds contain neither command nor payload.
+.PHONY: updater flash-updater
+updater:
+	$(MAKE) UPDATE_APPS=1 all
+flash-updater:
+	$(MAKE) UPDATE_APPS=1 flash
+ifeq ($(UPDATE_APPS),1)
+$(BUILD_DIR)/app-payload.h: ../tools/embed_apps.py $(addprefix $(BUILD_DIR)/,hello.elf echo.elf cat.elf wc.elf ls.elf exec.elf)
+	python3 $< $(BUILD_DIR) $@
+$(BUILD_DIR)/cp32-shell.o: $(BUILD_DIR)/app-payload.h kernel/app-update.h
+$(BUILD_DIR)/cp32-shell.o: CFLAGS += -I$(BUILD_DIR)
+$(BUILD_DIR)/app-update.o: kernel/app-update.c kernel/app-update.h $(FS_HEADERS)
+$(BUILD_DIR)/app-update.o: CFLAGS += -Os
+endif

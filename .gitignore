@@ -58,6 +58,8 @@ dkms.conf
 src/build/*
 src/build-ram/*
 src/build-sd-soft/*
+src/build-updater/*
+src/build-sd-soft-updater/*
 
 # minix v2 source
 minix-2.0.0/*

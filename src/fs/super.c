@@ -2,7 +2,7 @@
  * CP32 currently recognizes V2 and reads allocation bits; no allocator yet. */
 #include "fs.h"
 
-CP32_IRAM_EXT int cp32_minix_super_read(cp32_disk_reader read,
+CP32_FS_TEXT int cp32_minix_super_read(cp32_disk_reader read,
     unsigned capacity, struct cp32_minix_super *out)
 {
   unsigned char bytes[24];
@@ -41,7 +41,7 @@ CP32_IRAM_EXT int cp32_minix_super_read(cp32_disk_reader read,
   return CP32_SUPER_OK;
 }
 
-CP32_IRAM_EXT int cp32_fs_allocated(cp32_disk_reader read, unsigned map,
+CP32_FS_TEXT int cp32_fs_allocated(cp32_disk_reader read, unsigned map,
                                    unsigned bit, unsigned swap)
 {
   unsigned char word[2];

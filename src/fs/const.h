@@ -10,12 +10,17 @@
 #define CP32_FILE_IS_DIR 6
 #define CP32_FILE_NAME 7
 #define CP32_FILE_NOT_DIR 8
+#define CP32_FILE_ACCESS 15
+#define CP32_FILE_BIG 16
+#define CP32_FILE_READONLY 17
+#define CP32_FILE_LINK_LIMIT 18
 #define CP32_OPEN_MAX 8
 #define CP32_FILE_BAD_FD 9
 #define CP32_FILE_LIMIT 10
 #define CP32_FILE_EXISTS 11
 #define CP32_FILE_NOSPACE 12
 #define CP32_FILE_BUSY 13
+#define CP32_FILE_NOT_EMPTY 14
 #define CP32_MINIX_PATH_MAX 255
 /* MINIX 2.0 include/fcntl.h values; helper API, not a user syscall ABI. */
 #define CP32_F_DUPFD 0
@@ -28,6 +33,12 @@
 #define CP32_F_SETLKW 7
 #define CP32_FD_CLOEXEC 1
 #define CP32_O_RDONLY 0
+#define CP32_O_WRONLY 1
+#define CP32_O_RDWR 2
+#define CP32_O_ACCMODE 3
+#define CP32_O_CREAT 00100
+#define CP32_O_EXCL 00200
+#define CP32_O_TRUNC 01000
 #define CP32_O_APPEND 02000
 #define CP32_O_NONBLOCK 04000
 #endif

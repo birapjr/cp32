@@ -9,6 +9,9 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
 CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count);
 /* Foreground child owns a separate bounded fd namespace; FS context only. */
 CP32_IRAM_EXT void cp32_shell_app_files_reset(void);
+CP32_IRAM_EXT int cp32_shell_app_files_start(unsigned pid);
+CP32_IRAM_EXT int cp32_shell_app_files_owner(unsigned pid);
+CP32_IRAM_EXT void cp32_shell_app_files_exec(void);
 CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned arg);
 CP32_IRAM_EXT int cp32_shell_exec_open(const char *path,unsigned *size);
 CP32_IRAM_EXT void cp32_shell_exec_close(int fd);

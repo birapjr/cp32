@@ -4,6 +4,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include "application.h"
+#include "../fs/fproc.h"
 #include <minix/cp32_mm.h>
 #include <minix/com.h>
 #include "../apps/hello/abi.h"
@@ -113,22 +114,10 @@ CP32_IRAM_EXT static int application_file(unsigned op,int fd,void *buffer,unsign
 /* Validate the complete user span before the FS bridge dereferences it. */
 CP32_IRAM_EXT static int application_file_request(message *m)
 {
-  unsigned op=m->m1_i1,n=(unsigned)m->m1_i3;
-  uintptr_t p=(uintptr_t)m->m1_p1;
-  if(op>CP32_APP_STAT) return -22;
-  if(op==CP32_APP_OPEN || op==CP32_APP_OPENDIR || op==CP32_APP_READ ||
-     op==CP32_APP_FSTAT || op==CP32_APP_READDIR || op==CP32_APP_STAT) {
-    if((op==CP32_APP_OPEN || op==CP32_APP_OPENDIR) && (!n || n>256)) return -36;
-    if(op==CP32_APP_READ && n>64) return -22;
-    if(op==CP32_APP_FSTAT && n!=sizeof(struct cp32_app_stat))return -22;
-    if(op==CP32_APP_READDIR && n!=sizeof(struct cp32_app_dirent))return -22;
-    if(op==CP32_APP_STAT && n!=sizeof(struct cp32_app_stat_request))return -22;
-    if(n && (p<CP32_APP_DATA || p>CP32_APP_TOP || n>CP32_APP_TOP-p)) return -14;
-    if((op==CP32_APP_OPEN || op==CP32_APP_OPENDIR) && m->m1_p1[n-1]) return -22;
-    if(op==CP32_APP_STAT && m->m1_p1[255])return -36;
-  }
-  return cp32_shell_app_file(op,m->m1_i2,m->m1_p1,n);
+  int r=cp32_fproc_validate(m->m1_i1,m->m1_p1,(unsigned)m->m1_i3,CP32_APP_DATA,CP32_APP_TOP);
+  return r ? r:cp32_shell_app_file(m->m1_i1,m->m1_i2,m->m1_p1,(unsigned)m->m1_i3);
 }
+
 CP32_IRAM_EXT static void application_exit(int status)
 {
   message m;
@@ -139,7 +128,7 @@ CP32_IRAM_EXT static void application_exit(int status)
   panic("application exit returned",NO_NUM);
   for(;;) {}
 }
-static const struct cp32_app_services services={8,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+static const struct cp32_app_services services={21,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
 
 /* Transactional foreground exec. Stage all bytes in MM-owned temporary memory
  * while the child is blocked in SENDREC; publish only after every read succeeds.
@@ -190,6 +179,7 @@ CP32_IRAM_EXT static int application_replace(struct proc *child,message *request
     if(child->p_flags!=RECEIVING || child->p_getfrom!=FS_PROC_NR ||
        child->p_callerq!=NIL_PROC || child->p_sendlink!=NIL_PROC)
       panic("exec blocked state",NO_NUM);
+    cp32_shell_app_files_exec(); /* commit only after successful staging */
     saved=lock_save();
     memcpy((void *)APP_TEXT_DATA,stage,16384);
     memcpy((void *)CP32_APP_DATA,stage+16384,16384);
@@ -243,6 +233,9 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   saved=lock_save();
   pid=application_pid();
   if(pid<0) { restore_lock(saved); app_busy=0; return -1; }
+  restore_lock(saved);
+  if(cp32_shell_app_files_start((unsigned)pid)) {app_busy=0;return -1;}
+  saved=lock_save();
   memset(child,0,sizeof(*child));
   child->p_nr=APP_NR; child->p_pid=pid;
   if(cp32_exec_frame(child,image.entry,sp,(reg_t)&services)!=OK)
@@ -261,6 +254,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   restore_lock(saved);
   for(;;) {
     if(receive(APP_NR,&m)!=OK) panic("application wait failed",NO_NUM);
+    if(!cp32_shell_app_files_owner((unsigned)child->p_pid))panic("FS process owner",NO_NUM);
     if(m.m_type==APP_EXIT) {
       /* MINIX MM retains an eight-bit exit status. This bootstrap API
        * returns that value directly, not a POSIX encoded wait status. */

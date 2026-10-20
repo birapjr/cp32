@@ -2,7 +2,7 @@
  * helper, not the descriptor/syscall ABI. Decode disk fields for Xtensa. */
 #include "fs.h"
 
-CP32_IRAM_EXT static int stat_inode(cp32_disk_reader read,
+CP32_FS_TEXT int cp32_fs_stat_inode(cp32_disk_reader read,
     const struct cp32_minix_super *super, unsigned number, struct cp32_minix_stat *out)
 {
   struct cp32_minix_stat next;
@@ -22,7 +22,7 @@ CP32_IRAM_EXT static int stat_inode(cp32_disk_reader read,
   next.atime = cp32_fs_u32(raw+12, super->swapped);
   next.mtime = cp32_fs_u32(raw+16, super->swapped);
   next.ctime = cp32_fs_u32(raw+20, super->swapped);
-  if (!next.links || next.size > super->max_size) return -CP32_SUPER_INVALID;
+  if ((!next.links && ((next.mode&0170000)!=0100000 || !cp32_fd_inode_open(read,number))) || next.size > super->max_size) return -CP32_SUPER_INVALID;
   /* Metadata inspection does not require reading a file's data zones. */
   if ((next.mode & 0170000) != 0100000 && (next.mode & 0170000) != 0040000)
     return -CP32_SUPER_UNSUPPORTED;
@@ -30,7 +30,7 @@ CP32_IRAM_EXT static int stat_inode(cp32_disk_reader read,
   return 0;
 }
 
-CP32_IRAM_EXT int cp32_minix_stat(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_minix_stat(cp32_disk_reader read, unsigned capacity,
     const char *path, struct cp32_minix_stat *out)
 {
   struct cp32_minix_super super;
@@ -38,20 +38,20 @@ CP32_IRAM_EXT int cp32_minix_stat(cp32_disk_reader read, unsigned capacity,
   int result;
   if(!out) return -CP32_SUPER_INVALID;
   result=cp32_fs_resolve_path(read,capacity,path,&super,&number);
-  return result ? result : stat_inode(read,&super,number,out);
+  return result ? result : cp32_fs_stat_inode(read,&super,number,out);
 }
 
 /* MINIX do_fstat: use the open inode, never the current pathname or offset. */
-CP32_IRAM_EXT int cp32_fd_fstat(int fd,struct cp32_minix_stat *out)
+CP32_FS_TEXT int cp32_fd_fstat(int fd,struct cp32_minix_stat *out)
 {
   const struct cp32_minix_file *file=cp32_fd_file(fd);
   if(!file) return -CP32_FILE_BAD_FD;
-  return stat_inode(file->read,&file->super,file->inode,out);
+  return cp32_fs_stat_inode(file->read,&file->super,file->inode,out);
 }
 
 /* MINIX do_chdir/change responsibility for the single read-only command
  * client. Publish cwd only after directory validation; no credentials yet. */
-CP32_IRAM_EXT int cp32_minix_chdir(cp32_disk_reader read, unsigned capacity,
+CP32_FS_TEXT int cp32_minix_chdir(cp32_disk_reader read, unsigned capacity,
                                   char *cwd, const char *path)
 {
   char full[CP32_MINIX_PATH_MAX+1], canonical[CP32_MINIX_PATH_MAX+1];

@@ -199,7 +199,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE FS-UNLINK 130]");
+  usbj_print("[FEATURE APP-POSIO 157]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -256,12 +256,12 @@ void main(void)
     int storage_result=cp32_root_init();
 #if !CP32_ROOT_RAM
 #ifdef CP32_SD_SOFT
-    usbj_print("[SD V130 transport=gpio]\r\n");
+    usbj_print("[SD V157 transport=gpio]\r\n");
 #else
-    usbj_print("[SD V130 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
+    usbj_print("[SD V157 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
 #endif
 #endif
-    usbj_print("[ROOT V130 backend=" CP32_ROOT_NAME " result=");
+    usbj_print("[ROOT V157 backend=" CP32_ROOT_NAME " result=");
     if(storage_result<0)usbj_print("-");
     usbj_print_u32((uint32_t)(storage_result<0 ? -storage_result:storage_result));
   }
@@ -331,7 +331,10 @@ void main(void)
     usbj_print_u32((uint32_t)cp32_system_task_check());
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
-  usbj_print("[TEST FS-UNLINK 130]\r\n");
+#if CP32_UPDATE_APPS
+  usbj_print("[UPDATER 157 enabled]\r\n");
+#endif
+  usbj_print("[TEST APP-POSIO 157]\r\n");
   kernel_idle_loop();
 }
 

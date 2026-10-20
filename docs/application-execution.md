@@ -1042,3 +1042,220 @@ Hardware retest pending, not flashed: `[FEATURE APP-EXEC 121]1` and
 Expect failure recovery, `Exec PID and file OK` with exit=0 on each successful
 self-replacement, echo output and a usable shell without leaked MM staging.
 Image 120 does not establish successful exec hardware validation.
+
+
+## Image143: writable descriptors (ABI v9)
+
+The service table layout is unchanged; file operations11/12/13 add a bounded
+open request, write and dup. The open record contains a 256-byte terminated
+path plus flags and mode. The kernel checks alignment, exact record size and
+application data bounds before the shell resolves the path and opens an owned
+handle. Writes copy at most64 bytes into a kernel buffer per request. The
+runtime chunks larger writes and preserves confirmed progress on later errors.
+MINIX open.c/read.c/filedes.c provide the access/append/shared-filp model;
+CP32 retains its bounded inode-backed descriptions and serialized FS service.
+The ESP32-S3 has no process MMU here: pointer checks and handle ownership remain
+mandatory, and image staging/exec preserves the four owned file slots.
+
+See README image143 for API behavior, limits and `hello --file` / `hello --check`
+hardware acceptance. General credentials, unlink-while-open, mount and recovery
+remain separate port milestones. ABI v6–8 read-only clients remain compatible.
+
+
+## Image146: filesystem process lifecycle and ABI v10
+
+The FS service selects an explicit `cp32_fproc` record; no request supplies a
+PID or another process's namespace. The kernel binds the record to its allocated
+child PID before publishing the initial runnable frame and checks the binding
+for received child requests. Launch clones the shell's cwd, root inode, mask,
+identity and owned references, including redirected stdin. The serialized
+backend retains shared open descriptions; process fd tables map only their
+owned handles. A failed clone unwinds child references without touching parent
+references or offsets.
+
+Successful exec invokes the FS CLOEXEC hook only after image/argv staging has
+succeeded, before the new runnable frame is published. Any recoverable failure
+leaves cwd, mask, descriptor flags and offsets intact. Exit releases owned
+references and invalidates the process record. The shell's private loader and
+maintenance handles are outside the app namespace. `cp32_fproc_file` handles
+requests in src/fs/appfile.c; the kernel validates application spans through
+`cp32_fproc_validate` before dispatch. FS code uses the existing size-optimized
+extended-IRAM placement, retaining the call0 ABI and all kernel stacks.
+
+ABI10 adds chdir/getcwd/umask and descriptor/status fcntl operations. See README
+for the `hello --state` hardware test and current single-foreground limitations.
+The clone hook models MINIX misc.c do_fork; it does not expose a general fork
+syscall. Root inode is fixed1 and credential enforcement is not newly claimed.
+
+
+## Image147: ABI v11 unlink
+
+`cp32_unlink` uses a bounded terminated pathname request (operation21) and the
+calling fproc cwd. The kernel checks the application span before dispatch.
+Unlink leaves open references valid at link count0, including across exec and
+process-state cloning. Final close, CLOEXEC and exit use the shared reclamation
+path. Explicit close errors consume ownership; retrying that fd is invalid.
+No orphan recovery after reboot or general mount/hotplug support is implied.
+See README for the short `hello --unlink` acceptance test and failure limits.
+
+## ABI12: mkdir
+
+`CP32_APP_MKDIR` (22) accepts a `cp32_app_open_request`: a terminated path
+in256 bytes, flags zero, and a mode. The IPC argument must equal the full
+record size and the record must be aligned and within application memory.
+The runtime `cp32_mkdir` returns0 or-1 with cp32_errno. Earlier service-table
+prefixes are unchanged; older kernels return ENOSYS via the runtime guard.
+Only rwx mode bits are stored, filtered by the application's umask. Empty paths
+return ENOENT; duplicate names EEXIST; missing/non-directory parents retain
+ordinary lookup errors. RAM builds return EROFS. No new descriptor is consumed.
+`hello --dir` is the SD hardware acceptance command; see README for cleanup.
+
+## ABI13: regular-file hard links
+
+`cp32_link(source, destination)` uses operation23 (`CP32_APP_LINK`) and a
+512-byte `cp32_app_link_request` containing two256-byte terminated paths. The
+kernel validates the complete span, exact record size and both terminators
+before dispatch. Byte arrays need no alignment. Empty paths return ENOENT;
+duplicate destinations EEXIST; link-count exhaustion EMLINK; directory sources
+EISDIR; RAM recovery EROFS. Other lookup/storage errors retain their normal
+mapping. The runtime returns0 or-1 with cp32_errno and guards older kernels
+with ENOSYS. No descriptor slot is consumed. Existing ABI prefixes are preserved.
+
+The filesystem remains single-mount and trusted, without credential enforcement.
+Hard links reuse inode metadata and mappings; only directory entries and link
+counts change. `hello --link` exercises relative cross-directory linking and
+open-file lifetime through unlink; successful runs leave no files behind.
+
+## ABI14: chmod
+
+Operation24 (`CP32_APP_CHMOD`) accepts `cp32_app_open_request` with a terminated
+path, flags zero and mode0000..0777. Runtime `cp32_chmod` returns0 or-1 with
+cp32_errno; older kernels are rejected with ENOSYS. Kernel validation checks
+record size, alignment, address span and termination before filesystem dispatch.
+Empty paths return ENOENT, unsupported mode bits or flags EINVAL, RAM writes
+EROFS, and other lookup/I/O errors preserve their usual mappings.
+
+The process cwd resolves relative names; umask is deliberately not applied.
+Mode updates preserve the inode and all non-mode bytes. File and directory
+metadata can be changed, but owner/group and directory search permission
+checks remain unimplemented. Already-open descriptors retain their access;
+new opens use the current aggregate rwx checks. `hello --mode` exercises the
+production path with hard links, failed new opens and continued descriptor I/O.
+
+## ABI15: empty-directory removal
+
+`cp32_rmdir(path)` uses operation25 (`CP32_APP_RMDIR`), with the terminated
+path length including NUL, bounded to256 bytes. The runtime returns0 or-1 with
+cp32_errno and rejects older kernels with ENOSYS. The kernel validates the
+complete span and final terminator before dispatch. ENOTEMPTY rejects a nonempty
+directory; EBUSY protects root, open directories and either live client's cwd;
+ENOTDIR rejects a regular file; terminal . or .. returns EINVAL; RAM returns
+EROFS. Other lookup and I/O errors retain their ordinary mappings.
+
+The production FS owner passes the suspended shell record to the rmdir helper,
+which resolves the target against application cwd and compares protected inode
+identities before mutation. This covers CP32's current two-client foreground
+model, not a future arbitrary process table. The operation reuses validated
+filesystem deletion and reclamation; uncertain writes may leak allocations.
+`hello --rmdir` is the self-cleaning hardware acceptance command.
+
+## ABI16: no-replacement regular-file rename
+
+Operation26 (`CP32_APP_RENAME_NOREPLACE`) uses `cp32_app_link_request` with two
+256-byte terminated paths. `cp32_rename_noreplace` returns0 or-1 with cp32_errno;
+older kernels return ENOSYS. Kernel validation checks exact512-byte size, full
+span and both terminators. The byte-array record does not require alignment.
+Empty paths return ENOENT, directory sources EISDIR, a different destination
+inode EEXIST, link-count exhaustion EMLINK and RAM recovery EROFS. Same-inode
+source/destination pairs succeed without removing either name.
+
+Both names resolve against the active application's cwd. The backend preserves
+inode identity and existing descriptors. Cross-directory moves can leave both
+names on uncertain I/O, and are not power-loss atomic. Full POSIX destination
+replacement and directory renaming remain future features. `hello --move`
+exercises this API and cleans up its private directory on success.
+
+## ABI17: descriptor resizing
+
+`cp32_ftruncate(fd, length)` uses operation27 (`CP32_APP_FTRUNCATE`), fd in the
+usual descriptor argument, null buffer and byte length in the argument field.
+The runtime returns0 or-1 with cp32_errno and guards older kernels with ENOSYS.
+Negative lengths return EINVAL; sizes beyond263 KiB or the superblock maximum
+return EFBIG. Invalid/read-only descriptors return EBADF; RAM returns EROFS.
+No caller buffer is accessed.
+
+File identity and shared offsets are unchanged, including when the retained
+offset lies beyond the new EOF. Shrink releases storage using existing ordering;
+growth leaves unmapped regions as holes and clears mapped bytes before publishing
+the new size. Sparse growth allocates no blocks. Other descriptors observe the
+new size on refresh. Open-but-unlinked files can be resized and are reclaimed
+on final close. Failures may partially commit; rollback is not promised.
+`hello --size` exercises shrink, growth, zero fill, duplicate and independent
+opens, indirect blocks, unlink lifetime and bounds, with automatic cleanup.
+
+## ABI18: descriptor replacement
+
+`cp32_dup2(source, target)` uses operation28 (`CP32_APP_DUP2`), source in the fd
+field, target in the unsigned argument and no buffer. Success returns the target
+fd; failure returns-1 with cp32_errno. Older kernels return ENOSYS, invalid or
+closed sources and targets outside3..6 return EBADF. Empty targets may return
+EMFILE on backend exhaustion; occupied targets reuse their existing slot.
+
+The fproc layer maps process-local descriptor numbers to backend handles and
+validates before closing a target. Replacements share offsets and file status,
+clear the target's CLOEXEC flag, and leave source CLOEXEC unchanged. Equal
+source/target leaves all state unchanged. Final close of an unlinked target
+uses existing reclamation; close errors are not reported by dup2. Exit and exec
+continue to release the references through the normal process lifecycle.
+This API currently excludes callback-backed standard streams0..2. `hello --dup`
+provides a short hardware acceptance command with automatic cleanup.
+
+## ABI19: F_DUPFD
+
+`cp32_fcntl(fd, CP32_F_DUPFD, minimum)` uses operation29 (`CP32_APP_DUPFD`),
+source in the fd field, minimum in the argument and no buffer. The runtime guards
+older kernels with ENOSYS. Success returns the chosen local descriptor; failure
+returns-1 with cp32_errno. Invalid/closed sources return EBADF, minimum outside
+0..6 (including unsigned representations of negatives) EINVAL, and no free
+local/backend descriptor EMFILE. Minimum0..2 searches from3 because standard
+streams are reserved callback channels.
+
+The process layer searches its own namespace, duplicates the source backend
+reference, then publishes the new slot with CLOEXEC clear. Failed backend
+allocation does not alter any local slot. The new descriptor shares offsets and
+status flags while descriptor flags remain independent. Exit/exec cleanup uses
+the existing process lifecycle. `hello --fcntl` provides the hardware test.
+
+## ABI20: fchmod
+
+`cp32_fchmod(fd, mode)` uses operation30 (`CP32_APP_FCHMOD`), descriptor in the
+fd field, rwx mode in the argument and no buffer. Success returns0; failure
+returns-1 with cp32_errno. Older kernels return ENOSYS, invalid descriptors EBADF,
+unsupported mode bits EINVAL, RAM EROFS and failed writes EIO. The FS owner
+supplies the mounted writer and resolves the backend descriptor's inode; no
+pathname lookup or extra descriptor is needed.
+
+Read-only handles may change metadata under the current trusted model. The
+operation does not modify descriptor access rights, position, file contents or
+inode identity. Changes remain visible through other references; zero-link
+open files are supported until final close. Directory descriptors work too.
+Path chmod and fchmod share the same inode update and failure handling.
+`hello --fmode` exercises the new API and removes its test artifacts on success.
+
+## ABI21: positional I/O
+
+Operations31/32 (`CP32_APP_PREAD`, `CP32_APP_PWRITE`) use a72-byte
+`cp32_app_position_request` containing offset, count and64 data bytes. The
+kernel validates the aligned full record before reading fields, then checks
+count<=64 and signed32-bit offset/range overflow. Read results are copied only
+on positive progress. Error/EOF leaves application output unchanged. The runtime
+rejects older kernels with ENOSYS and null nonempty buffers with EFAULT.
+
+Invalid descriptors/access modes return EBADF; positional reads on directories
+return EISDIR; invalid ranges EINVAL; file-size overflow EFBIG; RAM writes EROFS.
+The mounted file backend preserves position and flags on success and failure.
+pwrite explicitly bypasses APPEND without changing the flag. pread returns at
+most64 bytes and may be short at zone boundaries; pwrite loops over chunks and
+returns prior progress on a later error, retaining cp32_errno. Zero-count calls
+still validate the descriptor and access mode. No standard-stream positional
+I/O is exposed. `hello --at` provides self-cleaning hardware acceptance.
