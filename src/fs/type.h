@@ -13,6 +13,7 @@ typedef int (*cp32_disk_writer)(unsigned offset, const char *buffer, int count);
 #endif
 #endif
 #define CP32_FS_TEXT
+struct cp32_minix_space {unsigned zone_size,zones,free_zones,inodes,free_inodes,name_max;};
 /* Bounded metadata result; not the complete MINIX struct stat ABI. */
 struct cp32_minix_stat {
   unsigned inode, mode, links, uid, gid, size, atime, mtime, ctime;

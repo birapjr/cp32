@@ -57,6 +57,17 @@ static int io_test(void)
 /* This acceptance command creates an SD file; omit it from RAM recovery's
  * embedded demo application while retaining the kernel's process-state API. */
 /* Process-local state must survive exec, while CLOEXEC applies at commit. */
+static int space_test(void)
+{
+  struct cp32_app_fsinfo a,b,c;int fd;
+  if(cp32_fsinfo(&a) || a.zone_size!=1024 || a.name_max!=14 || !a.free_inodes || !a.free_zones)return 170;
+  fd=cp32_open_flags("/stest",CP32_O_RDWR|CP32_O_CREAT|CP32_O_EXCL,0600);
+  if(fd<0 || cp32_fsinfo(&b) || b.free_inodes+1!=a.free_inodes || b.free_zones!=a.free_zones)return 171;
+  if(cp32_write(fd,"hi",2)!=2 || cp32_fsinfo(&c) || c.free_zones+1!=a.free_zones)return 172;
+  if(cp32_unlink("/stest") || cp32_fsinfo(&b) || b.free_zones!=c.free_zones || b.free_inodes!=c.free_inodes)return 173;
+  if(cp32_close(fd) || cp32_fsinfo(&b) || b.free_zones!=a.free_zones || b.free_inodes!=a.free_inodes)return 174;
+  return 0;
+}
 static int position_test(void)
 {
   char data[80],b[64];int fd,alias,reader;unsigned i;
@@ -271,9 +282,14 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
 {
   unsigned i,n;
 
-  if(!s || (s->version<1 || s->version>21) || !s->write || !s->exit || started) return 1;
+  if(!s || (s->version<1 || s->version>22) || !s->write || !s->exit || started) return 1;
   started=1;
 #if !CP32_ROOT_RAM
+  if(option(argc,argv,"--space")) {
+    int r;if(cp32_io_init(s))return 79;r=space_test();
+    if(!r)cp32_write(1,"Space OK\n",9);
+    return r;
+  }
   if(option(argc,argv,"--at")) {
     int r;if(cp32_io_init(s))return 79;r=position_test();
     if(!r)cp32_write(1,"PosIO OK\n",9);

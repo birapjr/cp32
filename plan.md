@@ -1188,3 +1188,59 @@ and pass image layout checks. ELF sections/segments inspected: default IRAM
 end0x40374620, extended end0x4038bdc0, runtime end0x3fce6dc0 (4672-byte margin).
 Updater runtime end0x3fce4e10; RAM end0x3fce7490. Heap and stack reservations
 remain unchanged. Hardware validation is pending.
+
+[x] Image157 positional I/O hardware acceptance passed on the supplied updater
+boot: PosIO OK/exit0 twice, pwd / and no ptest residue. Capture:
+docs/hardware/app-posio-v157-updater.log. No clean-image boot was supplied.
+
+## Image158: filesystem space reporting (hardware pending)
+
+ABI22 adds cp32_fsinfo and the shell adds df. The allocation-map scanner reports
+zone size, allocatable data zones, free data zones, total/free inodes and maximum
+name length for the sole mounted volume. Reserved bit0, metadata zones and bitmap
+padding are excluded. Both disk byte orders and validated scaled zones work.
+A failed read leaves the output unchanged; no descriptor slot is consumed.
+The filesystem cache is invalidated before scanning so reports use current
+allocation maps. The service's single-owner execution serializes the snapshot.
+
+MINIX reference: commands/simple/df.c bit_count counts allocation-map bits and
+excludes the reserved inode. CP32 exposes this via bounded trusted call0 IPC;
+no Xtensa register or context changes are needed. df displays free/total KiB
+of the allocatable data area and free/total inodes, not SD-card capacity or RAM.
+Allocated indirect tables count as used zones. Unlinked open files remain used
+until final close. Reports are also available for the RAM recovery volume.
+Existing crash-recovery/bitmap corruption limitations remain unchanged: the
+report counts recorded allocations, it does not repair or independently audit
+inode references.
+
+FEATURE/TEST FS-SPACE158, SD/ROOT V158, optional UPDATER158 identify the image.
+Hardware pending: install apps, df, hello --space twice, df, ls. Expect Space OK
+and Hello exit=0, equal free counts before/after and no stest residue. The test
+checks inode-only empty-file allocation, first data allocation, retained space
+while unlinked/open, and restoration on final close. No flashing was performed.
+
+Image158 validation: all 48 host scripts pass. Coverage includes production
+application allocation/reclamation, shell df success/error formatting, both byte
+orders, scaled zones, reserved/padding bits, full/free maps, every scan-read
+failure and output preservation, runtime errors and IPC bounds. The standalone
+superblock unit test now links the cache implementation required by the scanner.
+All five clean firmware builds (normal, updater, RAM, GPIO-SPI, GPIO-SPI updater)
+pass without compiler warnings and pass image layout checks. ELF sections and
+segments inspected: default IRAM end0x40374620, extended end0x4038bf7c, runtime
+end0x3fce6fc0 (4160-byte margin). Updater runtime end0x3fce51a0; RAM end0x3fce75f0.
+Heap and stack reservations are unchanged. Hardware validation remains pending.
+
+
+[x] Image158 FS-SPACE: hardware allocation/reclamation validation accepted.
+Capture: docs/hardware/fs-space-v158-updater.log. The updater reports Apps update
+OK. Two correctly entered hello --space commands report Space OK and Hello
+exit=0. Before/after df reports match: 5/57 KiB free data space and 20/32 free
+inodes. Final ls contains only dot entries, boot and readme, with no stest
+residue. Mistyped options ran generic hello and are not counted as test passes.
+This supersedes the pending space-test status above for the updater image;
+a separate clean-image boot is not demonstrated by this capture.
+
+README reorganized around current features, boundaries, command/API references,
+build/SD-update instructions and debugging/hardware checks. Historical version
+notes remain in the development logs. Documentation links and whitespace checked;
+no firmware source changes were made for this documentation update.

@@ -63,6 +63,11 @@ int main(int argc,char **argv) {
  int mode=argv[2][0]-'0';
  struct cp32_app_services api={7,put,quit,0,0,0,input,cp32_shell_app_file};
 #ifdef TEST_HELLO
+ if(mode==20) {
+   api.version=22;char *args[]={"hello","--space",0};
+   int r=app_main(2,args,0,&api);if(r)fprintf(stderr,"space stage %d errno %d\n",r,cp32_errno);
+   assert(!r && strstr(output,"Space OK"));cp32_shell_app_files_reset();return 0;
+ }
  if(mode==19) {
    api.version=21;char *args[]={"hello","--at",0};
    int r=app_main(2,args,0,&api);if(r)fprintf(stderr,"position stage %d errno %d\n",r,cp32_errno);
@@ -306,6 +311,9 @@ int main(int argc,char **argv) {
  m.m1_i1=CP32_APP_CHDIR;m.m1_p1=(char *)arena;m.m1_i3=2;arena[0]='/';arena[1]='x';
  assert(application_file_request(&m)==-22);
  m.m1_p1=(char *)(CP32_APP_TOP-1);m.m1_i3=2;assert(application_file_request(&m)==-14);
+ m.m1_i1=CP32_APP_FSINFO;m.m1_p1=(char *)arena;m.m1_i3=23;assert(application_file_request(&m)==-22);
+ m.m1_i3=24;m.m1_p1=(char *)(CP32_APP_TOP-4);assert(application_file_request(&m)==-14);
+ m.m1_p1=(char *)arena+1;assert(!application_file_request(&m));
  m.m1_i1=CP32_APP_PREAD;m.m1_p1=(char *)arena;m.m1_i3=71;assert(application_file_request(&m)==-22);
  m.m1_i3=72;m.m1_p1=(char *)arena+1;assert(application_file_request(&m)==-22);
  m.m1_p1=(char *)(CP32_APP_TOP-4);assert(application_file_request(&m)==-14);
@@ -365,5 +373,5 @@ with tempfile.TemporaryDirectory() as folder:
    '-I'+str(root/'src/fs'),'-I'+str(root/'src/apps/lib'),*(['-DTEST_CAT'] if app=='cat' else ['-DTEST_HELLO'] if app=='hello' else ['-DTEST_LS'] if app=='ls' else []),
    str(p/'test.c'),str(root/f'src/apps/{app}/{app}.c'),str(root/'src/apps/lib/io.c'),*extra,
    *[str(f) for f in (root/'src/fs').glob('*.c')],'-o',str(p/app)],check=True)
-  for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
+  for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
 print('App files: production FS, isolated handles, cleanup, seek, indirect reads, utilities and request bounds pass')

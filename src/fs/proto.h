@@ -122,4 +122,5 @@ CP32_FS_TEXT int cp32_fd_truncate(int,unsigned);
 CP32_FS_TEXT int cp32_fs_chmod_inode(cp32_disk_reader,cp32_disk_writer,const struct cp32_minix_super *,unsigned,unsigned);
 CP32_FS_TEXT int cp32_fd_pread(int,char *,unsigned,unsigned);
 CP32_FS_TEXT int cp32_fd_pwrite(int,const char *,unsigned,unsigned);
+CP32_FS_TEXT int cp32_minix_space_read(cp32_disk_reader,unsigned,struct cp32_minix_space *);
 #endif

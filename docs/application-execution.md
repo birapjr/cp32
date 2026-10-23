@@ -1259,3 +1259,20 @@ most64 bytes and may be short at zone boundaries; pwrite loops over chunks and
 returns prior progress on a later error, retaining cp32_errno. Zero-count calls
 still validate the descriptor and access mode. No standard-stream positional
 I/O is exposed. `hello --at` provides self-cleaning hardware acceptance.
+
+## ABI22: volume allocation counts
+
+`cp32_fsinfo(struct cp32_app_fsinfo *)` uses operation33 (`CP32_APP_FSINFO`)
+and a24-byte output record: zone_size, zones, free_zones, inodes, free_inodes,
+name_max (six32-bit unsigned fields). The kernel validates exact record size
+and the full span; unaligned output is supported through memcpy. On success the
+runtime returns0, otherwise-1 with cp32_errno. Older kernels return ENOSYS;
+null runtime buffers return EFAULT; unreadable/corrupt geometry uses normal FS
+error mapping. Failed scans do not publish a partial output record.
+
+Counts describe the sole mounted filesystem's allocatable data area. The scanner
+ignores reserved bit0 and bitmap padding, converts disk byte order and uses the
+validated zone size. Metadata space is excluded from zones; allocated indirect
+blocks are included in used zones. No file descriptor is needed. The operation
+also works with a full descriptor table or a read-only RAM recovery filesystem.
+`df` formats these values; `hello --space` checks allocation and final-close reuse.

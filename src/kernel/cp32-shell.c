@@ -416,6 +416,19 @@ usage:
 }
 #endif
 
+CP32_IRAM_EXT static void cp32_shell_df(void)
+{
+  struct cp32_minix_space info;int r;
+  r=cp32_minix_space_read(cp32_shell_disk_read,cp32_root_capacity(),&info);
+  if(r){cp32_shell_print("Space read failed: ");cp32_shell_print_u32((uint32_t)-r);}
+  else {
+    cp32_shell_print("Free KiB ");cp32_shell_print_u32(info.free_zones*(info.zone_size/1024));
+    cp32_shell_print(" / ");cp32_shell_print_u32(info.zones*(info.zone_size/1024));
+    cp32_shell_print("\r\nFree inodes ");cp32_shell_print_u32(info.free_inodes);
+    cp32_shell_print(" / ");cp32_shell_print_u32(info.inodes);
+  }
+  cp32_shell_print("\r\n");
+}
 CP32_IRAM_EXT static void cp32_shell_stat(const char *path)
 {
   struct cp32_minix_stat info;
@@ -1187,6 +1200,8 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
              (line[0]=='r' && line[1]=='m' && line[2]=='d' && line[3]=='i' &&
               line[4]=='r' && (line[5]==' ' || line[5]=='\t'))) {
     cp32_shell_rmdir(line[5] ? line+6 : "");
+  } else if (strcmp(line,"df")==0) {
+    cp32_shell_df();
   } else if (strcmp(line,"mkdir")==0 ||
              (line[0]=='m' && line[1]=='k' && line[2]=='d' && line[3]=='i' &&
               line[4]=='r' && (line[5]==' ' || line[5]=='\t'))) {

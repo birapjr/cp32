@@ -24,6 +24,7 @@ int cp32_mkdir(const char *path,unsigned mode);
 /* Explicit offsets leave shared position unchanged; pwrite ignores APPEND. */
 int cp32_pread(int fd,void *buffer,unsigned count,int offset);
 int cp32_pwrite(int fd,const void *buffer,unsigned count,int offset);
+int cp32_fsinfo(struct cp32_app_fsinfo *info);
 int cp32_fchmod(int fd,unsigned mode);
 int cp32_ftruncate(int fd,int length);
 int cp32_rmdir(const char *path);

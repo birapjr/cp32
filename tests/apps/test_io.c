@@ -78,6 +78,10 @@ static int position_call(unsigned op,int fd,void *p,unsigned n) {
  unsigned part=q->count;if(part>20)part=20;
  assert(!memcmp(q->data,source+done,part));done+=part;return part;
 }
+static int space_call(unsigned op,int fd,void *p,unsigned n) {
+ assert(op==CP32_APP_FSINFO && !fd && p && n==sizeof(struct cp32_app_fsinfo));
+ return -CP32_EIO;
+}
 int main(void) {
  struct cp32_app_services s={5,output,0,0,0,0,input,0};char b[128];
  assert(cp32_write(1,source,1)==-1 && cp32_io_init(0)==-1);
@@ -172,5 +176,10 @@ int main(void) {
  assert(cp32_pwrite(3,source,150,10)==150 && calls==8);
  done=calls=0;mode=1;assert(cp32_pwrite(3,source,150,10)==100 && cp32_errno==CP32_ENOSPC);
  done=0;mode=2;assert(cp32_pwrite(3,source,1,10)==0);
+ struct cp32_app_fsinfo space;
+ assert(cp32_fsinfo(&space)==-1 && cp32_errno==CP32_ENOSYS);
+ s.version=22;s.file=space_call;
+ assert(cp32_fsinfo(0)==-1 && cp32_errno==CP32_EFAULT);
+ assert(cp32_fsinfo(&space)==-1 && cp32_errno==CP32_EIO);
  return 0;
 }

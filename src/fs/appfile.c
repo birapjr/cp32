@@ -63,6 +63,14 @@ CP32_FS_TEXT int cp32_fproc_file(struct cp32_fproc *p,cp32_disk_reader read,cp32
   int *cp32_app_fds=p->fds;
   unsigned position;
   if(!p->pid)return -9;
+  if(op==CP32_APP_FSINFO) {
+    struct cp32_minix_space info;
+    typedef char layout[(sizeof(info)==sizeof(struct cp32_app_fsinfo)) ? 1:-1];
+    (void)sizeof(layout);
+    r=cp32_minix_space_read(read,capacity,&info);
+    if(!r)memcpy(buffer,&info,sizeof(info));
+    return r ? cp32_fs_errno(r):0;
+  }
   if(op==CP32_APP_DUPFD) {
     r=cp32_fproc_dupfd(p,fd,arg);return r<0 ? cp32_fs_errno(r):r;
   }
@@ -243,8 +251,8 @@ CP32_FS_TEXT int cp32_fproc_exec_open(struct cp32_fproc *p,cp32_disk_reader read
 CP32_FS_TEXT int cp32_fproc_validate(unsigned op,char *buffer,unsigned n,uintptr_t base,uintptr_t top)
 {
   uintptr_t p=(uintptr_t)buffer;
-  if(op>CP32_APP_PWRITE || op==CP32_APP_EXEC) return -22;
-  if(op==CP32_APP_PREAD || op==CP32_APP_PWRITE || op==CP32_APP_OPEN || op==CP32_APP_OPENDIR || op==CP32_APP_READ ||
+  if(op>CP32_APP_FSINFO || op==CP32_APP_EXEC) return -22;
+  if(op==CP32_APP_FSINFO || op==CP32_APP_PREAD || op==CP32_APP_PWRITE || op==CP32_APP_OPEN || op==CP32_APP_OPENDIR || op==CP32_APP_READ ||
      op==CP32_APP_FSTAT || op==CP32_APP_READDIR || op==CP32_APP_STAT ||
      op==CP32_APP_OPEN_MODE || op==CP32_APP_MKDIR || op==CP32_APP_CHMOD || op==CP32_APP_LINK || op==CP32_APP_RENAME_NOREPLACE || op==CP32_APP_WRITE || op==CP32_APP_CHDIR || op==CP32_APP_GETCWD || op==CP32_APP_UNLINK || op==CP32_APP_RMDIR) {
     if((op==CP32_APP_GETCWD || op==CP32_APP_CHDIR) && (!n || n>256))return -22;
@@ -252,6 +260,7 @@ CP32_FS_TEXT int cp32_fproc_validate(unsigned op,char *buffer,unsigned n,uintptr
     if((op==CP32_APP_READ || op==CP32_APP_WRITE) && n>64) return -22;
     if((op==CP32_APP_OPEN_MODE || op==CP32_APP_MKDIR || op==CP32_APP_CHMOD) && (n!=sizeof(struct cp32_app_open_request) || (p&3)))return -22;
     if((op==CP32_APP_PREAD || op==CP32_APP_PWRITE) && (n!=sizeof(struct cp32_app_position_request) || (p&3)))return -22;
+    if(op==CP32_APP_FSINFO && n!=sizeof(struct cp32_app_fsinfo))return -22;
     if(op==CP32_APP_FSTAT && n!=sizeof(struct cp32_app_stat))return -22;
     if(op==CP32_APP_READDIR && n!=sizeof(struct cp32_app_dirent))return -22;
     if(op==CP32_APP_STAT && n!=sizeof(struct cp32_app_stat_request))return -22;

@@ -128,7 +128,7 @@ CP32_IRAM_EXT static void application_exit(int status)
   panic("application exit returned",NO_NUM);
   for(;;) {}
 }
-static const struct cp32_app_services services={21,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+static const struct cp32_app_services services={22,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
 
 /* Transactional foreground exec. Stage all bytes in MM-owned temporary memory
  * while the child is blocked in SENDREC; publish only after every read succeeds.

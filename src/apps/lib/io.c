@@ -305,3 +305,10 @@ int cp32_pread(int fd,void *buffer,unsigned count,int offset)
 {return position_io(fd,buffer,count,offset,0);}
 int cp32_pwrite(int fd,const void *buffer,unsigned count,int offset)
 {return position_io(fd,(void *)buffer,count,offset,1);}
+
+int cp32_fsinfo(struct cp32_app_fsinfo *info)
+{
+  if(!api || api->version<22)return io_error(CP32_ENOSYS);
+  if(!info)return io_error(CP32_EFAULT);
+  return file_call(CP32_APP_FSINFO,0,info,sizeof(*info));
+}
