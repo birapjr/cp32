@@ -93,3 +93,5 @@ CP32_IRAM_EXT int cp32_sdcard_read(uint32_t sector,unsigned char *out)
 
 CP32_IRAM_EXT int cp32_sdcard_write(uint32_t sector,const unsigned char *out)
 {return cp32_sd_write(&card,sector,out);}
+
+CP32_IRAM_EXT int cp32_sdcard_sync(void) {return cp32_sd_sync(&card);}

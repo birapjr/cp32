@@ -80,3 +80,11 @@ CP32_IRAM_EXT int cp32_root_init(void)
   if(!found)capacity=super.zones*(1024U<<super.log_zone_size);
   cached=0;return 0;
 }
+
+CP32_IRAM_EXT int cp32_root_sync(void)
+{
+  /* Preserve a previous uncertain write error; sync cannot repair it. */
+  if(!capacity || write_failed)return -1;
+  if(cp32_sdcard_sync()) {write_failed=1;cached=0;return -1;}
+  return 0;
+}

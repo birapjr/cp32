@@ -66,9 +66,11 @@ static int cp32_minix_unlink(int (*read)(unsigned,char *,int),int (*write)(unsig
 '''
 pre += r'''
 static char dest_seen[256];
-static int cp32_minix_rename(int (*read)(unsigned,char *,int),int (*write)(unsigned,const char *,int),
+static int cp32_shell_state,cp32_app_state;static char cp32_shell_previous[256];
+static int cp32_fproc_move(int *p,int *other,char *previous,int (*read)(unsigned,char *,int),int (*write)(unsigned,const char *,int),
  unsigned capacity,const char *oldpath,const char *newpath){
  assert(read==cp32_shell_disk_read && write==cp32_shell_disk_write && capacity==65536);
+ assert(p==&cp32_shell_state && other==&cp32_app_state && previous==cp32_shell_previous);
  calls++;strcpy(path_seen,oldpath);strcpy(dest_seen,newpath);return result;
 }
 '''

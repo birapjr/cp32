@@ -1,6 +1,6 @@
 #ifndef CP32_APP_ABI_H
 #define CP32_APP_ABI_H
-/* Bootstrap ABI v21 (earlier prefixes preserved): trusted call0 callbacks, no privilege boundary.
+/* Bootstrap ABI v22 (earlier prefixes preserved): trusted call0 callbacks, no privilege boundary.
  * Loader supplies this table in a2; stack is built by cp32_exec_stack.
  * write returns bytes written or a negative error; exit must not return.
  * The kernel bridge supports one foreground process with write/exit/getpid/getppid IPC.
@@ -67,5 +67,18 @@ struct cp32_app_link_request {char source[256],destination[256];};
 struct cp32_app_position_request {unsigned offset,count;char data[64];};
 #define CP32_APP_PREAD 31
 #define CP32_APP_PWRITE 32
+struct cp32_app_fsinfo {unsigned zone_size,zones,free_zones,inodes,free_inodes,name_max;};
+#define CP32_APP_FSINFO 33 /* v22: sole mounted volume allocation counts */
 #define CP32_APP_FILE_MAX 4
+
+#define CP32_APP_RENAME 34 /* v23: replacement and directory moves */
+/* v24: explicit device completion; no pointer payload. */
+#define CP32_APP_SYNC 35
+#define CP32_APP_FSYNC 36
+/* v25: seconds since Unix epoch, range 0..INT32_MAX. */
+#define CP32_APP_TIME 37
+#define CP32_APP_STIME 38
+#define CP32_APP_UTIME 39
+struct cp32_app_utime_request {char path[256];unsigned atime,mtime,current;};
+struct cp32_utimbuf {unsigned actime,modtime;};
 #endif

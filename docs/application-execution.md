@@ -1259,3 +1259,66 @@ most64 bytes and may be short at zone boundaries; pwrite loops over chunks and
 returns prior progress on a later error, retaining cp32_errno. Zero-count calls
 still validate the descriptor and access mode. No standard-stream positional
 I/O is exposed. `hello --at` provides self-cleaning hardware acceptance.
+
+## ABI22: volume allocation counts
+
+`cp32_fsinfo(struct cp32_app_fsinfo *)` uses operation33 (`CP32_APP_FSINFO`)
+and a24-byte output record: zone_size, zones, free_zones, inodes, free_inodes,
+name_max (six32-bit unsigned fields). The kernel validates exact record size
+and the full span; unaligned output is supported through memcpy. On success the
+runtime returns0, otherwise-1 with cp32_errno. Older kernels return ENOSYS;
+null runtime buffers return EFAULT; unreadable/corrupt geometry uses normal FS
+error mapping. Failed scans do not publish a partial output record.
+
+Counts describe the sole mounted filesystem's allocatable data area. The scanner
+ignores reserved bit0 and bitmap padding, converts disk byte order and uses the
+validated zone size. Metadata space is excluded from zones; allocated indirect
+blocks are included in used zones. No file descriptor is needed. The operation
+also works with a full descriptor table or a read-only RAM recovery filesystem.
+`df` formats these values; `hello --space` checks allocation and final-close reuse.
+
+
+## ABI23: rename
+
+`cp32_rename(source, destination)` supports file replacement and directory moves,
+including replacement of an empty directory. Both names resolve in the caller's
+cwd; shell mv uses the same service. Open replaced regular files survive until
+final close. Source directory inode identity, open handles and live cwd paths
+survive moves. Cycles and type mismatches are rejected. Open or current-working
+destination directories are protected by the existing rmdir policy. The old
+`cp32_rename_noreplace` keeps its ABI16 regular-file behavior.
+
+Requests use the existing two bounded path strings and the new opcode34. Older
+services return ENOSYS through the runtime. No on-disk format change is needed.
+I/O failures can leave partial namespace changes; there is no rollback or
+power-loss atomicity. Cwd rebasing commits only when the rename completes.
+Hardware acceptance: update applications, run `hello --rename` twice, then
+`pwd`, `df`, `ls`. Expect Rename OK/exit0, cwd /, unchanged free counts and no
+ra/rb/rt/ru/rv leftovers. Requires three free KiB and three free inodes.
+
+## ABI24: synchronization
+
+`cp32_sync()` (operation35) and `cp32_fsync(fd)` (operation36) have no pointer
+payload or size argument. They return0 or -1 with errno. fsync validates an
+owned file/directory descriptor before the storage request; device errors map
+to EIO. Earlier service versions return ENOSYS. The single root device is
+synchronized for either operation; all writes are already synchronous and
+verified. Directory handles, duplicates and unlinked-open files are supported.
+Use `hello --sync` after updating applications. No on-disk format change.
+
+## ABI25: time and explicit inode timestamps
+
+TIME37 and STIME38 use one aligned 32-bit seconds record. UTIME39 uses a
+268-byte record: path[256], atime, mtime, current (0 or 1). Seconds are bounded
+to 0..2147483647. The kernel checks the complete application buffer before
+FS dispatch; FS obtains wall-clock seconds through CLOCK GET_TIME/SET_TIME.
+The application wrappers are cp32_time, cp32_stime and cp32_utime. They return
+0 or -1 with cp32_errno; older services return ENOSYS. Successful time reads
+publish the output only after a valid CLOCK reply. STIME requires effective
+uid0. UTIME follows MINIX2 owner/root or current-time write-permission rules,
+updates the V2 atime/mtime/ctime triple synchronously, and preserves inode size,
+links, ownership, mode and data. Both disk byte orders are supported.
+
+This does not supply a persistent RTC, automatic timestamps for ordinary file
+operations, supplementary groups or full ancestor-directory authorization.
+The clock resets each boot; inode timestamps persist on writable SD media.

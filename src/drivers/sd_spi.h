@@ -33,4 +33,5 @@ CP32_IRAM_EXT int cp32_sd_init(struct cp32_sd *, const struct cp32_sd_bus *);
 /* Failure may modify buffer; caller publishes it only on success. */
 CP32_IRAM_EXT int cp32_sd_write(struct cp32_sd *,uint32_t,const unsigned char [512]);
 CP32_IRAM_EXT int cp32_sd_read(struct cp32_sd *,uint32_t lba,unsigned char buffer[512]);
+CP32_IRAM_EXT int cp32_sd_sync(struct cp32_sd *);
 #endif

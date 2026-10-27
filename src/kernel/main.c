@@ -16,6 +16,16 @@ extern char _stack_bottom[];
 #if LOW_USER > 2 || NR_TASKS > 12
 #error Update runtime stack reservation for the configured process count
 #endif
+/* Unlike MINIX's separate shell process, CP32 keeps launch and FS work on
+ * one call chain. Allocate a dedicated stack; never borrow MM's adjacent one.
+ * The block remains owned by FS for the lifetime of this boot. */
+CP32_IRAM_EXT static reg_t cp32_fs_stack_allocate(void)
+{
+  phys_clicks base = cp32_mem_alloc(CP32_FS_STACK_BYTES >> CLICK_SHIFT, FS_PROC_NR);
+  if (!base) { panic("FS stack allocation", NO_NUM); return 0; }
+  return (reg_t)(base << CLICK_SHIFT) + CP32_FS_STACK_BYTES;
+}
+
 extern void systimer_irq_start(void);
 extern void clock_task(void);
 extern void sys_task(void);
@@ -150,6 +160,8 @@ void main(void)
     if (t < 0) {
       rp->p_reg.sp = (kernel_stack + 4096) & ~0x0F;
       kernel_stack += 4096;
+    } else if (t == FS_PROC_NR) {
+      rp->p_reg.sp = cp32_fs_stack_allocate();
     } else {
       rp->p_reg.sp = ((reg_t)_stack_bottom + 0x10000 +
                       (t * 4096) + 4096) & ~0x0F;
@@ -183,6 +195,10 @@ void main(void)
     }
     rp->p_map[S].mem_phys = rp->p_reg.sp >> CLICK_SHIFT;
     rp->p_map[S].mem_len = 4;
+    if (t == FS_PROC_NR) {
+      rp->p_map[S].mem_phys = (rp->p_reg.sp - CP32_FS_STACK_BYTES) >> CLICK_SHIFT;
+      rp->p_map[S].mem_len = CP32_FS_STACK_BYTES >> CLICK_SHIFT;
+    }
     rp->p_flags = cp32_boot_process_flags(t);
 
     /* Implemented services, including MEM, suspend on their receive frames. */
@@ -199,7 +215,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE APP-POSIO 157]");
+  usbj_print("[FEATURE FS-DATA-TIME 166]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -256,12 +272,12 @@ void main(void)
     int storage_result=cp32_root_init();
 #if !CP32_ROOT_RAM
 #ifdef CP32_SD_SOFT
-    usbj_print("[SD V157 transport=gpio]\r\n");
+    usbj_print("[SD V166 transport=gpio]\r\n");
 #else
-    usbj_print("[SD V157 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
+    usbj_print("[SD V166 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
 #endif
 #endif
-    usbj_print("[ROOT V157 backend=" CP32_ROOT_NAME " result=");
+    usbj_print("[ROOT V166 backend=" CP32_ROOT_NAME " result=");
     if(storage_result<0)usbj_print("-");
     usbj_print_u32((uint32_t)(storage_result<0 ? -storage_result:storage_result));
   }
@@ -332,9 +348,9 @@ void main(void)
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
 #if CP32_UPDATE_APPS
-  usbj_print("[UPDATER 157 enabled]\r\n");
+  usbj_print("[UPDATER 166 enabled]\r\n");
 #endif
-  usbj_print("[TEST APP-POSIO 157]\r\n");
+  usbj_print("[TEST FS-DATA-TIME 166]\r\n");
   kernel_idle_loop();
 }
 

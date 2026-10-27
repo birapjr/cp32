@@ -93,13 +93,29 @@ CP32_IRAM_EXT static int cp32_shell_disk_read(unsigned offset, char *buffer, int
                          offset,buffer,count);
 }
 
+/* FS is the only application broker; current trusted credentials still apply. */
+CP32_IRAM_EXT static int cp32_shell_clock(int setting,unsigned *seconds)
+{
+  message m;int r;
+  if(setting && *seconds>0x7fffffffU)return -22;
+  memset(&m,0,sizeof(m));m.m_type=setting ? SET_TIME:GET_TIME;
+  if(setting)m.NEW_TIME=*seconds;
+  r=_sendrec(CLOCK,&m);
+  if(r!=OK || m.m_source!=CLOCK || m.m_type!=OK)return -5;
+  if(!setting) {
+    if((unsigned)m.NEW_TIME>0x7fffffffU)return -75;
+    *seconds=(unsigned)m.NEW_TIME;
+  }
+  return 0;
+}
+
 #if !CP32_ROOT_RAM
 CP32_IRAM_EXT static int cp32_shell_disk_write(unsigned offset,const char *p,int n)
 { return cp32_shell_disk_io(DEV_WRITE,offset,(char *)p,n); }
 #if CP32_UPDATE_APPS
 #include "app-update.h"
 #include "app-payload.h"
-CP32_IRAM_EXT static void cp32_shell_update_apps(void)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_update_apps(void)
 {
   unsigned i;int r;
   cp32_shell_print("Updating /boot applications; keep power on.\r\n");
@@ -118,7 +134,7 @@ CP32_IRAM_EXT static void cp32_shell_update_apps(void)
   cp32_shell_print("Apps update OK\r\n");
 }
 #endif
-CP32_IRAM_EXT static void cp32_shell_chmod(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_chmod(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned mode=0,digits=0,n=0;int r;
@@ -164,7 +180,7 @@ CP32_IRAM_EXT static void cp32_shell_rename(const char *args)
   }
   while(*args==' ' || *args=='\t')args++;
   if(*args)goto usage;
-  r=cp32_minix_rename(cp32_shell_disk_read,cp32_shell_disk_write,
+  r=cp32_fproc_move(&cp32_shell_state,&cp32_app_state,cp32_shell_previous,cp32_shell_disk_read,cp32_shell_disk_write,
                       cp32_root_capacity(),paths[0],paths[1]);
 failure:
   if(r<0) {
@@ -173,9 +189,9 @@ failure:
   } else {cp32_shell_print("Rename OK");}
   cp32_shell_print("\r\n");return;
 usage:
-  cp32_shell_print("Usage: mv oldpath newpath (regular file; no replacement)\r\n");
+  cp32_shell_print("Usage: mv oldpath newpath (file or directory)\r\n");
 }
-CP32_IRAM_EXT static void cp32_shell_copy(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_copy(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],paths[2][CP32_MINIX_PATH_MAX+1];
   unsigned k,n,start;int r;
@@ -204,7 +220,7 @@ failure:
 usage:
   cp32_shell_print("Usage: cp source destination (new regular file)\r\n");
 }
-CP32_IRAM_EXT static void cp32_shell_mkdir(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_mkdir(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned n=0,start=0;int r;
@@ -292,7 +308,7 @@ CP32_IRAM_EXT static void cp32_shell_link(const char *args)
 usage:
   cp32_shell_print("Usage: link existing newpath (parent must exist)\r\n");
 }
-CP32_IRAM_EXT static void cp32_shell_truncate(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_truncate(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned n=0,length=0,digits=0;int r;
@@ -323,7 +339,7 @@ CP32_IRAM_EXT static void cp32_shell_truncate(const char *args)
 usage:
   cp32_shell_print("Usage: truncate path length (shrink only)\r\n");
 }
-CP32_IRAM_EXT static void cp32_shell_append(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_append(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned length=0,n;int r;
@@ -349,7 +365,7 @@ CP32_IRAM_EXT static void cp32_shell_append(const char *args)
 usage:
   cp32_shell_print("Usage: append path text (1-64 bytes)\r\n");
 }
-CP32_IRAM_EXT static void cp32_shell_create(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_create(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned length=0,start=0,n;int r;
@@ -380,7 +396,7 @@ CP32_IRAM_EXT static void cp32_shell_create(const char *args)
 usage:
   cp32_shell_print("Usage: create path [text] (name <=14, text 0-64 bytes)\r\n");
 }
-CP32_IRAM_EXT static void cp32_shell_patch(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_patch(const char *args)
 {
   char name[CP32_MINIX_PATH_MAX+1],path[CP32_MINIX_PATH_MAX+1];
   unsigned n=0,offset=0,digits=0;int r;
@@ -416,7 +432,20 @@ usage:
 }
 #endif
 
-CP32_IRAM_EXT static void cp32_shell_stat(const char *path)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_df(void)
+{
+  struct cp32_minix_space info;int r;
+  r=cp32_minix_space_read(cp32_shell_disk_read,cp32_root_capacity(),&info);
+  if(r){cp32_shell_print("Space read failed: ");cp32_shell_print_u32((uint32_t)-r);}
+  else {
+    cp32_shell_print("Free KiB ");cp32_shell_print_u32(info.free_zones*(info.zone_size/1024));
+    cp32_shell_print(" / ");cp32_shell_print_u32(info.zones*(info.zone_size/1024));
+    cp32_shell_print("\r\nFree inodes ");cp32_shell_print_u32(info.free_inodes);
+    cp32_shell_print(" / ");cp32_shell_print_u32(info.inodes);
+  }
+  cp32_shell_print("\r\n");
+}
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_stat(const char *path)
 {
   struct cp32_minix_stat info;
   char full[CP32_MINIX_PATH_MAX+1];
@@ -434,11 +463,13 @@ CP32_IRAM_EXT static void cp32_shell_stat(const char *path)
   cp32_shell_print(" links="); cp32_shell_print_u32(info.links);
   cp32_shell_print("\r\nuid="); cp32_shell_print_u32(info.uid);
   cp32_shell_print(" gid="); cp32_shell_print_u32(info.gid);
+  cp32_shell_print(" atime="); cp32_shell_print_u32(info.atime);
+  cp32_shell_print(" ctime="); cp32_shell_print_u32(info.ctime);
   cp32_shell_print(" mtime="); cp32_shell_print_u32(info.mtime);
   cp32_shell_print("\r\n");
 }
 
-CP32_IRAM_EXT static void cp32_shell_fsinfo(void)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_fsinfo(void)
 {
   struct cp32_minix_super super;
   int result = cp32_minix_super_read(cp32_shell_disk_read,
@@ -598,7 +629,7 @@ CP32_IRAM_EXT static int cp32_shell_open_file(const char *path)
  * Count raw bytes, LF lines and ASCII-whitespace-delimited words. Count word
  * starts, so EOF does not lose an unterminated word as in the old reference.
  * The single regular file has a 32-bit size, which bounds every counter. */
-CP32_IRAM_EXT static void cp32_shell_wc(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_wc(const char *args)
 {
   char full[CP32_MINIX_PATH_MAX+1], bytes[64];
   unsigned counts[3]={0,0,0}, flags=0, i;
@@ -715,6 +746,27 @@ CP32_IRAM_EXT int cp32_shell_app_file(unsigned op,int fd,void *buffer,unsigned a
 #else
   cp32_disk_writer write=cp32_shell_disk_write;
 #endif
+  if(op==CP32_APP_TIME || op==CP32_APP_STIME) {
+    if(op==CP32_APP_STIME && cp32_app_state.euid)return -1;
+    return cp32_shell_clock(op==CP32_APP_STIME,buffer);
+  }
+  if(op==CP32_APP_UTIME) {
+    struct cp32_app_utime_request *q=buffer;unsigned now;int r=cp32_shell_clock(0,&now);
+    return r ? r:cp32_fproc_utime(&cp32_app_state,cp32_shell_disk_read,write,
+      cp32_root_capacity(),q->path,q->atime,q->mtime,now,q->current);
+  }
+  if(op==CP32_APP_SYNC || op==CP32_APP_FSYNC) {
+    int r=cp32_fproc_file(&cp32_app_state,cp32_shell_disk_read,write,
+                          cp32_root_capacity(),op,fd,buffer,arg);
+    if(r)return r;
+    return cp32_shell_disk_io(CP32_DEV_SYNC,0,0,0)==OK ? 0:-5;
+  }
+  if(op==CP32_APP_RENAME) {
+    struct cp32_app_link_request *q=buffer;
+    int r=cp32_fproc_move(&cp32_app_state,&cp32_shell_state,cp32_shell_previous,
+      cp32_shell_disk_read,write,cp32_root_capacity(),q->source,q->destination);
+    return r ? cp32_fs_errno(r):0;
+  }
   if(op==CP32_APP_RMDIR)return cp32_fproc_rmdir(&cp32_app_state,&cp32_shell_state,
       cp32_shell_disk_read,write,cp32_root_capacity(),buffer);
   return cp32_fproc_file(&cp32_app_state,cp32_shell_disk_read,write,
@@ -1020,7 +1072,7 @@ CP32_IRAM_EXT static int cp32_shell_sys_query(uint32_t *ticks)
 }
 
 /* Previous-directory policy belongs to the command client, not FS chdir. */
-CP32_IRAM_EXT static void cp32_shell_cd(const char *path)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_cd(const char *path)
 {
   char next[CP32_MINIX_PATH_MAX+1];
   int previous = strcmp(path, "-") == 0;
@@ -1046,7 +1098,7 @@ CP32_IRAM_EXT static void cp32_shell_cd(const char *path)
 
 /* Compare raw bytes through two independent opens. No quoting/escape syntax
  * yet: the command client accepts two whitespace-separated path arguments. */
-CP32_IRAM_EXT static void cp32_shell_cmp(const char *args)
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_cmp(const char *args)
 {
   char names[2][64], full[CP32_MINIX_PATH_MAX+1], bytes[2][64];
   int fd[2]={-1,-1}, result=0, a, b;
@@ -1090,9 +1142,63 @@ usage:
   cp32_shell_print("Usage: cmp file1 file2\r\n");
 }
 
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_date(const char *args)
+{
+  unsigned value=0,digit;int setting=*args!=0,r;
+  if(setting) {
+    while(*args) {
+      digit=(unsigned char)*args++-'0';
+      if(digit>9 || value>(0x7fffffffU-digit)/10) {cp32_shell_print("Usage: date [seconds]\r\n");return;}
+      value=value*10+digit;
+    }
+  }
+  r=cp32_shell_clock(setting,&value);
+  if(r)cp32_shell_print("Clock failed\r\n");
+  else {cp32_shell_print_u32(value);cp32_shell_print("\r\n");}
+}
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_touch(const char *name)
+{
+  unsigned now;int r;char path[256];
+#if CP32_ROOT_RAM
+  cp32_disk_writer writer=0;
+#else
+  cp32_disk_writer writer=cp32_shell_disk_write;
+#endif
+  r=cp32_shell_clock(0,&now);
+  if(!r)r=cp32_fproc_utime(&cp32_shell_state,cp32_shell_disk_read,writer,
+                           cp32_root_capacity(),name,0,0,now,1);
+#if !CP32_ROOT_RAM
+  if(r==-2 && *name) {
+    r=cp32_minix_abspath(cp32_shell_cwd,name,path);
+    if(!r)r=cp32_minix_create(cp32_shell_disk_read,writer,cp32_root_capacity(),path,0,0);
+    if(!r)r=cp32_fproc_utime(&cp32_shell_state,cp32_shell_disk_read,writer,
+                             cp32_root_capacity(),name,0,0,now,1);
+  }
+#else
+  (void)path;
+#endif
+  cp32_shell_print(r ? "Touch failed\r\n":"Touch OK\r\n");
+}
+
+#if !CP32_ROOT_RAM
+CP32_IRAM_EXT static int cp32_shell_time_now(unsigned *now)
+{ return cp32_shell_clock(0,now); }
+#endif
+/* Keep command-local buffers out of the persistent shell/exec call chain.
+ * FS has a 4 KiB stack directly above the suspended MM server stack. */
 CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 {
-  if (strcmp(line, "ipc") == 0) {
+#if !CP32_ROOT_RAM
+  cp32_fs_time_bind(cp32_shell_disk_read,cp32_shell_disk_write,cp32_shell_time_now);
+#endif
+  if(!strcmp(line,"date") || (line[0]=='d' && line[1]=='a' && line[2]=='t' && line[3]=='e' && line[4]==' ')) {
+    cp32_shell_date(line[4] ? line+5:"");
+  } else if((line[0]=='t' && line[1]=='o' && line[2]=='u' && line[3]=='c' && line[4]=='h' && line[5]==' ')) {
+    cp32_shell_touch(line+6);
+  } else if (strcmp(line,"sync")==0) {
+    cp32_shell_print(cp32_shell_disk_io(CP32_DEV_SYNC,0,0,0)==OK ?
+                     "Sync OK\r\n":"Sync failed\r\n");
+  } else if (strcmp(line, "ipc") == 0) {
     message request;
     struct termios attributes;
     int result;
@@ -1187,6 +1293,8 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
              (line[0]=='r' && line[1]=='m' && line[2]=='d' && line[3]=='i' &&
               line[4]=='r' && (line[5]==' ' || line[5]=='\t'))) {
     cp32_shell_rmdir(line[5] ? line+6 : "");
+  } else if (strcmp(line,"df")==0) {
+    cp32_shell_df();
   } else if (strcmp(line,"mkdir")==0 ||
              (line[0]=='m' && line[1]=='k' && line[2]=='d' && line[3]=='i' &&
               line[4]=='r' && (line[5]==' ' || line[5]=='\t'))) {

@@ -6,6 +6,7 @@ static unsigned selected,packet_n,head,tail,clocks,init_tries;
 static unsigned version=2,hc=1,absent,stuck,bad_echo,bad_ocr,bad_csd,bad_crc,no_token,read_error;
 static uint8_t packet[6],queue[600];
 static uint32_t read_arg,write_arg;
+static unsigned ready_busy;
 static unsigned writing,write_n,write_reject,write_busy,status_error,command_error;
 static uint8_t written[514];
 static unsigned commands[64];
@@ -46,6 +47,7 @@ static void process(void) {
 static uint8_t transfer(uint8_t b) {
   if(!selected) {assert(b==255);clocks++;return 255;}
   if(absent)return 255;
+  if(ready_busy)return 0;
   if(head<tail)return queue[head++];
   if(writing) {
     if(writing==1) {if(b==255)return 255;assert(b==0xfe);writing=2;return 255;}
@@ -111,6 +113,11 @@ int main(void) {
   assert(!cp32_sd_write(&card,7,bytes) && !selected);
   assert(write_arg==(hc ? 7:7*512) && !memcmp(written,bytes,512));
   assert(commands[13]==1);
+  assert(!cp32_sd_sync(&card) && commands[13]==2 && !selected);
+  status_error=1;assert(cp32_sd_sync(&card)==CP32_SD_IO && !selected);status_error=0;
+  ready_busy=1;assert(cp32_sd_sync(&card)==CP32_SD_TIMEOUT && !selected);ready_busy=0;
+  fault=1;assert(cp32_sd_sync(&card)==CP32_SD_IO && !selected);fault=0;
+  card.ready=0;assert(cp32_sd_sync(&card)==CP32_SD_IO);card.ready=1;
   unsigned before=commands[24];
   assert(cp32_sd_write(&card,(uint32_t)card.sectors,bytes)==CP32_SD_IO && commands[24]==before);
   write_reject=11;assert(cp32_sd_write(&card,7,bytes)==CP32_SD_CRC && !selected);

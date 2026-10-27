@@ -51,7 +51,8 @@ CP32_FS_TEXT int cp32_minix_file_read(struct cp32_minix_file *file,
   unsigned chunk, within, zone, i;
   int result;
   if (!file || !file->read || (count && !buffer)) return -CP32_SUPER_INVALID;
-  if (!count || file->position >= file->size) return 0;
+  if (!count) return 0;
+  if(file->position>=file->size)return cp32_fs_data_time(file,1);
   chunk = file->size - file->position;
   if (chunk > count) chunk = count;
   if (chunk > sizeof(bytes)) chunk = sizeof(bytes);
@@ -65,6 +66,7 @@ CP32_FS_TEXT int cp32_minix_file_read(struct cp32_minix_file *file,
   } else {
     for (i = 0; i < chunk; i++) bytes[i] = 0;
   }
+  result=cp32_fs_data_time(file,1);if(result)return result;
   for (i = 0; i < chunk; i++) buffer[i] = bytes[i];
   file->position += chunk;
   return (int)chunk;

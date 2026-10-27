@@ -9,8 +9,12 @@ from test_idle_handoff import extract_function
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = ['clock_task', 'cp32_clock_task_dispatch', 'do_clocktick',
-         'do_getuptime', 'get_uptime']
-bodies = [extract_function(ROOT/'src/kernel/clock.c', n) for n in NAMES]
+         'do_getuptime', 'get_uptime', 'do_get_time', 'do_set_time']
+with tempfile.TemporaryDirectory() as source_dir:
+    source=Path(source_dir)/'clock.c'
+    source.write_text((ROOT/'src/kernel/clock.c').read_text().replace('do_set_time(m_ptr)\nmessage *m_ptr;', 'do_set_time(message *m_ptr)'))
+    bodies = [extract_function(source,n) for n in NAMES]
+
 PRELUDE = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -37,6 +41,8 @@ static struct proc proc[NR_TASKS+NR_PROCS];
 #define END_PROC_ADDR (proc+NR_TASKS+NR_PROCS)
 #define proc_number(p) ((p)->p_nr)
 static struct proc *bill_ptr, *prev_ptr, *current_proc;
+#define HZ 60
+static long boot_time;
 static clock_t realtime, pending_ticks, next_alarm;
 static int sched_ticks, watchdog_proc;
 static void (*watch_dog[NR_TASKS+NR_PROCS])(void);
@@ -52,8 +58,8 @@ static void cp32_trace_clock_receive(void) { traces++; }
 static void cause_sig(int n,int sig) { assert(n==0 && sig==SIGALRM); signals++; }
 static void watchdog(void) { assert(watchdog_proc==-3); watchdogs++; }
 void lock_sched(void) { schedules++; current_proc=&proc[0]; }
-static void do_get_time(void) { assert(!"unexpected get_time"); }
-static void do_set_time(message *m) { (void)m; assert(!"unexpected set_time"); }
+
+
 static void do_setalarm(message *m) { (void)m; assert(!"unexpected alarm request"); }
 static void do_setsyn_alrm(message *m) { (void)m; assert(!"unexpected sync alarm"); }
 static int receive(int src,message *m) {
@@ -88,6 +94,11 @@ int main(void) {
   assert(current_proc==bill_ptr && mask==3);
   assert(cp32_clock_task_dispatch(HARD_INT)==0);
   assert(signals==1 && watchdogs==1);
+  mc.NEW_TIME=1000;assert(cp32_clock_task_dispatch(SET_TIME)==1);
+  assert(cp32_clock_task_dispatch(GET_TIME)==1 && mc.NEW_TIME==1000);
+  realtime+=120;assert(cp32_clock_task_dispatch(GET_TIME)==1 && mc.NEW_TIME==1002);
+  mc.NEW_TIME=0;assert(cp32_clock_task_dispatch(SET_TIME)==1);
+  assert(cp32_clock_task_dispatch(GET_TIME)==1 && mc.NEW_TIME==0);
   puts("CLOCK task: live receive/dispatch/reply, retained uptime, quantum owner and alarms passed");
   return 0;
 }

@@ -33,7 +33,7 @@ long strtol(const char *,char **,int);
 #define vir2phys(p) ((uintptr_t)(p))
 enum { OK=0, EPERM=-1, EIO=-5, ENXIO=-6, EFAULT=-14, EINVAL=-22,
        EROFS=-30, FS_PROC_NR=1, HARDWARE=-1, MEM=-4, ANY=132, RAM_DEV=0,
-       DEV_READ=3, DEV_WRITE=4, DEV_IOCTL=5, DEV_OPEN=6, DEV_CLOSE=7,
+       CP32_DEV_SYNC=11, DEV_READ=3, DEV_WRITE=4, DEV_IOCTL=5, DEV_OPEN=6, DEV_CLOSE=7,
        TASK_REPLY=68 };
 typedef uintptr_t phys_bytes;
 typedef uintptr_t vir_bytes;
@@ -257,9 +257,9 @@ int main(void) {
   assert(!strcmp(console+cursor,"DOUBLE INDIRECT READ OK\r\n"));
   assert(cp32_ramdisk_checksum(0,capacity,&after)==0 && before==after);
   console[0]=0; cp32_shell_stat("readme");
-  assert(!strcmp(console,"file inode=3 size=61 links=3\r\nuid=0 gid=0 mtime=0\r\n"));
+  assert(!strcmp(console,"file inode=3 size=61 links=3\r\nuid=0 gid=0 atime=0 ctime=0 mtime=0\r\n"));
   console[0]=0; cp32_shell_stat("boot");
-  assert(!strcmp(console,"directory inode=2 size=96 links=3\r\nuid=0 gid=0 mtime=0\r\n"));
+  assert(!strcmp(console,"directory inode=2 size=96 links=3\r\nuid=0 gid=0 atime=0 ctime=0 mtime=0\r\n"));
   assert(cp32_minix_chdir(cp32_shell_disk_read,capacity,cp32_shell_cwd,"boot")==0);
   assert(!strcmp(cp32_shell_cwd,"/boot"));
   console[0]=0; cp32_shell_stat("double");
@@ -505,7 +505,7 @@ with tempfile.TemporaryDirectory(prefix='cp32-memory-task-') as folder:
                     '-I' + str(ROOT / 'src/kernel'), '-I' + str(ROOT / 'src/fs'), '-I' + str(p), str(p / 'test.c'),
                     str(ROOT / 'src/kernel/ramdisk.c'),
                     *[str(ROOT / 'src/fs' / name) for name in
-                      ('cache.c','super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c','create.c','write.c')],
+                      ('cache.c','super.c','utility.c','inode.c','path.c','misc.c','filedes.c','open.c','read.c','timestamp.c','stadir.c','create.c','write.c')],
                     *[str(ROOT / 'src/lib/posix' / name) for name in ('opendir.c','readdir.c','closedir.c','rewinddir.c')],
                     str(ROOT / 'src/lib/other/seekdir.c'), str(ROOT / 'src/lib/other/telldir.c'),
                     str(p/'strtol.o'), str(ROOT/'src/lib/other/errno.c'),

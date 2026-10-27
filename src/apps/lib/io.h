@@ -24,6 +24,7 @@ int cp32_mkdir(const char *path,unsigned mode);
 /* Explicit offsets leave shared position unchanged; pwrite ignores APPEND. */
 int cp32_pread(int fd,void *buffer,unsigned count,int offset);
 int cp32_pwrite(int fd,const void *buffer,unsigned count,int offset);
+int cp32_fsinfo(struct cp32_app_fsinfo *info);
 int cp32_fchmod(int fd,unsigned mode);
 int cp32_ftruncate(int fd,int length);
 int cp32_rmdir(const char *path);
@@ -57,6 +58,7 @@ int cp32_fcntl(int fd,int command,unsigned argument);
 #define CP32_ENAMETOOLONG 36
 #define CP32_ENOSYS 38
 #define CP32_ESPIPE 29
+#define CP32_EPERM 1
 #define CP32_EIO 5
 #define CP32_EBADF 9
 #define CP32_EFAULT 14
@@ -93,4 +95,11 @@ int cp32_write(int fd,const void *buffer,unsigned count);
  * Capacity must be >=2. Returns length, 0 at EOF, -1 on error (partial text
  * remains terminated). No read-ahead: excess input remains available. */
 int cp32_readline(char *buffer,unsigned capacity);
+
+int cp32_time(unsigned *seconds);
+int cp32_stime(unsigned seconds);
+int cp32_utime(const char *path,const struct cp32_utimbuf *times);
+int cp32_sync(void);
+int cp32_fsync(int fd);
+int cp32_rename(const char *,const char *);
 #endif

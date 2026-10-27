@@ -8,7 +8,7 @@ from test_idle_handoff import extract_function
 sys.path.insert(0,str(root/'tools'))
 from make_minix_demo import build_image
 shell=root/'src/kernel/cp32-shell.c'
-code='\n'.join(extract_function(shell,n) for n in ('cp32_shell_app_files_reset','cp32_shell_app_files_exec','cp32_shell_exec_open','cp32_shell_exec_close','cp32_shell_app_file','cp32_shell_app_read'))
+code='\n'.join(extract_function(shell,n).replace('_sendrec(', 'clock_sendrec(') if n=='cp32_shell_clock' else extract_function(shell,n) for n in ('cp32_shell_clock','cp32_shell_app_files_reset','cp32_shell_app_files_exec','cp32_shell_exec_open','cp32_shell_exec_close','cp32_shell_app_file','cp32_shell_app_read'))
 replace=extract_function(root/'src/kernel/application.c','application_replace')
 # Only physical-address accesses and instruction synchronization are modeled.
 replace=replace.replace('memcpy(&copy,request->m1_p1,sizeof(copy));','memcpy(&copy,live_data+(p-CP32_APP_DATA),sizeof(copy));')
@@ -35,7 +35,7 @@ pre=r'''
 #define CP32_MM_RELEASE 3002
 #define CLICK_SHIFT 12
 typedef uintptr_t reg_t;
-typedef struct {int m_type,m_source,m1_i1,m1_i3;char *m1_p1;} message;
+typedef struct {unsigned NEW_TIME;int m_type,m_source,m1_i1,m1_i3;char *m1_p1;} message;
 struct proc {
  struct {reg_t a[16],pc,psw,sp,sar,lbeg,lend,lcount;} p_reg;
  int p_pid,p_flags,p_getfrom,p_sendto;
@@ -48,10 +48,32 @@ struct proc {
 static unsigned char disk[65536],live_text[16384],live_data[16384],staging[32768];
 static unsigned char old_text[16384],old_data[16384];
 #include "fproc.h"
+static char cp32_shell_previous[256];
 static struct cp32_fproc cp32_shell_state={.pid=1,.root_inode=1,.cwd="/"};
 static struct cp32_fproc cp32_app_state={.pid=123,.root_inode=1,.mask=0022,.cwd="/"};
 
 #define cp32_shell_cwd cp32_app_state.cwd
+#define CP32_DEV_SYNC 11
+#ifndef OK
+#define OK 0
+#endif
+#define CLOCK -3
+#define GET_TIME 3
+#define SET_TIME 4
+static unsigned clock_seconds;
+static int clock_failure;
+static int clock_sendrec(int endpoint,message *m) {
+ assert(endpoint==CLOCK);
+ if(clock_failure)return -5;
+ if(m->m_type==SET_TIME)clock_seconds=m->NEW_TIME;
+ else {assert(m->m_type==GET_TIME);m->NEW_TIME=clock_seconds;}
+ m->m_source=CLOCK;m->m_type=OK;return OK;
+}
+
+static int sync_result,sync_calls;
+static int cp32_shell_disk_io(int op,unsigned offset,char *buffer,int count) {
+ assert(op==CP32_DEV_SYNC && !offset && !buffer && !count);sync_calls++;return sync_result;
+}
 static unsigned cp32_root_capacity(void) {return sizeof(disk);}
 static int read_count,fail_read;
 static int cp32_shell_disk_write(unsigned off,const char *p,int n) {
@@ -99,7 +121,7 @@ static void setup(void) {
 static int attempt(struct cp32_app_exec_request *q,int expected) {
  memcpy(live_data,q,sizeof(*q));memcpy(old_data,live_data,sizeof(old_data));memcpy(old_text,live_text,sizeof(old_text));
  struct proc old=child;uint32_t f=floor_value,b=break_value;
- message m={0,0,0,sizeof(*q),(char *)CP32_APP_DATA};
+ message m={.m1_i3=sizeof(*q),.m1_p1=(char *)CP32_APP_DATA};
  int r=application_replace(&child,&m,&floor_value,&break_value);
  if(expected!=999)assert(r==expected);
  assert(!allocated);
@@ -144,7 +166,7 @@ int main(int argc,char **argv) {
  q.argc=10;attempt(&q,-7);q.argc=2;
  memset(q.args,'x',sizeof(q.args));attempt(&q,-7);memset(q.args,0,sizeof(q.args));memcpy(q.args,"alias\0argument",15);
  q.path[255]='x';attempt(&q,-36);q.path[255]=0;
- message m={0,0,0,sizeof(q),(char *)(CP32_APP_TOP-1)};
+ message m={.m1_i3=sizeof(q),.m1_p1=(char *)(CP32_APP_TOP-1)};
  assert(application_replace(&child,&m,&floor_value,&break_value)==-14);
  m.m1_i3--;assert(application_replace(&child,&m,&floor_value,&break_value)==-22);
  /* Inject every disk read failure including reads after partial payload load. */

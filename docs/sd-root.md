@@ -1,4 +1,4 @@
-# SD-backed MINIX root (image 142)
+# SD-backed MINIX root
 
 The default build reads its MINIX V2 filesystem from the Cardputer Adv microSD
 slot. Neither the 64 KiB RAM disk nor the compressed demo bytes are linked into
@@ -33,12 +33,24 @@ Outputs:
 
 - `build/cp32.bin`: default SD-root firmware, image 142, hardware SPI2 transport.
 - `build/sdcard.img`: whole-card MBR image, with one primary type-0x81 MINIX
-  partition starting at sector 2048. Contains all six current application ELFs.
-- `build/minix-demo.img`: the bare 64 KiB MINIX volume, for an already prepared
-  partition. The tiny fixture size is independent of the firmware's storage
-  limit; larger externally prepared MINIX V2 volumes can be used.
+  partition starting at sector 2048: **100 MiB, 4,096 inodes**, all six current
+  application ELFs. The complete image is 101 MiB including the 1 MiB prefix.
+- `build/minix-demo.img`: the bare 64 KiB RAM recovery/test fixture. Use
+  `sdcard.img` for normal SD development; the image builder relocates data and
+  indirect tables into the larger bitmap/inode-table geometry.
 
-`make sdimage` regenerates the card image. These targets only write regular
+`make sdimage` regenerates the card image. Override `SD_SIZE_MIB=100` and
+`SD_INODES=4096` to choose another size (1–1024 MiB; 16-bit inode count).
+The final physical block remains reserved for the restored-sector diagnostic.
+The image has no extra memory cost on the Cardputer.
+
+Installing the larger image replaces the old filesystem, including test files;
+back up files before writing the card. The apps updater cannot resize it.
+After writing, image166 should report `capacity=104857600`; `df` should show
+roughly 102073 / 102127 free KiB and 4084 / 4096 free inodes before new files.
+The old 64 KiB boot examples below are historical hardware captures.
+
+`make sdimage` only generates an image. These targets only write regular
 host files, never devices. Creating the image does not flash the board or card.
 
 For the previous RAM-backed recovery configuration:
@@ -1435,3 +1447,55 @@ check. RAM recovery excludes SD-writing acceptance commands and returns EROFS.
 Feature/TEST FS-UNLINK147, ROOT/SD V147, optional UPDATER147 enabled. Hardware
 acceptance pending: update with apps, run hello --unlink twice, ls (no utest),
 then hello --state/cleanup and hello --exec. Do not mark hardware complete yet.
+
+
+## Growing directories (image159)
+
+The historical one-block parent limit above is superseded. Directory namespace
+operations now address direct and single-indirect mappings, up to 263 KiB using
+1 KiB zones. Deleted entries are reused; unlink does not compact directories.
+Removing a grown empty directory releases all its data and indirect-table zones.
+Open directory descriptors refresh size/mappings while retaining their offsets.
+The on-disk format and ABI22 remain unchanged; existing SD cards need no reformat.
+
+Install updated applications with `make updater`, `make flash-updater`, then
+`apps` on the Cardputer. Restore normal firmware with `make` and `make flash`.
+Run `df`, `hello --grow` twice, `df`, `ls`. Expect `Growth OK` and `Hello exit=0`
+each time, unchanged free counts and no `gtest`. The self-cleaning test needs
+2 free KiB and 3 free inodes. Hardware acceptance is pending; retain any failed
+command's log and leftovers for diagnosis.
+
+Failed expansion/publication can leave empty reusable directory capacity or
+leaked allocations. Verified synchronous writes remain non-transactional;
+power-loss recovery, scaled-zone writes and double-indirect mutation are not
+provided by this milestone.
+
+
+## Rename with replacement and directory moves (image160)
+
+Shell `mv old new` / `rename old new` now replaces regular files and moves
+files/directories, including replacement of an empty directory of matching type.
+The destination is always an explicit final name. Directory cycles and replacing
+open/current working directories are rejected. Cwd paths follow successful moves;
+open replaced regular files retain their original inode until final close.
+Applications use ABI23 `cp32_rename`; `cp32_rename_noreplace` remains unchanged.
+
+Update applications using updater/apps, then restore normal firmware. Run `df`,
+`hello --rename` twice, `hello --exec`, `mm`, `pwd`, `df`, `ls`. Expect Rename OK
+and exit0 twice, normal exec/MM success, cwd /, unchanged free counts and no
+ra/rb/rt/ru/rv leftovers. Three free KiB and three inodes are sufficient for the
+rename test. Hardware validation is pending. On I/O failure, preserve the log
+and inspect both names after reboot; operations are not power-loss atomic.
+
+## Explicit completion (image164)
+
+The shell `sync` command and ABI24 sync/fsync requests reach the serialized
+storage task. SD uses bounded readiness polling and CMD13 status, in addition
+to the existing write-time completion/readback checks. An earlier uncertain
+write or a new status error remains latched until reinitialization; sync does
+not clear the latch. No dirty host blocks are queued. RAM recovery's sync is
+only in-memory completion. Neither mode adds power-loss atomicity.
+
+After updating applications, test `sync` and `hello --sync`. For reboot
+persistence, use a new filename: `create s hi`, `sync`, full reset, `cat s`,
+then `rm s` and `sync`. Retain serial output; hardware validation is pending.

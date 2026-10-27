@@ -49,3 +49,31 @@ CP32_FS_TEXT int cp32_fs_allocated(cp32_disk_reader read, unsigned map,
   if (read(map + (bit / 16) * 2, (char *)word, 2) != 2) return -CP32_SUPER_IO;
   return (cp32_fs_u16(word, swap) & (1U << (bit % 16))) ? 0 : -CP32_SUPER_INVALID;
 }
+
+/* MINIX df scans endian-converted allocation maps. Exclude reserved bit0
+ * and padding; publish no partial result on an I/O or geometry failure. */
+CP32_FS_TEXT static int count_free(cp32_disk_reader read,unsigned map,unsigned last,
+    unsigned swap,unsigned *out)
+{
+  unsigned bit,word=0,free=0;unsigned char raw[2];
+  for(bit=1;bit<=last;bit++) {
+    if(bit==1 || !(bit%16)) {
+      if(read(map+bit/16*2,(char *)raw,2)!=2)return -CP32_SUPER_IO;
+      word=cp32_fs_u16(raw,swap);
+    }
+    if(!(word&(1U<<(bit%16))))free++;
+  }
+  *out=free;return 0;
+}
+CP32_FS_TEXT int cp32_minix_space_read(cp32_disk_reader read,unsigned capacity,
+    struct cp32_minix_space *out)
+{
+  struct cp32_minix_super s;struct cp32_minix_space info;int r;
+  if(!out)return -CP32_SUPER_INVALID;
+  cp32_cache_invalidate();r=cp32_minix_super_read(read,capacity,&s);if(r)return -r;
+  info.zone_size=1024U<<s.log_zone_size;info.zones=s.zones-s.first_data_zone;
+  info.inodes=s.ninodes;info.name_max=14;
+  r=count_free(read,2048,s.ninodes,s.swapped,&info.free_inodes);if(r)return r;
+  r=count_free(read,(2+s.imap_blocks)*1024,info.zones,s.swapped,&info.free_zones);if(r)return r;
+  *out=info;return 0;
+}

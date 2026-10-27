@@ -9,12 +9,14 @@ LD      = xtensa-esp32s3-elf-gcc
 OBJCOPY = xtensa-esp32s3-elf-objcopy
 
 # Flags
-CFLAGS  = -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
+CFLAGS  = -fstack-usage -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
 # SD is the default root. RAM remains a separate recovery build.
 STORAGE ?= sd
+SD_SIZE_MIB ?= 100
+SD_INODES ?= 4096
 SD_SPI ?= hardware
 UPDATE_APPS ?= 0
 ifeq ($(UPDATE_APPS),1)
@@ -44,7 +46,7 @@ endif
 C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
 MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
-FS_SRCS = appfile.c fproc.c misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
+FS_SRCS = timestamp.c time.c rename.c appfile.c fproc.c misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
 # The recovery image exposes no SD mutation commands.
 ifeq ($(STORAGE),ram)
 FS_SRCS := $(filter-out create.c,$(FS_SRCS))
@@ -114,9 +116,13 @@ $(BUILD_DIR)/lib/ansi/%.o: lib/ansi/%.c | $(BUILD_DIR)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Keep the blocking MM task at its previously hardware-tested -O0 setting.
+# Image160 halted at PC0 on its first exec/MM request after optimizing this
+# task. Pure allocator/image/stack helpers retain -Os and the SRAM budget.
+# Optimized task resumption needs separate hardware validation.
 $(BUILD_DIR)/mm/%.o: mm/%.c $(MM_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(if $(filter main.c,$(<F)),-O0,-Os) -c $< -o $@
 
 # Filesystem C has no interrupt-entry/register-frame responsibilities.
 # Optimize this bounded service for SRAM size; kernel/assembly remain -O0.
@@ -126,6 +132,10 @@ $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 
 # Shell/FS services are ordinary call0 C, with no IRQ frame construction.
 # Use the same size policy as FS to retain heap/stacks as the service grows.
+$(BUILD_DIR)/memory.o: CFLAGS += -Os
+$(BUILD_DIR)/clock.o: CFLAGS += -Os
+$(BUILD_DIR)/system.o: CFLAGS += -Os
+$(BUILD_DIR)/rootdisk.o: CFLAGS += -Os
 $(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
@@ -254,8 +264,12 @@ $(BUILD_DIR)/exec.elf: apps/hello/start.S apps/exec/exec.c apps/lib/io.c apps/li
 # Only regular host image files are produced; no card is written by make.
 .PHONY: sdimage
 sdimage: $(BUILD_DIR)/sdcard.img
-$(BUILD_DIR)/sdcard.img: $(BUILD_DIR)/minix-demo.h ../tools/make_sd_image.py
-	python3 ../tools/make_sd_image.py $(BUILD_DIR)/minix-demo.img $@
+$(BUILD_DIR)/.sd-size-$(SD_SIZE_MIB)-$(SD_INODES): | $(BUILD_DIR)
+	rm -f $(BUILD_DIR)/.sd-size-*
+	touch $@
+
+$(BUILD_DIR)/sdcard.img: $(BUILD_DIR)/minix-demo.h ../tools/make_sd_image.py ../tools/fsck_minix.py $(BUILD_DIR)/.sd-size-$(SD_SIZE_MIB)-$(SD_INODES)
+	python3 ../tools/make_sd_image.py $(BUILD_DIR)/minix-demo.img $@ --size-mib $(SD_SIZE_MIB) --inodes $(SD_INODES)
 
 # Opt-in maintenance firmware: normal builds contain neither command nor payload.
 .PHONY: updater flash-updater
@@ -271,3 +285,9 @@ $(BUILD_DIR)/cp32-shell.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/app-update.o: kernel/app-update.c kernel/app-update.h $(FS_HEADERS)
 $(BUILD_DIR)/app-update.o: CFLAGS += -Os
 endif
+
+# Read-only host checker; alternate paths must be offline image files.
+FSCK_IMAGE ?= $(BUILD_DIR)/sdcard.img
+.PHONY: fsck
+fsck: $(FSCK_IMAGE)
+	python3 ../tools/fsck_minix.py "$(FSCK_IMAGE)"

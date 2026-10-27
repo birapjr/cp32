@@ -5,6 +5,10 @@
 /* Temporary guard for the downward-growing early kernel stack. */
 #define CP32_STACK_GUARD_WORD 0xC0325A7Au
 
+/* FS hosts the shell, application service and nested filesystem mutations.
+ * Reserve its stack through MM before any process becomes runnable. */
+#define CP32_FS_STACK_BYTES 8192U
+
 #define K_STACK_BYTES   4096	/* stack space for the kernel on DRAM */
 
 /* Sizes of memory tables. */

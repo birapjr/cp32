@@ -261,6 +261,20 @@ int cp32_rename_noreplace(const char *source,const char *destination)
   return file_call(CP32_APP_RENAME_NOREPLACE,0,&q,sizeof(q));
 }
 
+int cp32_rename(const char *source,const char *destination)
+{
+  struct cp32_app_link_request q;unsigned i;
+  if(!api || api->version<23)return io_error(CP32_ENOSYS);
+  if(!source || !destination)return io_error(CP32_EFAULT);
+  for(i=0;i<255 && source[i];i++)q.source[i]=source[i];
+  if(source[i])return io_error(CP32_ENAMETOOLONG);
+  q.source[i]=q.source[255]=0;
+  for(i=0;i<255 && destination[i];i++)q.destination[i]=destination[i];
+  if(destination[i])return io_error(CP32_ENAMETOOLONG);
+  q.destination[i]=q.destination[255]=0;
+  return file_call(CP32_APP_RENAME,0,&q,sizeof(q));
+}
+
 int cp32_ftruncate(int fd,int length)
 {
   if(!api || api->version<17)return io_error(CP32_ENOSYS);
@@ -305,3 +319,47 @@ int cp32_pread(int fd,void *buffer,unsigned count,int offset)
 {return position_io(fd,buffer,count,offset,0);}
 int cp32_pwrite(int fd,const void *buffer,unsigned count,int offset)
 {return position_io(fd,(void *)buffer,count,offset,1);}
+
+int cp32_fsinfo(struct cp32_app_fsinfo *info)
+{
+  if(!api || api->version<22)return io_error(CP32_ENOSYS);
+  if(!info)return io_error(CP32_EFAULT);
+  return file_call(CP32_APP_FSINFO,0,info,sizeof(*info));
+}
+
+int cp32_sync(void)
+{
+  if(!api || api->version<24)return io_error(CP32_ENOSYS);
+  return file_call(CP32_APP_SYNC,0,0,0);
+}
+int cp32_fsync(int fd)
+{
+  if(!api || api->version<24)return io_error(CP32_ENOSYS);
+  return file_call(CP32_APP_FSYNC,fd,0,0);
+}
+
+int cp32_time(unsigned *seconds)
+{
+  unsigned value;int r;
+  if(!api || api->version<25)return io_error(CP32_ENOSYS);
+  if(!seconds)return io_error(CP32_EFAULT);
+  r=file_call(CP32_APP_TIME,0,&value,sizeof(value));if(!r)*seconds=value;return r;
+}
+int cp32_stime(unsigned seconds)
+{
+  if(!api || api->version<25)return io_error(CP32_ENOSYS);
+  if(seconds>0x7fffffffU)return io_error(CP32_EINVAL);
+  return file_call(CP32_APP_STIME,0,&seconds,sizeof(seconds));
+}
+int cp32_utime(const char *path,const struct cp32_utimbuf *times)
+{
+  struct cp32_app_utime_request q;unsigned i;
+  if(!api || api->version<25)return io_error(CP32_ENOSYS);
+  if(!path)return io_error(CP32_EFAULT);
+  for(i=0;i<256 && path[i];i++)q.path[i]=path[i];
+  if(i==256)return io_error(CP32_ENAMETOOLONG);
+  q.path[i]=0;q.path[255]=0;q.current=times==0;
+  q.atime=times ? times->actime:0;q.mtime=times ? times->modtime:0;
+  if(q.atime>0x7fffffffU || q.mtime>0x7fffffffU)return io_error(CP32_EINVAL);
+  return file_call(CP32_APP_UTIME,0,&q,sizeof(q));
+}

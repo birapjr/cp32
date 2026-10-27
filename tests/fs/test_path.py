@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror',
                     '-I'+str(ROOT/'src/kernel'),
                     str(ROOT/'src/fs/super.c'), str(ROOT/'src/fs/utility.c'),
-                    *[str(ROOT/'src/fs'/name) for name in ('inode.c','path.c','misc.c','filedes.c','open.c','read.c','stadir.c','create.c','write.c','cache.c')], '-o', path], check=True)
+                    *[str(ROOT/'src/fs'/name) for name in ('inode.c','path.c','misc.c','filedes.c','open.c','read.c','timestamp.c','stadir.c','create.c','write.c','cache.c')], '-o', path], check=True)
     lib = C.CDLL(path)
     lib.cp32_minix_root_open.argtypes = [Reader, C.c_uint, C.POINTER(Dir)]
     lib.cp32_minix_dir_open.argtypes = [Reader, C.c_uint, C.c_char_p, C.POINTER(Dir)]
