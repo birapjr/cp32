@@ -19,6 +19,8 @@ CP32_IRAM_EXT PRIVATE int cp32_mem_request(const message *request)
       return capacity ? OK : ENXIO;
     case DEV_CLOSE:
       return OK;
+    case CP32_DEV_SYNC:
+      return !capacity ? ENXIO : cp32_root_sync() ? EIO : OK;
     case DEV_READ:
     case DEV_WRITE:
       break;

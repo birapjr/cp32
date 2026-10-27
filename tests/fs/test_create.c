@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "fs.h"
+#include "fproc.h"
 static unsigned char disk[65536],original[65536];
 static unsigned writes,fail_at,after,read_fail;
 static int raw_read(unsigned at,char *p,int n)
@@ -92,10 +93,10 @@ static void run(unsigned swap)
   reset();put16(6*1024+48,0,swap);
   assert(cp32_minix_create_root(read_disk,write_disk,sizeof(disk),"note","hello",5)==5);
   assert(get32(4104,swap)==64 && writes==22);check_file("/note","hello",5);
-  /* Full existing directory block: no directory growth allocation yet. */
+  /* Full existing directory block grows into a second block. */
   reset();put32(4104,1024,swap);
   for(unsigned at=64;at<1024;at+=16) {put16(6*1024+at,3,swap);memcpy(disk+6*1024+at+2,"used",4);}
-  assert(cp32_minix_create_root(read_disk,write_disk,sizeof(disk),"note","hello",5)==-CP32_FILE_NOSPACE && !writes);
+  assert(cp32_minix_create_root(read_disk,write_disk,sizeof(disk),"note","hello",5)==5);
   for(unsigned commit=0;commit<2;commit++)for(unsigned fail=1;fail<=steps;fail++) {
     reset();fail_at=fail;after=commit;
     assert(cp32_minix_create_root(read_disk,write_disk,sizeof(disk),"note","hello",5)==-CP32_SUPER_IO);
@@ -135,7 +136,7 @@ static void run_link(unsigned swap)
   assert(cp32_minix_link_root(read_disk,write_disk,sizeof(disk),"/readme","alias")==-CP32_FILE_LINK_LIMIT && !writes);
   reset();put32(4104,1024,swap);
   for(unsigned at=64;at<1024;at+=16) {put16(6*1024+at,3,swap);memcpy(disk+6*1024+at+2,"used",4);}
-  assert(cp32_minix_link_root(read_disk,write_disk,sizeof(disk),"/readme","alias")==-CP32_FILE_NOSPACE && !writes);
+  assert(cp32_minix_link_root(read_disk,write_disk,sizeof(disk),"/readme","alias")==0);
   reset();put16(6*1024+48,0,swap);
   assert(!cp32_minix_link_root(read_disk,write_disk,sizeof(disk),"/boot/readme","12345678901234"));
   assert(writes==2 && get32(4104,swap)==64);
@@ -522,9 +523,10 @@ static void run_rename(unsigned swap)
   assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/readme","/12345678901234") && writes==1);
   reset();put32(4104,1024,swap);
   for(unsigned at=64;at<1024;at+=16) {put16(6*1024+at,3,swap);memcpy(disk+6*1024+at+2,"used",4);}
-  assert(cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/boot/readme","/new")==-CP32_FILE_NOSPACE && !writes);
-  /* In-place rename needs no free directory slot, even in a full directory. */
-  assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/readme","/new") && writes==1);
+  assert(cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/boot/readme","/new")==0);
+  /* In-place rename writes one entry in the grown directory. */
+  writes=0;
+  assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/readme","/other") && writes==1);
   reset(); /* Move back from /boot into a deleted root slot without growing it. */
   assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/readme","/boot/moved"));
   writes=0;assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/boot/moved","/back"));
@@ -589,7 +591,7 @@ static void run_create_path(unsigned swap)
   assert(writes==22 && get32(4168,swap)==48);check_file("/boot/note","nested",6);
   reset();put32(4168,1024,swap);
   for(unsigned at=48;at<1024;at+=16) {put16(7*1024+at,3,swap);memcpy(disk+7*1024+at+2,"used",4);}
-  assert(cp32_minix_create(read_disk,write_disk,sizeof(disk),"/boot/note","nested",6)==-CP32_FILE_NOSPACE && !writes);
+  assert(cp32_minix_create(read_disk,write_disk,sizeof(disk),"/boot/note","nested",6)==6);
   for(unsigned commit=0;commit<2;commit++)for(unsigned fail=1;fail<=steps;fail++) {
     reset();fail_at=fail;after=commit;
     assert(cp32_minix_create(read_disk,write_disk,sizeof(disk),"/boot/note","nested",6)==-CP32_SUPER_IO);
@@ -698,12 +700,136 @@ static void run_rmdir(unsigned swap)
   memcpy(original,saved,sizeof(saved));reset();
   puts("rmdir: emptiness, dot validation, cwd/open/root protection, counts/reuse and every write failure pass");
 }
+static void run_move(void)
+{
+  struct cp32_minix_stat a,b;struct cp32_fproc p={.pid=10,.root_inode=1,.cwd="/"},q={.pid=1,.root_inode=1,.cwd="/"};
+  char previous[256]="/";char bytes[8];int held;
+  reset();assert(cp32_minix_create(read_disk,write_disk,sizeof(disk),"/a","new",3)==3);
+  assert(cp32_minix_create(read_disk,write_disk,sizeof(disk),"/b","old",3)==3);
+  held=cp32_fd_open(read_disk,sizeof(disk),"/b");assert(held>=0);
+  assert(!cp32_minix_move(read_disk,write_disk,sizeof(disk),"/a","/b"));
+  assert(cp32_fd_read(held,bytes,3)==3 && !memcmp(bytes,"old",3));
+  assert(!cp32_fd_fstat(held,&a) && a.links==0);assert(!cp32_fd_close(held));check_file("/b","new",3);
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/left"));
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/right"));
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/left/sub"));
+  assert(!cp32_fproc_chdir(&p,read_disk,sizeof(disk),"/left/sub"));
+  strcpy(q.cwd,"/left");strcpy(previous,"/left/sub");
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/left",&a));
+  held=cp32_fd_open(read_disk,sizeof(disk),"/left");assert(held>=0);
+  assert(!cp32_fproc_move(&p,&q,previous,read_disk,write_disk,sizeof(disk),"/left","/right/moved"));
+  assert(!strcmp(p.cwd,"/right/moved/sub") && !strcmp(q.cwd,"/right/moved") && !strcmp(previous,p.cwd));
+  assert(!cp32_fd_fstat(held,&b) && b.inode==a.inode);assert(!cp32_fd_close(held));
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/right/moved/..",&a));
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/right",&b) && a.inode==b.inode && b.links==3);
+  writes=0;assert(cp32_fproc_move(&p,&q,previous,read_disk,write_disk,sizeof(disk),"/right","/right/moved/sub/bad")==-CP32_SUPER_INVALID && !writes);
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/empty"));
+  assert(!cp32_fproc_move(&p,&q,previous,read_disk,write_disk,sizeof(disk),"/right/moved","/empty"));
+  assert(!strcmp(p.cwd,"/empty/sub") && !strcmp(q.cwd,"/empty"));
+  assert(cp32_minix_move(read_disk,write_disk,sizeof(disk),"/b","/empty")==-CP32_FILE_IS_DIR);
+  assert(cp32_minix_move(read_disk,write_disk,sizeof(disk),"/empty","/b")==-CP32_FILE_NOT_DIR);
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/other"));
+  assert(cp32_minix_move(read_disk,write_disk,sizeof(disk),"/other","/empty")==-CP32_FILE_NOT_EMPTY);
+  assert(!cp32_fproc_chdir(&p,read_disk,sizeof(disk),"/"));strcpy(q.cwd,"/");
+  assert(!cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/empty/sub","/"));
+  assert(!cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/empty","/"));
+  assert(!cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/right","/"));
+  assert(!cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/other","/"));
+  /* Every cross-parent directory-move write interruption preserves source inode allocation. */
+  reset();assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/a"));
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/b"));
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/a",&a));
+  static unsigned char saved[65536];memcpy(saved,disk,sizeof(disk));writes=0;
+  assert(!cp32_minix_move(read_disk,write_disk,sizeof(disk),"/a","/b/a"));unsigned steps=writes;
+  for(unsigned commit=0;commit<2;commit++)for(unsigned fail=1;fail<=steps;fail++) {
+    memcpy(disk,saved,sizeof(disk));cp32_cache_invalidate();writes=0;fail_at=fail;after=commit;
+    assert(cp32_minix_move(read_disk,write_disk,sizeof(disk),"/a","/b/a")==-CP32_SUPER_IO && writes==fail);
+    fail_at=0;cp32_cache_invalidate();
+    int x=cp32_minix_stat(read_disk,sizeof(disk),"/a",&b);if(!x)assert(a.inode==b.inode);
+    int y=cp32_minix_stat(read_disk,sizeof(disk),"/b/a",&b);if(!y)assert(a.inode==b.inode);
+    assert(!x || !y);assert(!memcmp(disk+2048,saved+2048,2048));
+  }
+  reset();puts("full rename: replacement/open inode, directory identity, cwd rebasing, ancestry, types and interrupted moves pass");
+}
+static void growth_faults(const char *source,const char *destination)
+{
+  static unsigned char saved[65536];struct cp32_minix_stat st;unsigned links;
+  memcpy(saved,disk,sizeof(disk));assert(!cp32_minix_stat(read_disk,sizeof(disk),source,&st));links=st.links;
+  writes=0;assert(!cp32_minix_link(read_disk,write_disk,sizeof(disk),source,destination));unsigned steps=writes;
+  for(unsigned commit=0;commit<2;commit++)for(unsigned fail=1;fail<=steps;fail++) {
+    memcpy(disk,saved,sizeof(disk));cp32_cache_invalidate();writes=0;fail_at=fail;after=commit;
+    assert(cp32_minix_link(read_disk,write_disk,sizeof(disk),source,destination)==-CP32_SUPER_IO && writes==fail);
+    fail_at=0;cp32_cache_invalidate();
+    assert(!cp32_minix_stat(read_disk,sizeof(disk),source,&st) && st.links>=links);
+    int r=cp32_minix_stat(read_disk,sizeof(disk),destination,&st);
+    assert(!r || r==-CP32_FILE_NOT_FOUND);if(!r)assert(st.links==links+1);
+    /* No allocated bit may be released by an interrupted publication. */
+    for(unsigned j=2048;j<4096;j++)assert((disk[j]&saved[j])==saved[j]);
+  }
+  memcpy(disk,saved,sizeof(disk));cp32_cache_invalidate();writes=fail_at=after=0;
+}
+static void run_growth(unsigned swap)
+{
+  struct cp32_minix_stat st;struct cp32_minix_space before,after_space;
+  char name[32],source[32];unsigned i;static unsigned char prepared[65536];
+  reset();assert(!cp32_minix_space_read(read_disk,sizeof(disk),&before));
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/grow"));
+  /* Five empty sources keep each hard-link count below MINIX LINK_MAX. */
+  for(i=0;i<5;i++){sprintf(source,"/grow/s%u",i);assert(!cp32_minix_create(read_disk,write_disk,sizeof(disk),source,0,0));}
+  int held=cp32_fd_open(read_disk,sizeof(disk),"/grow");assert(held>=0);
+  for(i=0;i<450;i++){
+    sprintf(name,"/grow/n%03u",i);sprintf(source,"/grow/s%u",i/100);
+    if(i==441)growth_faults(source,name);
+    assert(!cp32_minix_link(read_disk,write_disk,sizeof(disk),source,name));
+  }
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/grow",&st) && st.size==457*16);
+  assert(get32(4096+(st.inode-1)*64+52,swap));
+  unsigned seen=0,ino,pos;char entry_name[15];int next;
+  while((next=cp32_fd_readdir(held,&ino,entry_name))>0)seen++;
+  assert(!next && seen==457);
+  assert(!cp32_fd_seek(held,0,2,&pos) && pos==457*16);
+  assert(!cp32_fd_close(held));
+  assert(cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/grow","/")==-CP32_FILE_NOT_EMPTY);
+  /* Reopen from disk, rename/delete/reuse beyond the first block. */
+  cp32_cache_invalidate();assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/grow/n449","/grow/last"));
+  assert(!cp32_minix_rename(read_disk,write_disk,sizeof(disk),"/grow/last","/outside"));
+  assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),"/outside"));
+  assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/grow/sub"));
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/grow",&st) && st.size==457*16);
+  assert(!cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/grow/sub","/"));
+  for(i=0;i<449;i++){sprintf(name,"/grow/n%03u",i);assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),name));}
+  for(i=0;i<5;i++){sprintf(source,"/grow/s%u",i);assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),source));}
+  assert(!cp32_minix_rmdir(read_disk,write_disk,sizeof(disk),"/grow","/"));
+  assert(!cp32_minix_space_read(read_disk,sizeof(disk),&after_space));
+  assert(before.free_zones==after_space.free_zones && before.free_inodes==after_space.free_inodes);
+  /* First-block expansion: every write fault before and after commit. */
+  reset();assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/grow"));
+  for(i=0;i<62;i++){sprintf(name,"/grow/n%03u",i);assert(!cp32_minix_link(read_disk,write_disk,sizeof(disk),"/readme",name));}
+  assert(!cp32_minix_stat(read_disk,sizeof(disk),"/readme",&st));unsigned original_links=st.links;
+  memcpy(prepared,disk,sizeof(disk));writes=0;
+  assert(!cp32_minix_link(read_disk,write_disk,sizeof(disk),"/readme","/grow/next"));
+  unsigned steps=writes;
+  for(unsigned commit=0;commit<2;commit++)for(unsigned fail=1;fail<=steps;fail++){
+    memcpy(disk,prepared,sizeof(disk));cp32_cache_invalidate();writes=0;fail_at=fail;after=commit;
+    assert(cp32_minix_link(read_disk,write_disk,sizeof(disk),"/readme","/grow/next")==-CP32_SUPER_IO);
+    assert(writes==fail);fail_at=0;cp32_cache_invalidate();
+    assert(!cp32_minix_stat(read_disk,sizeof(disk),"/grow/n061",&st));
+    assert(!cp32_minix_stat(read_disk,sizeof(disk),"/readme",&st) && st.links>=63);
+    int r=cp32_minix_stat(read_disk,sizeof(disk),"/grow/next",&st);
+    assert(!r || r==-CP32_FILE_NOT_FOUND);
+    if(!r)assert(st.links==original_links+1);
+  }
+  memcpy(disk,prepared,sizeof(disk));cp32_cache_invalidate();writes=fail_at=after=0;
+  memset(disk+3072,255,1024);cp32_cache_invalidate();
+  assert(cp32_minix_link(read_disk,write_disk,sizeof(disk),"/readme","/grow/next")==-CP32_FILE_NOSPACE && !writes);
+  reset();puts("directory growth: endian, indirect, reuse, moves, rmdir/reclamation, full media and interrupted expansion pass");
+}
 int main(int argc,char **argv)
 {
   assert(argc==2);FILE *f=fopen(argv[1],"rb");assert(f);
   assert(fread(original,1,sizeof(original),f)==sizeof(original));fclose(f);
   unsigned char *little=malloc(sizeof(original));assert(little);memcpy(little,original,sizeof(original));
-  run(0);run_link(0);run_link_path();run_patch_span(0);run_copy();run_empty(0);run_writable(0);run_resize(0);run_position();run_unlink(0);run_rename(0);run_chmod(0);run_create_path(0);run_mkdir(0);run_rmdir(0);memcpy(disk,little,sizeof(disk));
+  run_move();run_growth(0);run(0);run_link(0);run_link_path();run_patch_span(0);run_copy();run_empty(0);run_writable(0);run_resize(0);run_position();run_unlink(0);run_rename(0);run_chmod(0);run_create_path(0);run_mkdir(0);run_rmdir(0);memcpy(disk,little,sizeof(disk));
   for(unsigned at=1024;at<1036;at+=2)put16(at,get16(at,0),1);
   put32(1036,get32(1036,0),1);put16(1040,get16(1040,0),1);
   put16(1042,get16(1042,0),1);put32(1044,get32(1044,0),1);
@@ -715,6 +841,6 @@ int main(int argc,char **argv)
   }
   for(unsigned zone=6;zone<=7;zone++)for(unsigned at=0;at<1024;at+=16)
     put16(zone*1024+at,get16(zone*1024+at,0),1);
-  memcpy(original,disk,sizeof(disk));run(1);run_link(1);run_link_path();run_patch_span(1);run_copy();run_empty(1);run_writable(1);run_resize(1);run_position();run_unlink(1);run_rename(1);run_chmod(1);run_create_path(1);run_mkdir(1);run_rmdir(1);free(little);
+  memcpy(original,disk,sizeof(disk));run_move();run_growth(1);run(1);run_link(1);run_link_path();run_patch_span(1);run_copy();run_empty(1);run_writable(1);run_resize(1);run_position();run_unlink(1);run_rename(1);run_chmod(1);run_create_path(1);run_mkdir(1);run_rmdir(1);free(little);
   puts("create: little/big endian, allocation, zeroing, remount, duplicate/full/invalid cases and every interrupted-write boundary pass");
 }

@@ -26,6 +26,7 @@
 #	define DEV_IOCTL    5	/* fcn code for ioctl */
 #	define DEV_OPEN     6	/* fcn code for opening tty */
 #	define DEV_CLOSE    7	/* fcn code for closing tty */
+#define CP32_DEV_SYNC 11 /* serialized root-device completion/status */
 #	define SCATTERED_IO 8	/* fcn code for multiple reads/writes */
 #	define TTY_SETPGRP  9	/* fcn code for setpgroup */
 #	define TTY_EXIT	   10	/* a process group leader has exited */	

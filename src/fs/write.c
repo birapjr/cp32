@@ -38,5 +38,6 @@ CP32_FS_TEXT int cp32_minix_patch(cp32_disk_reader read,cp32_disk_writer write,
     if(r!=(int)length[i])return -CP32_SUPER_IO;
     done+=length[i];
   }
-  return (int)done;
+  r=cp32_fs_data_time(&file,6);
+  return r ? r:(int)done;
 }

@@ -4043,3 +4043,411 @@ README reorganized around current features, boundaries, command/API references,
 build/SD-update instructions and debugging/hardware checks. Historical version
 notes remain in the development logs. Documentation links and whitespace checked;
 no firmware source changes were made for this documentation update.
+
+
+## Image159: growing directories (hardware pending)
+
+MINIX reference: fs/path.c search_dir scans mapped blocks, reuses empty slots,
+and calls write.c new_block when full. CP32 now supports directory mutation
+through seven direct and 256 single-indirect data blocks with 1 KiB zones.
+Creation, mkdir, hard links, regular-file rename, unlink and rmdir use mapped
+entries; removal of an empty grown directory reclaims all its data/table zones.
+Open directory descriptors refresh mappings/size while preserving shared offsets.
+The existing ABI22 suffices; directory writes are private namespace operations,
+not arbitrary writes through application directory descriptors.
+
+No hardware-register changes are needed. Bounded buffers, serialized FS ownership,
+initialized-data-before-publication, and no freeing after uncertain writes remain
+invariants. Expansion reserves a zero entry before publishing a new child/link;
+a later failure can leave reusable empty capacity or leaked allocations, as with
+other existing mutations. There is no rollback or power-loss atomicity. Ordinary
+unlink reuses slots rather than shrinking parent directories. Scaled-zone and
+double-indirect mutation, replacement/directory rename remain out of scope.
+
+FEATURE/TEST FS-DIRGROW159, SD/ROOT V159 and optional UPDATER159 identify this
+image. Install applications with updater/apps, then test hello --grow twice,
+df and ls on normal firmware. Expect Growth OK/exit0, unchanged free counts
+and no gtest. The command uses 70 hard links to an empty file to exceed 64 slots
+without needing 70 inodes; it needs 2 free KiB and 3 free inodes. Retain the log
+on failure. No physical flashing or SD writes were performed by the agent.
+
+[x] Image159 host and build validation complete; hardware acceptance pending.
+All 48 host scripts pass. Directory coverage includes both disk byte orders,
+457-entry direct-to-indirect growth, already-open directory refresh/seek,
+tombstone reuse, create/link/mkdir/rename/unlink/rmdir, free-count restoration,
+full media, and every write fault before/after commit at first-block and
+first-indirect expansion. The real hello --grow application passes through
+production runtime/FS dispatch. Existing file/descriptor regressions pass.
+
+All five clean builds pass without compiler warnings and pass image-layout checks.
+Normal _iram_end=0x40374620, _iram_ext_end=0x4038c198, runtime end=0x3fce71e0
+(3616-byte placement margin). Updater runtime end=0x3fce56a0; RAM=0x3fce7630.
+ELF sections/segments inspected; heap/stack reservations unchanged. The updater's
+ELF-container cap is now 32 KiB because hello exceeds the old 16 KiB file cap;
+its actual text segment remains below the unchanged 16 KiB loader limit and
+its data remains below 12 KiB. Actual application installation is host-tested.
+
+
+[x] Image159 directory-growth hardware acceptance passed on the supplied
+updater boot: Growth OK/exit0 twice, df unchanged at 4/57 KiB and 20/32 free
+inodes, and no gtest after cleanup. Capture:
+docs/hardware/fs-dirgrow-v159-updater.log. No separate clean boot was supplied.
+
+## Image160: replacement rename and directory moves (hardware pending)
+
+MINIX reference: fs/link.c do_rename handles replacement, matching types,
+empty destination directories, ancestry and dot-dot/parent counts. CP32 adds
+cp32_rename through ABI23, with shell mv/rename using the same implementation.
+The older cp32_rename_noreplace API retains its regular-file/no-replace contract.
+File replacement preserves existing open destination descriptors until final
+close. Directory moves preserve source inode/open handles and rebase shell,
+application and previous-shell cwd paths after successful commit. All prospective
+cwd lengths are checked first. Cycles, type mismatches and nonempty directory
+replacement are rejected. Existing protection against replacing open/current
+working directories remains; this is not unrestricted POSIX directory lifetime.
+
+No ESP32 register or context changes. Trusted single-owner IPC, bounded buffers,
+no recycling after uncertain writes and existing loader limits are preserved.
+Like the existing FS, rename is not power-loss atomic. On an I/O error stop and
+inspect both names after reboot: replacement removal or publication may already
+have happened, and runtime cwd rebasing is performed only on complete success.
+UID-based permission checks and multiple mounts remain unimplemented.
+
+FEATURE/TEST FS-RENAME160, SD/ROOT V160 and optional UPDATER160 identify this
+image. Install apps with updater/apps then restore normal firmware. Run df,
+hello --rename twice, pwd, df, ls. Expect Rename OK/exit0, pwd /, no ra/rb/rt/ru/rv,
+and unchanged free counts. The test needs three free data zones and three inodes
+at peak. Hardware validation remains pending; no flashing was performed.
+
+[x] Image160 build/host validation complete; hardware acceptance remains pending.
+All 48 host scripts pass. Tests cover both byte orders, open-destination lifetime,
+source directory identity, cross-parent dot-dot/link counts, both clients' cwd
+and previous-cwd rebasing, cycle/type/nonempty rejection, interrupted move writes,
+production hello/runtime/IPC, malformed request spans and old ABI rejection.
+
+All five clean builds pass without warnings and pass layout checks. MM service C
+now uses -Os, like FS/shell services; the original 2 KiB placement-margin check,
+192/160/128 KiB heap reservations and all stacks remain unchanged. Context/IRQ
+code retains its existing flags. ELF sections/segments and optimized MM call0
+prologues were inspected. Normal _iram_end=0x40374620, _iram_ext_end=0x4038c6cc,
+runtime end=0x3fce7700 (2304-byte margin). Updater runtime=0x3fce5e90;
+RAM=0x3fce7190. New FS and MM helper symbols remain in internal extended IRAM.
+hello text PT_LOAD is 0x3d5a bytes, within its unchanged 16 KiB limit.
+Include hello --exec and mm with the rename hardware acceptance commands because
+MM compilation changed. No hardware success is inferred from the host tests.
+
+
+## Image161: restore MM task compilation after image160 exec crash
+
+Capture: docs/hardware/fs-rename-v160-exec-crash.log. Image160 updater installed
+applications and completed hello --rename twice (Rename OK/exit0). The subsequent
+hello --exec halted with EXCCAUSE0x14, EPC1=0 and EXCVADDR=0. No MM receive trace
+appears before the halt. This establishes an exec-path regression, not the exact
+instruction that produced the zero PC; full image160 acceptance is withdrawn.
+
+Image160 introduced -Os for all MM C to recover SRAM. Image161 restores only
+mm/main.c (blocking receive/dispatch/reply task) to the previously hardware-tested
+-O0. Allocation, image and argument-stack helpers remain -Os. This is a targeted
+regression rollback, not a proven diagnosis of a compiler or context-switch bug.
+The MINIX mm/main.c receive/dispatch/reply invariant and CP32 task-owned blocked
+return contract remain unchanged; no x86 behavior or Xtensa assembly is changed.
+Further optimized MM task resumption requires independent hardware validation.
+
+FEATURE/TEST MM-RESUME161, SD/ROOT V161 and optional UPDATER161 identify the
+candidate fix. The new test_mm_build.sh inspects all generated MM task objects
+for the retained a15 frame and separate receive trace. Existing exec/MM tests
+exercise rollback, ownership and descriptor preservation. This build guard is
+not a hardware reproduction of the null-PC failure.
+
+Hardware pending: make && make flash from src (applications already installed
+by image160 need no update). Run mm, hello --exec-fail, hello --exec twice,
+then hello --rename. Retain the complete serial log. Expected MM alloc/release
+result0, exec failure recovery, Exec PID and file OK/exit0 twice and Rename OK.
+No physical flashing or SD writes were performed by the agent.
+
+Image161 validation: all 49 host test scripts passed. Clean normal SD, updater,
+RAM recovery, software-SPI, and software-SPI updater builds passed. ELF section
+and MM task disassembly inspections passed. Normal _iram_end=0x40374620,
+_iram_ext_end=0x4038c760, _runtime_stack_end=0x3fce77a0; the remaining SRAM
+margin is 2144 bytes, above the existing 2048-byte requirement. Heap and stack
+reservations are unchanged. Hardware confirmation remains pending.
+
+## Image162: bound the shell/exec stack after repeated null-PC crash
+
+Hardware capture: docs/hardware/mm-resume-v161-exec-crash.log. Image161 updater
+reports applications unchanged, passes hello --exec-fail, then hello --exec
+halts at EPC1=0 / EXCCAUSE=0x14 before an MM receive trace. The image161 MM
+compilation rollback did not resolve the failure; hardware acceptance remains
+withdrawn. Do not interpret this as evidence of an MM optimizer defect.
+
+MINIX fs/main.c and mm/main.c retain separate server stacks while servicing
+messages. CP32 combines the shell and foreground application service on FS's
+4 KiB downward-growing call0 stack, immediately above MM's suspended stack,
+without memory protection. Its syscall exception frame and C dispatch also
+consume the caller's stack. Those stacks must not overlap.
+
+Compiled evidence: image161's shell frame is 1056 bytes because GCC inlines
+large command-local buffers into cp32_tty_read_client. The exec-open path through
+pathname traversal, a cache miss and IPC message copying/address translation
+has a 4400-byte aggregate frame budget including the 128-byte trap frame.
+This exceeds 4096 before considering other interrupt branches and can destroy
+MM's saved return state before its next request. The zero-PC log alone cannot
+identify the overwritten word, but this is a concrete stack-budget defect.
+
+Image162 prevents large shell command handlers from being inlined into the
+persistent command loop. Its frame is now 192 bytes. Size optimization of the
+two ordinary C application service routines preserves code/SRAM space; task
+startup and interrupt assembly are unchanged. MM task compilation remains O0.
+No heap/stack reservations or application ABI/on-disk formats change.
+
+-fstack-usage produces compiler reports. test_fs_stack.sh checks the actual
+compiled exec-open/IPC path, with explicit disk callback edges, against 3584
+bytes (512 bytes reserved beyond that path). This is a focused regression
+budget, not a complete static stack proof for every kernel operation. A separate
+compile without the noinline boundaries reproduces the old 1056-byte shell
+frame. FEATURE/TEST FS-STACK162 and SD/ROOT/UPDATER162 identify this image.
+
+Hardware pending: from src run make && make flash, then mm, hello --exec-fail,
+hello --exec twice, hello --rename twice, and hello --exec again. Expect memory
+allocation/release success, failure recovery, Exec PID and file OK, Rename OK,
+and exit0 without a halt. Applications already on SD do not need updating.
+No physical flashing or SD writes were performed by the agent.
+
+Image162 validation: all 50 host test scripts passed, including the compiled
+stack-budget regression. All five clean builds passed (normal SD, updater,
+RAM recovery, software-SPI and software-SPI updater). ELF sections/load segments
+were inspected. Normal _iram_end=0x40374620, _iram_ext_end=0x4038c710 and
+_runtime_stack_end=0x3fce7730 leave 2256 bytes before application memory.
+Exec-open/IPC budgets are 3488 bytes for SD variants and 3376 for RAM, under
+the 3584-byte test ceiling. Hardware acceptance of image162 remains pending.
+
+## Image163: give the combined FS/application server its own 8 KiB stack
+
+Hardware: docs/hardware/fs-stack-v162-rename-exec-crash.log confirms mm,
+exec-fail, exec twice and rename twice succeed. The final exec halts with
+EXCCAUSE=0x1d, EXCVADDR=0x28, EPC1=0x40382421 in the image162 updater ELF.
+This maps to copy_message's store of mem_copy's return value through a15+4;
+the effective address implies a15=0x24 instead of a valid stack address.
+Image162 therefore improved exec but did not resolve the full sequence.
+
+The image162 check missed deeper rename paths: compiled app rename replacement
+requires 4432 bytes and shell rename 4544 including nested FS and IPC frames,
+exceeding the original 4096-byte stack. This can corrupt MM's neighboring saved
+state and fail later. The captured fault does not itself identify the original
+overwriting instruction; the excess stack requirement is independently measured.
+
+MINIX fs/main.c and mm/main.c use independent server state/stacks. CP32 adds
+shell launch and application servicing to FS, and Xtensa syscall entry consumes
+the same downward-growing stack. Image163 allocates a dedicated 8192-byte,
+FS-owned block through the existing MM allocator before tasks are runnable;
+initial SP and S map use that block. Allocation failure is fatal before scheduling.
+The block lives for the boot and cannot be reused for exec staging. The old
+static stack reservations stay intact. This explicitly consumes 8 KiB of the
+existing heap (normal 192 KiB reservation leaves 184 KiB before other allocations;
+updater 160 KiB leaves 152 KiB, RAM 128 KiB leaves 120 KiB). No heap reservation,
+application area or another task's stack is reduced. No hardware/assembly ABI
+change, SD update or application rebuild is required for this kernel correction.
+
+Tests now exercise allocation size/owner/top and exhausted-heap failure, and
+check compiled exec, application rename, shell rename and cwd canonicalization
+call paths against the new stack with 1024 bytes of extra headroom. These checks
+are focused budgets, not a whole-program maximum-stack proof. Image markers:
+FEATURE/TEST FS-STACK163 and SD/ROOT/UPDATER163.
+
+Hardware pending: flash normal image from src with make && make flash. Run mm,
+hello --exec-fail, then alternate hello --rename and hello --exec at least three
+times. Expect Rename OK / Exec PID and file OK with exit0 and no exception.
+Keep the complete log. No flashing or SD writes performed by the agent.
+
+Image163 validation: all 50 test scripts and all five clean firmware builds
+passed. ELF section/load-segment inspection confirms internal placement and
+unchanged heap reservations. Normal _iram_end=0x40374654,
+_iram_ext_end=0x4038c75c, _runtime_stack_end=0x3fce7790 (2160-byte static margin).
+The new FS allocation helper is in extended internal IRAM. Hardware confirmation
+is pending; host tests do not reproduce or certify the physical crash sequence.
+
+## Image164: explicit filesystem/device synchronization
+
+[x] Image163 hardware sequence accepted for the supplied updater image:
+repeated rename/exec runs, MM allocation/release and exec failure recovery pass
+without an exception. Capture: docs/hardware/fs-stack-v163-pass.log.
+A separate normal-image capture was not supplied.
+
+MINIX fs/misc.c:do_sync flushes dirty inodes and blocks in order. CP32 has no
+dirty writeback cache: writes already wait for SD busy completion, CMD13 status
+and readback verification. Image164 adds shell sync plus ABI24 cp32_sync/fsync,
+through FS-owned descriptor validation and a serialized CP32_DEV_SYNC request.
+The SD boundary uses bounded readiness and CMD13 R2 status, sharing the existing
+write completion contract. The root's uncertain-write latch remains sticky;
+sync does not repair failures. RAM reports in-memory completion only.
+fsync accepts owned file/directory handles, readonly and duplicated handles and
+unlinked-open files; it does not move offsets, close handles or change flags.
+Invalid/closed descriptors and malformed payloads fail before touching the device.
+There are no new hardware registers or interrupt changes. Root-volume C uses
+-Os to preserve the existing static SRAM margin. Heap/stack reservations and
+on-disk format remain unchanged. Echo's obsolete ABI upper bound was removed
+because its service-table prefix is unchanged; its test now uses ABI24.
+
+Tests cover SD status errors, transport faults, busy timeout, root sticky errors,
+no-media/unauthorized storage requests, malformed sync payloads, fd lifecycle,
+readonly/duplicate/unlinked/directory handles, unchanged offsets, propagation
+of device errors and old-ABI ENOSYS. The rootdisk integration test now releases
+its completed hard-link scenario before later tests so growing executables do
+not consume unrelated test scratch capacity. Marker FEATURE/TEST FS-SYNC164.
+
+Hardware pending: updater/apps then normal firmware; sync and hello --sync.
+Persistence: create s hi; sync; full reset; cat s; rm s; sync. Use a fresh name.
+Expect Sync OK, application exit0 and hi after reset. No physical flashing or SD
+writes performed by the agent. Sync is not a power-loss atomicity guarantee.
+
+Image164 validation: all 50 host scripts passed, plus the expanded application
+sync descriptor-lifecycle test rerun. Five clean builds passed: SD, updater,
+RAM recovery, software-SPI and software-SPI updater. ELF sections/load segments
+were inspected. Normal _iram_end=0x40374654, _iram_ext_end=0x4038c794,
+_runtime_stack_end=0x3fce77f0 (2064-byte static margin). hello text is 0x3e6a
+bytes, below its unchanged 16 KiB limit. No hardware success is inferred.
+
+## Offline filesystem checker after image164
+
+[x] Supplied image164 updater log confirms shell sync, hello --sync (exit0),
+create/readback/remove and further sync calls. Capture:
+docs/hardware/fs-sync-v164-pass.log. There is only one boot in the capture;
+power-cycle persistence and a separate clean-image boot remain unverified.
+
+[x] Read-only host checker implemented in tools/fsck_minix.py, corresponding to
+MINIX2 commands/simple/fsck.c ownership/map/link reconciliation responsibilities.
+It validates raw and primary-MBR V2 volumes, both byte orders, scaled zones,
+sparse regular files, direct/single/double mappings, directory topology,
+reachability, duplicate ownership and map/link consistency. It accepts offline
+regular-file images only, never repairs/writes and provides text/JSON and exit
+statuses. Unsupported formats/inode kinds are reported, never called clean.
+Automatic repair, V1, 30-byte names, special inodes and mounted-device checking
+remain outside this feature. See docs/fsck.md for the precise boundary.
+
+This architecture-independent work runs on the host, avoiding additional ESP32
+SRAM/stack usage. No kernel/application or hardware-visible behavior is changed;
+image164 markers remain appropriate. make fsck defaults to the generated SD
+image and accepts FSCK_IMAGE for existing offline media copies. No new hardware
+command or firmware flash is required. No physical media were read or written.
+
+Validation: make clean && make in src passed; make fsck reports the generated
+SD image clean. All 51 test scripts passed, including eight checker test groups
+with both-byte-order and corruption fixtures; generated raw/MBR images both
+pass. CLI tests verify exit statuses and identical input bytes after checking.
+No real-card consistency result is claimed from checking generated images.
+
+## Image165 — explicit filesystem time APIs
+
+Implemented MINIX2 fs/time.c TIME, STIME and UTIME behavior through application
+ABI25 and the existing CLOCK task. Shell date [seconds] reads/sets the clock;
+touch creates an empty file or updates existing timestamps without truncating.
+stat now displays access, modification and change times. Owner/root checks and
+current-time write permission mirror MINIX2; synchronous inode writes preserve
+size, mode, links, ownership and file contents, including hardlink identity.
+
+ESP32-S3 adaptation: use SYSTIMER-backed CLOCK seconds, with no RTC assumption.
+Clock starts at epoch on each reboot; SD inode times persist. Automatic timestamps
+for other file operations and complete ancestor-directory authorization remain
+separate work. RAM recovery rejects inode updates as read-only. Seconds are
+limited to signed 32-bit nonnegative range. No journal or power-loss atomicity
+is implied by this 12-byte metadata write.
+
+Markers: [FEATURE FS-TIME 165], [TEST FS-TIME 165], SD/ROOT V165.
+Ordinary storage/CLOCK C uses -Os to preserve the existing heap/stack reservations.
+Normal ELF: _iram_end=0x4037439c, _iram_ext_end=0x4038c730,
+_runtime_stack_end=0x3fce7770 (2192 bytes static margin). Normal heap remains
+192 KiB; the existing 8 KiB FS runtime stack remains allocated from it.
+
+Clean builds passed for normal SD, updater, RAM, GPIO-SPI and GPIO-SPI updater.
+Host integration covers both disk byte orders, app wrappers and production FS
+broker, CLOCK dispatch and error replies, permissions, hardlinks, directories,
+readonly media, short writes, request bounds, touch preserving contents and
+clock overflow. Compiled stack checks include application UTIME and shell touch
+across writable variants. Generated SD image passes make fsck.
+Hardware validation pending: follow README's short create/date/touch/stat/cat/sync
+sequence, reset, verify persisted contents/times, and clean up. No hardware flash,
+SD reformat or physical-card writes were performed in this change.
+
+Final regression: all 51 make tests scripts passed, including updated stat output
+and compiled stack budgets. git diff --check passed. Hardware remains pending.
+
+## Image166 — automatic file-data timestamps
+
+[x] Image165 updater hardware acceptance: the user's two-boot transcript shows
+inode15 /t, size2, all times1013 and contents hi surviving restart after sync.
+Evidence excerpts: docs/hardware/fs-time-v165-pass.log. This confirms explicit
+shell timestamps and persistence only; clean-image and application time-API
+hardware results were not supplied.
+
+Image166 implements automatic data timestamps, following MINIX2 inode.c
+update_times (ATIME/MTIME/CTIME) and read.c read_write. Unlike MINIX's dirty
+inodes, CP32 updates synchronous V2 records and uses the existing CLOCK service
+through a serialized mounted-reader/writer binding. No IRQ or peripheral clock
+access is introduced in FS. Creation initializes all times; reads including
+nonzero EOF requests update atime; append/patch/write/resize update mtime/ctime.
+Zero-byte reads/writes leave times unchanged. Shell, application and positional
+I/O share the code; inode identity preserves hardlink/open-unlinked behavior.
+Repeated reads in the same second avoid redundant writes. Read-only roots opt
+out. Read timestamp failure preserves staged output and offset. Mutation errors
+can follow partial disk changes; no rollback/journaling guarantee is added.
+
+Directory enumeration and link/rename/unlink/chmod timestamp updates remain
+separate work. Clock remains volatile at reboot; a read may move atime backwards
+until date sets the clock. The ABI remains25 and image165 application payloads
+remain compatible. [FEATURE FS-DATA-TIME 166], [TEST FS-DATA-TIME 166], SD/ROOT
+V166 identify this image. The system-task C service now uses -Os to retain the
+heap/stack reservations. Normal ELF boundaries: _iram_end=0x4037439c,
+_iram_ext_end=0x4038c08c, _runtime_stack_end=0x3fce7090 (3952-byte margin).
+
+Clean builds passed: normal SD, updater, RAM recovery, GPIO-SPI and its updater.
+Host integration covers data/EOF/zero-count behavior, create/append/patch/resize,
+hardlinks, positional I/O, sparse extension, open-unlinked files, clock/write
+errors, disabled/read-only bindings and both byte orders. Compiled stack checks
+include the nested read-to-CLOCK IPC path.
+Hardware acceptance remains pending: README provides short date/create/stat/cat/
+append/sync commands and a reboot check, with stat before cat to avoid changing
+atime before inspecting persistence. No flash or physical SD writes were made.
+
+Final validation: all 51 make tests scripts passed; make fsck reports the
+generated SD image clean. ELF/segment and compiled stack checks passed.
+Hardware remains pending for image166.
+
+## 100 MiB development SD image (host tooling; firmware remains166)
+
+The user's image166 df log reports Free KiB 0 / 57 and Free inodes 17 / 32:
+data zones are exhausted on the 64KiB volume, not kernel RAM or inode slots.
+The generated SD image now defaults to a 100MiB V2 partition and 4096 inodes,
+with a 1MiB MBR prefix (101MiB total). SD_SIZE_MIB/SD_INODES configure builds.
+The compact 64KiB recovery/parser fixture remains unchanged. No firmware code,
+ABI, marker, heap or stack change is needed: the root driver already validates
+MBR length and V2 32-bit zone addresses against the signed byte-offset limit.
+
+The host builder validates the source, relocates direct/single/double-indirect
+pointers and data, expands inode/zone maps, preserves inode numbers and all
+file bytes, reserves padding/map bit0 and the diagnostic final block, and checks
+the output before writing. A generated fresh image does not migrate files from
+the physical card. No device was written. Installing it replaces partitions
+and files; README and docs/sd-root.md describe backup and preparation.
+
+Host tests cover both byte orders, directory and sparse/indirect relocation,
+invalid geometries/corrupt input, a 100MiB MBR image through the production root
+and FS code, allocation above inode32 and zone65535, read/patch/unlink. Compact
+root-device fault tests retain their explicit64KiB fixture offsets.
+Hardware acceptance of the larger volume remains pending: boot capacity must
+be104857600; df should initially show102073/102127 freeKiB and4084/4096 inodes.
+Then repeat create/read/append/sync/restart checks. Per-file write limit remains
+263KiB; the larger volume provides capacity for many more files, not bigger
+executable SRAM or expanded per-file mapping support.
+
+Validation complete: make clean && make passed; all52 make tests scripts
+passed; generated100MiB volume passes make fsck. Verified102073 freeKiB and
+4084 free inodes. Hardware installation/acceptance remains pending.
+
+[x] Image166 and 100MiB SD volume hardware acceptance for shell data timestamps
+and restart persistence: docs/hardware/fs-data-time-v166-pass.log. Fresh df
+reports102073/102127 KiB and4084/4096 inodes; create sets all times1016, read
+changes atime to2009, append changes mtime/ctime to3017 and size to3. Second
+boot preserves inode13, those times and contents hix. Both boots are updater
+firmware; separate normal-image/application-path coverage remains unverified.
+README consolidated into current feature/build/command/API/validation sections
+for upstream publication; obsolete milestone-specific instructions removed.

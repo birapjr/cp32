@@ -27,4 +27,6 @@ CP32_FS_TEXT int cp32_fproc_validate(unsigned,char *,unsigned,uintptr_t,uintptr_
 CP32_FS_TEXT int cp32_fproc_rmdir(struct cp32_fproc *,const struct cp32_fproc *,cp32_disk_reader,cp32_disk_writer,unsigned,const char *);
 CP32_FS_TEXT int cp32_fproc_dup2(struct cp32_fproc *,int,int);
 CP32_FS_TEXT int cp32_fproc_dupfd(struct cp32_fproc *,int,unsigned);
+CP32_FS_TEXT int cp32_fproc_move(struct cp32_fproc *,struct cp32_fproc *,char *,cp32_disk_reader,cp32_disk_writer,unsigned,const char *,const char *);
+CP32_FS_TEXT int cp32_fproc_utime(struct cp32_fproc *,cp32_disk_reader,cp32_disk_writer,unsigned,const char *,unsigned,unsigned,unsigned,int);
 #endif

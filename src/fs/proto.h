@@ -123,4 +123,9 @@ CP32_FS_TEXT int cp32_fs_chmod_inode(cp32_disk_reader,cp32_disk_writer,const str
 CP32_FS_TEXT int cp32_fd_pread(int,char *,unsigned,unsigned);
 CP32_FS_TEXT int cp32_fd_pwrite(int,const char *,unsigned,unsigned);
 CP32_FS_TEXT int cp32_minix_space_read(cp32_disk_reader,unsigned,struct cp32_minix_space *);
+
+CP32_FS_TEXT int cp32_minix_move(cp32_disk_reader,cp32_disk_writer,unsigned,const char *,const char *);
+CP32_FS_TEXT void cp32_fs_time_bind(cp32_disk_reader,cp32_disk_writer,int (*)(unsigned *));
+CP32_FS_TEXT int cp32_fs_stamp(cp32_disk_reader,unsigned char *,unsigned,unsigned);
+CP32_FS_TEXT int cp32_fs_data_time(struct cp32_minix_file *,unsigned);
 #endif

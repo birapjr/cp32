@@ -8,7 +8,8 @@ from test_idle_handoff import extract_function
 sys.path.insert(0,str(root/'tools'))
 from make_minix_demo import build_image
 shell=root/'src/kernel/cp32-shell.c'
-code='\n'.join(extract_function(shell,n) for n in ('cp32_shell_app_files_reset','cp32_shell_app_file'))
+code='\n'.join(extract_function(shell,n) for n in ('cp32_shell_clock','cp32_shell_app_files_reset','cp32_shell_app_file','cp32_shell_date','cp32_shell_touch'))
+code+='\nstatic int time_now(unsigned *now) {return cp32_shell_clock(0,now); }\n'
 request=extract_function(root/'src/kernel/application.c','application_file_request')
 pre=r'''
 #include <assert.h>
@@ -21,14 +22,38 @@ pre=r'''
 static unsigned char disk[65536],arena[512];
 #define CP32_APP_DATA ((uintptr_t)arena)
 #define CP32_APP_TOP ((uintptr_t)(arena+sizeof(arena)))
-typedef struct {int m1_i1,m1_i2,m1_i3;char *m1_p1;} message;
+typedef struct {int m_type,m_source;unsigned NEW_TIME;int m1_i1,m1_i2,m1_i3;char *m1_p1;} message;
 #include "fproc.h"
+static char cp32_shell_previous[256];
 static struct cp32_fproc cp32_shell_state={.pid=1,.root_inode=1,.cwd="/"};
 static struct cp32_fproc cp32_app_state={.pid=123,.root_inode=1,.mask=0022,.cwd="/"};
 
 #define cp32_shell_cwd cp32_app_state.cwd
+#define CP32_DEV_SYNC 11
+#ifndef OK
+#define OK 0
+#endif
+#define CLOCK -3
+#define GET_TIME 3
+#define SET_TIME 4
+static unsigned clock_seconds;
+static int clock_failure,clock_corrupt;
+static int clock_sendrec(int endpoint,message *m) {
+ assert(endpoint==CLOCK);
+ if(clock_failure)return -5;
+ if(m->m_type==SET_TIME)clock_seconds=m->NEW_TIME;
+ else {assert(m->m_type==GET_TIME);m->NEW_TIME=clock_seconds;}
+ m->m_source=clock_corrupt ? 99:CLOCK;m->m_type=OK;return OK;
+}
+#define _sendrec clock_sendrec
+static int sync_result,sync_calls;
+static int cp32_shell_disk_io(int op,unsigned offset,char *buffer,int count) {
+ assert(op==CP32_DEV_SYNC && !offset && !buffer && !count);sync_calls++;return sync_result;
+}
 static unsigned cp32_root_capacity(void) {return sizeof(disk);}
+static int write_failure;
 static int cp32_shell_disk_write(unsigned off,const char *p,int n) {
+ if(write_failure)return n-1;
  if(off>sizeof(disk) || (unsigned)n>sizeof(disk)-off)return -1;
  memcpy(disk+off,p,n);return n;
 }
@@ -38,6 +63,8 @@ static int cp32_shell_disk_read(unsigned off,char *out,int count) {
 }
 static char output[4096];static unsigned used;static int fail_output;
 static int put(const char *p,unsigned n) {if(fail_output)return -1;assert(used+n<sizeof(output));memcpy(output+used,p,n);used+=n;return n;}
+static void cp32_shell_print(const char *s) {put(s,strlen(s));}
+static void cp32_shell_print_u32(unsigned v) {char b[16];snprintf(b,sizeof(b),"%u",v);cp32_shell_print(b);}
 static void quit(int status) {(void)status;assert(0);}
 static int input(char *p,unsigned n) {(void)p;(void)n;return 0;}
 int app_main(unsigned,char **,char **,const struct cp32_app_services *);
@@ -58,11 +85,125 @@ static int state_bridge(unsigned op,int fd,void *buffer,unsigned n)
 }
 #endif
 int main(int argc,char **argv) {
- assert(argc==3);FILE *f=fopen(argv[1],"rb");assert(f);
+ (void)time_now;(void)cp32_shell_date;(void)cp32_shell_touch;assert(argc==3);FILE *f=fopen(argv[1],"rb");assert(f);
  assert(fread(disk,1,sizeof(disk),f)==sizeof(disk));fclose(f);
  int mode=argv[2][0]-'0';
  struct cp32_app_services api={7,put,quit,0,0,0,input,cp32_shell_app_file};
 #ifdef TEST_HELLO
+ if(mode==25) {
+   api.version=25;assert(!cp32_io_init(&api));
+   cp32_fs_time_bind(cp32_shell_disk_read,cp32_shell_disk_write,time_now);
+   clock_seconds=1000;int fd=cp32_open_flags("/auto",CP32_O_CREAT|CP32_O_RDWR,0600);
+   assert(fd>=3);struct cp32_app_stat st;char buf[8];
+   assert(!cp32_fstat(fd,&st) && st.atime==1000 && st.mtime==1000 && st.ctime==1000);
+   clock_seconds=2000;assert(cp32_write(fd,"hi",2)==2);
+   assert(!cp32_fstat(fd,&st) && st.atime==1000 && st.mtime==2000 && st.ctime==2000);
+   clock_seconds=3000;assert(cp32_pread(fd,buf,2,0)==2 && !memcmp(buf,"hi",2));
+   assert(!cp32_fstat(fd,&st) && st.atime==3000 && st.mtime==2000 && st.ctime==2000);
+   clock_seconds=4000;assert(cp32_pread(fd,buf,1,2)==0 && cp32_write(fd,"",0)==0);
+   assert(!cp32_fstat(fd,&st) && st.atime==4000 && st.mtime==2000);
+   assert(!cp32_link("/auto","/other"));
+   assert(cp32_pwrite(fd,"yo",2,0)==2);
+   assert(!cp32_stat("/other",&st) && st.mtime==4000 && st.ctime==4000);
+   clock_seconds=5000;assert(!cp32_ftruncate(fd,1));
+   assert(!cp32_fstat(fd,&st) && st.size==1 && st.mtime==5000 && st.atime==4000);
+   clock_seconds=6000;assert(!cp32_ftruncate(fd,4));
+   assert(!cp32_fstat(fd,&st) && st.size==4 && st.mtime==6000);
+   clock_seconds=7000;assert(!cp32_unlink("/auto") && !cp32_unlink("/other"));
+   assert(cp32_pwrite(fd,"x",1,0)==1 && !cp32_fstat(fd,&st) && st.links==0 && st.mtime==7000);
+   clock_seconds=8000;assert(cp32_pread(fd,buf,4,0)==4 && buf[0]=='x' && !buf[1] && !buf[3]);
+   assert(!cp32_fstat(fd,&st) && st.atime==8000);
+   clock_seconds=9000;clock_failure=1;buf[0]='q';
+   assert(cp32_pread(fd,buf,1,0)==-1 && buf[0]=='q');
+   assert(cp32_pwrite(fd,"z",1,0)==-1);
+   clock_failure=0;assert(!cp32_fstat(fd,&st) && st.mtime==7000 && st.atime==8000);
+   write_failure=1;buf[0]='q';assert(cp32_pread(fd,buf,1,0)==-1 && buf[0]=='q');
+   write_failure=0;assert(cp32_pread(fd,buf,1,0)==1 && buf[0]=='x');
+   assert(!cp32_close(fd));
+   clock_seconds=10000;assert(cp32_minix_create(cp32_shell_disk_read,cp32_shell_disk_write,sizeof(disk),"/shell","hi",2)==2);
+   clock_seconds=11000;assert(cp32_minix_patch(cp32_shell_disk_read,cp32_shell_disk_write,sizeof(disk),"/shell",0,"yo",2)==2);
+   assert(!cp32_stat("/shell",&st) && st.atime==10000 && st.mtime==11000);
+   clock_seconds=12000;assert(cp32_minix_append(cp32_shell_disk_read,cp32_shell_disk_write,sizeof(disk),"/shell","!",1)==1);
+   assert(!cp32_stat("/shell",&st) && st.mtime==12000 && st.size==3);
+   cp32_fs_time_bind(cp32_shell_disk_read,0,time_now);clock_failure=1;
+   fd=cp32_open("/shell");assert(fd>=3 && cp32_read(fd,buf,3)==3 && !memcmp(buf,"yo!",3));
+   assert(!cp32_fstat(fd,&st) && st.atime==10000);assert(!cp32_close(fd));
+   return 0;
+ }
+ if(mode==24) {
+   api.version=25;assert(!cp32_io_init(&api));unsigned seconds=99;
+   cp32_shell_date("2147483648");assert(strstr(output,"Usage:"));
+   cp32_shell_date("1000");assert(clock_seconds==1000);
+   cp32_shell_touch("/touched");struct cp32_app_stat touched;
+   assert(!cp32_stat("/touched",&touched) && touched.size==0 && touched.mtime==1000);
+   clock_seconds=0;
+   assert(!cp32_time(&seconds) && seconds==0);
+   assert(!cp32_stime(1000) && !cp32_time(&seconds) && seconds==1000);
+   int fd=cp32_creat("/times",0644);assert(fd>=3);
+   assert(cp32_write(fd,"hi",2)==2 && !cp32_close(fd));
+   struct cp32_app_stat st;struct cp32_utimbuf times={100,200};
+   assert(!cp32_utime("/times",&times) && !cp32_stat("/times",&st));
+   assert(st.atime==100 && st.mtime==200 && st.ctime==1000 && st.size==2);
+   cp32_shell_touch("/times");assert(!cp32_stat("/times",&st) && st.size==2);
+   assert(cp32_fproc_utime(&cp32_app_state,cp32_shell_disk_read,0,sizeof(disk),"/times",0,0,1,1)==-30);
+   assert(cp32_fproc_validate(CP32_APP_TIME,(char *)arena,3,(uintptr_t)arena,(uintptr_t)arena+512)==-14);
+   assert(cp32_fproc_validate(CP32_APP_UTIME,(char *)arena,268,(uintptr_t)arena+1,(uintptr_t)arena+512)==-14);
+   assert(!cp32_link("/times","/alias") && !cp32_stime(2000));
+   assert(!cp32_utime("/alias",0) && !cp32_stat("/times",&st));
+   assert(st.atime==2000 && st.mtime==2000 && st.ctime==2000);
+   cp32_app_state.euid=1;
+   assert(cp32_stime(3000)==-1 && cp32_errno==CP32_EPERM);
+   assert(cp32_utime("/times",&times)==-1 && cp32_errno==CP32_EPERM);
+   assert(cp32_utime("/times",0)==-1 && cp32_errno==CP32_EACCES);
+   cp32_app_state.euid=0;
+   assert(!cp32_chmod("/times",0666));cp32_app_state.euid=1;
+   assert(!cp32_utime("/times",0));cp32_app_state.euid=0;
+   assert(!cp32_utime("/boot",0));
+   assert(cp32_utime("/absent",0)==-1 && cp32_errno==CP32_ENOENT);
+   assert(cp32_stime(0x80000000U)==-1 && cp32_errno==CP32_EINVAL);
+   clock_failure=1;seconds=55;
+   assert(cp32_time(&seconds)==-1 && cp32_errno==CP32_EIO && seconds==55);
+   clock_failure=0;clock_corrupt=1;
+   assert(cp32_time(&seconds)==-1 && seconds==55);clock_corrupt=0;
+   assert(!cp32_stat("/times",&st));unsigned oldtime=st.mtime;
+   write_failure=1;assert(cp32_utime("/times",&times)==-1 && cp32_errno==CP32_EIO);
+   write_failure=0;assert(!cp32_stat("/times",&st) && st.mtime==oldtime);
+   clock_seconds=0x80000000U;
+   assert(cp32_time(&seconds)==-1 && seconds==55);
+   api.version=24;assert(cp32_time(&seconds)==-1 && cp32_errno==CP32_ENOSYS);
+   return 0;
+ }
+ if(mode==23) {
+   assert(cp32_fproc_validate(CP32_APP_SYNC,(char *)1,0,0,512)==-22);
+   assert(cp32_fproc_validate(CP32_APP_FSYNC,0,1,0,512)==-22);
+   api.version=24;char *args[]={"hello","--sync",0};
+   assert(!app_main(2,args,0,&api) && sync_calls==2);
+   int fd=cp32_creat("/synctest",0600);assert(fd>=3);
+   assert(cp32_write(fd,"ok",2)==2);int copy=cp32_dup(fd);assert(copy>=3);
+   assert(!cp32_fsync(copy) && cp32_lseek(fd,0,1)==2);
+   assert(!cp32_unlink("/synctest") && !cp32_fsync(fd));
+   assert(!cp32_close(copy) && !cp32_close(fd));
+   fd=cp32_opendir("/");assert(fd>=3 && !cp32_fsync(fd) && !cp32_close(fd));
+   sync_result=-5;
+   assert(cp32_sync()==-1 && cp32_errno==CP32_EIO);
+   assert(cp32_fsync(0)==-1 && cp32_errno==CP32_EBADF);
+   api.version=23;
+   assert(cp32_sync()==-1 && cp32_errno==CP32_ENOSYS);
+   return 0;
+ }
+ if(mode==22) {
+   api.version=23;char *args[]={"hello","--rename",0};
+   int r=app_main(2,args,0,&api);if(r)fprintf(stderr,"rename stage %d errno %d\n",r,cp32_errno);
+   assert(!r && strstr(output,"Rename OK"));
+   assert(cp32_rename("","/no")==-1 && cp32_errno==CP32_ENOENT);
+   api.version=22;assert(cp32_rename("/no","/none")==-1 && cp32_errno==CP32_ENOSYS);
+   cp32_shell_app_files_reset();return 0;
+ }
+ if(mode==21) {
+   api.version=22;char *args[]={"hello","--grow",0};
+   int r=app_main(2,args,0,&api);if(r)fprintf(stderr,"growth stage %d errno %d\n",r,cp32_errno);
+   assert(!r && strstr(output,"Growth OK"));cp32_shell_app_files_reset();return 0;
+ }
  if(mode==20) {
    api.version=22;char *args[]={"hello","--space",0};
    int r=app_main(2,args,0,&api);if(r)fprintf(stderr,"space stage %d errno %d\n",r,cp32_errno);
@@ -287,7 +428,7 @@ int main(int argc,char **argv) {
  assert(!cp32_stat("readme",&st)); /* stat needs no spare descriptor */
  cp32_shell_app_files_reset();cp32_app_state.pid=123;
  /* Production IPC span validation: reject out-of-range, overlong, unterminated. */
- message m={CP32_APP_OPEN,0,7,(char *)arena};memcpy(arena,"readme",7);
+ message m={.m1_i1=CP32_APP_OPEN,.m1_i3=7,.m1_p1=(char *)arena};memcpy(arena,"readme",7);
  assert(application_file_request(&m)==3);
  m.m1_p1=(char *)arena+510;assert(application_file_request(&m)==-14);
  m.m1_p1=(char *)arena;m.m1_i3=257;assert(application_file_request(&m)==-36);
@@ -311,6 +452,10 @@ int main(int argc,char **argv) {
  m.m1_i1=CP32_APP_CHDIR;m.m1_p1=(char *)arena;m.m1_i3=2;arena[0]='/';arena[1]='x';
  assert(application_file_request(&m)==-22);
  m.m1_p1=(char *)(CP32_APP_TOP-1);m.m1_i3=2;assert(application_file_request(&m)==-14);
+ m.m1_i1=CP32_APP_RENAME;m.m1_p1=(char *)arena;m.m1_i3=511;assert(application_file_request(&m)==-22);
+ m.m1_i3=512;memset(arena,0,sizeof(arena));arena[511]='x';assert(application_file_request(&m)==-36);
+ m.m1_p1=(char *)arena+1;assert(application_file_request(&m)==-14);
+ memset(arena,0,sizeof(arena));
  m.m1_i1=CP32_APP_FSINFO;m.m1_p1=(char *)arena;m.m1_i3=23;assert(application_file_request(&m)==-22);
  m.m1_i3=24;m.m1_p1=(char *)(CP32_APP_TOP-4);assert(application_file_request(&m)==-14);
  m.m1_p1=(char *)arena+1;assert(!application_file_request(&m));
@@ -373,5 +518,10 @@ with tempfile.TemporaryDirectory() as folder:
    '-I'+str(root/'src/fs'),'-I'+str(root/'src/apps/lib'),*(['-DTEST_CAT'] if app=='cat' else ['-DTEST_HELLO'] if app=='hello' else ['-DTEST_LS'] if app=='ls' else []),
    str(p/'test.c'),str(root/f'src/apps/{app}/{app}.c'),str(root/'src/apps/lib/io.c'),*extra,
    *[str(f) for f in (root/'src/fs').glob('*.c')],'-o',str(p/app)],check=True)
-  for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
+  for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D','E','F','G','H','I') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
+  if app=='hello' and '--dirs' not in sys.argv:
+   sys.path.insert(0,str(root/'tests/fs'))
+   from test_fsck import swapped
+   (p/'swapped').write_bytes(swapped(build_image(True)))
+   for time_mode in ('H','I'):subprocess.run([str(p/app),str(p/'swapped'),time_mode],check=True)
 print('App files: production FS, isolated handles, cleanup, seek, indirect reads, utilities and request bounds pass')

@@ -1,0 +1,37 @@
+User-supplied hardware transcript excerpts, 2026-10-27.
+Both boots used the updater image. These are selected excerpts, not a full log.
+
+First boot:
+[FEATURE FS-TIME 165]1
+[ROOT V165 backend=sd result=0 capacity=65536]
+[UPDATER 165 enabled]
+[TEST FS-TIME 165]
+[TTY line=create t hi]
+Created /t: 2 bytes
+[TTY line=date 1000]
+1000
+[TTY line=touch t]
+Touch OK
+[TTY line=stat t]
+file inode=15 size=2 links=1
+uid=0 gid=0 atime=1013 ctime=1013 mtime=1013
+[TTY line=cat t]
+hi
+[TTY line=sync]
+Sync OK
+
+Second boot:
+[FEATURE FS-TIME 165]1
+[ROOT V165 backend=sd result=0 capacity=65536]
+[UPDATER 165 enabled]
+[TEST FS-TIME 165]
+[TTY line=stat t]
+file inode=15 size=2 links=1
+uid=0 gid=0 atime=1013 ctime=1013 mtime=1013
+[TTY line=cat t]
+hi
+
+Confirmed: explicit timestamps, inode identity/size and contents persist across
+restart. No exception is shown. Not established by this transcript: clean-image
+boot, applications updated by apps, application time API exercise, date after
+restart, or image166 automatic timestamps.

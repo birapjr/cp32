@@ -70,4 +70,15 @@ struct cp32_app_position_request {unsigned offset,count;char data[64];};
 struct cp32_app_fsinfo {unsigned zone_size,zones,free_zones,inodes,free_inodes,name_max;};
 #define CP32_APP_FSINFO 33 /* v22: sole mounted volume allocation counts */
 #define CP32_APP_FILE_MAX 4
+
+#define CP32_APP_RENAME 34 /* v23: replacement and directory moves */
+/* v24: explicit device completion; no pointer payload. */
+#define CP32_APP_SYNC 35
+#define CP32_APP_FSYNC 36
+/* v25: seconds since Unix epoch, range 0..INT32_MAX. */
+#define CP32_APP_TIME 37
+#define CP32_APP_STIME 38
+#define CP32_APP_UTIME 39
+struct cp32_app_utime_request {char path[256];unsigned atime,mtime,current;};
+struct cp32_utimbuf {unsigned actime,modtime;};
 #endif

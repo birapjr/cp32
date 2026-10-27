@@ -40,14 +40,47 @@ CP32_FS_TEXT static int reserve(cp32_disk_reader read,cp32_disk_writer write,
   if(word&(1U<<(bit%16)))return -CP32_SUPER_INVALID;
   put16(raw,word|(1U<<(bit%16)),swap);return store(write,at,raw,2);
 }
-/* Resolve a mutation target in an existing one-block directory. slot is either
+/* Shared bounded allocator; directory access remains private to namespace code. */
+CP32_FS_TEXT static int write_inode(cp32_disk_reader,cp32_disk_writer,
+    const struct cp32_minix_super *,unsigned,unsigned,const char *,unsigned,int);
+CP32_FS_TEXT static int directory_address(struct cp32_minix_dir *dir,unsigned slot,unsigned *address)
+{
+  struct cp32_minix_file map;unsigned i,zone;int r;
+  map.read=dir->read;map.super=dir->super;map.zone_bytes=1024;
+  map.indirect=dir->indirect;map.double_indirect=0;
+  for(i=0;i<7;i++)map.zones[i]=dir->zones[i];
+  r=cp32_fs_read_map(&map,slot/1024,&zone);if(r)return r;
+  if(!zone)return -CP32_SUPER_INVALID;
+  *address=zone*1024+slot%1024;return 0;
+}
+CP32_FS_TEXT static int directory_store(cp32_disk_writer write,
+    struct cp32_minix_dir *dir,unsigned slot,const unsigned char *entry)
+{
+  unsigned address;int r=directory_address(dir,slot,&address);
+  return r ? r:store(write,address,entry,16);
+}
+/* Reserve a zero entry at a new block before publishing a child/link. Failed
+ * later operations may leave reusable empty capacity, never a dangling name.
+ * Existing-block entries retain the original data-before-size publication. */
+CP32_FS_TEXT static int directory_capacity(cp32_disk_reader read,cp32_disk_writer write,
+    struct cp32_minix_dir *dir,unsigned number,unsigned slot)
+{
+  char zero[16]={0};int r;
+  if(slot<dir->size)return 0;
+  if(slot>263U*1024-16 || slot+16>dir->super.max_size)return -CP32_FILE_NOSPACE;
+  if(slot%1024)return 0;
+  r=write_inode(read,write,&dir->super,number,slot,zero,16,1);
+  if(r!=16)return r<0 ? r:-CP32_SUPER_IO;
+  return cp32_fs_open_directory(read,&dir->super,number,dir);
+}
+/* Resolve a mutation target in an existing mapped directory. slot is either
  * the matching entry, the first empty slot, or EOF; found is zero if absent. */
 CP32_FS_TEXT static int mutation_location(cp32_disk_reader read,unsigned capacity,
     const char *path,struct cp32_minix_dir *dir,unsigned *parent_inode,
     char name[15],unsigned *slot,unsigned *found)
 {
   char parent[CP32_MINIX_PATH_MAX+1];unsigned char raw[16];
-  unsigned length,start=0,n,i,at,ino;int r;
+  unsigned length,start=0,n,i,at,ino,address;int r;
   if(!path)return -CP32_FILE_NAME;
   for(length=0;path[length];length++) {
     if(length==CP32_MINIX_PATH_MAX || path[length]<0x20 || path[length]>0x7e)
@@ -62,10 +95,11 @@ CP32_FS_TEXT static int mutation_location(cp32_disk_reader read,unsigned capacit
   else {parent[0]='/';parent[1]=0;}
   r=cp32_fs_resolve_path(read,capacity,parent,&dir->super,parent_inode);if(r)return r;
   r=cp32_fs_open_directory(read,&dir->super,*parent_inode,dir);if(r)return r;
-  if(dir->super.log_zone_size || dir->size>1024)return -CP32_SUPER_UNSUPPORTED;
+  if(dir->super.log_zone_size)return -CP32_SUPER_UNSUPPORTED;
   *slot=dir->size;*found=0;
   for(at=32;at<dir->size;at+=16) {
-    if(read(dir->zones[0]*1024+at,(char *)raw,16)!=16)return -CP32_SUPER_IO;
+    r=directory_address(dir,at,&address);if(r)return r;
+    if(read(address,(char *)raw,16)!=16)return -CP32_SUPER_IO;
     ino=cp32_fs_u16(raw,dir->super.swapped);
     if(!ino) {if(*slot==dir->size)*slot=at;continue;}
     for(i=0;i<n && raw[2+i]==(unsigned char)name[i];i++){}
@@ -76,14 +110,14 @@ CP32_FS_TEXT static int mutation_location(cp32_disk_reader read,unsigned capacit
 
 /* MINIX open.c:new_node resolves the parent before allocating and publishes
  * the initialized inode before entering its name. Root and nested paths share
- * the bounded directory lookup also used by rename; no new directory zones. */
+ * the mapped directory lookup also used by rename and link. */
 CP32_FS_TEXT static int create_node(cp32_disk_reader read,cp32_disk_writer write,
     unsigned capacity,const char *path,const char *bytes,unsigned n,int directory,unsigned mode)
 {
   struct cp32_minix_dir dir;
   struct cp32_minix_super *s=&dir.super;
   unsigned char raw[64],entry[16],parent[64];char name[15];
-  unsigned length,i,at,slot,ino,zbit,zone,imap=2048,zmap,itable,base,parent_inode,found;
+  unsigned length,i,at,slot,ino,zbit,zone,imap=2048,zmap,itable,parent_inode,found;
   int r;
   if(!read || !write || !path || (!directory && n && !bytes) || n>64)return -CP32_SUPER_INVALID;
   cp32_cache_invalidate();
@@ -92,9 +126,7 @@ CP32_FS_TEXT static int create_node(cp32_disk_reader read,cp32_disk_writer write
   if(found)return -CP32_FILE_EXISTS;
   if(n>s->max_size)return -CP32_SUPER_UNSUPPORTED;
   for(length=0;name[length];length++){}
-  base=dir.zones[0]*1024;
-  if(slot==1024 || (slot==dir.size && dir.size+16>s->max_size))
-    return -CP32_FILE_NOSPACE;
+
   zmap=(2+s->imap_blocks)*1024;
   itable=(2+s->imap_blocks+s->zmap_blocks)*1024;
   if(read(itable+(parent_inode-1)*64,(char *)parent,64)!=64)return -CP32_SUPER_IO;
@@ -102,6 +134,12 @@ CP32_FS_TEXT static int create_node(cp32_disk_reader read,cp32_disk_writer write
     return -CP32_SUPER_UNSUPPORTED;
   r=find_free_bit(read,imap,1,s->ninodes,s->swapped,&ino);if(r)return r;
   zone=zbit=0;
+  if(n) {
+    r=find_free_bit(read,zmap,1,s->zones-s->first_data_zone,s->swapped,&zbit);if(r)return r;
+    zone=s->first_data_zone+zbit-1;
+  }
+  r=directory_capacity(read,write,&dir,parent_inode,slot);if(r)return r;
+  if(read(itable+(parent_inode-1)*64,(char *)parent,64)!=64)return -CP32_SUPER_IO;
   if(n) {
     r=find_free_bit(read,zmap,1,s->zones-s->first_data_zone,s->swapped,&zbit);if(r)return r;
     zone=s->first_data_zone+zbit-1;
@@ -127,7 +165,8 @@ CP32_FS_TEXT static int create_node(cp32_disk_reader read,cp32_disk_writer write
   put16(raw,directory ? (0040000|(mode&0777)):0100644,s->swapped);
   put16(raw+2,directory ? 2:1,s->swapped);
   put32(raw+8,n,s->swapped);put32(raw+24,zone,s->swapped);
-  /* uid/gid and unavailable wall-clock timestamps remain zero. */
+  /* New inodes receive all three times; ownership remains the current model. */
+  r=cp32_fs_stamp(read,raw+12,s->swapped,7);if(r)return r;
   r=store(write,itable+(ino-1)*64,raw,64);if(r)return r;
   if(directory) {
     /* Count the child's dot-dot before publication. On failure an overcount
@@ -138,7 +177,7 @@ CP32_FS_TEXT static int create_node(cp32_disk_reader read,cp32_disk_writer write
   for(i=0;i<16;i++)entry[i]=0;
   put16(entry,ino,s->swapped);
   for(i=0;i<length;i++)entry[2+i]=(unsigned char)name[i];
-  r=store(write,base+slot,entry,16);if(r)return r;
+  r=directory_store(write,&dir,slot,entry);if(r)return r;
   if(slot==dir.size) {
     put32(parent+8,dir.size+16,s->swapped);
     r=store(write,itable+(parent_inode-1)*64,parent,64);if(r)return r;
@@ -194,6 +233,7 @@ CP32_FS_TEXT int cp32_minix_append(cp32_disk_reader read,cp32_disk_writer write,
   zmap=(2+s->imap_blocks)*1024;
   itable=(2+s->imap_blocks+s->zmap_blocks)*1024+(file.inode-1)*64;
   if(read(itable,(char *)raw,64)!=64)return -CP32_SUPER_IO;
+  r=cp32_fs_stamp(read,raw+12,s->swapped,6);if(r)return r;
   if(file.size%1024) {
     r=cp32_fs_read_map(&file,used-1,&oldzone);if(r)return r;
     if(!oldzone)return -CP32_SUPER_UNSUPPORTED; /* sparse EOF filling follows */
@@ -322,7 +362,8 @@ CP32_FS_TEXT int cp32_fs_truncate_inode(cp32_disk_reader read,cp32_disk_writer w
   keep=(length+1023)/1024;changed=length!=file.size;
   for(i=keep;i<263;i++)if(shrink_zones[i])changed=1;
   if(table && keep<=7)changed=1;
-  if(!changed)return 0;
+  if(!changed)return cp32_fs_data_time(&file,6);
+  r=cp32_fs_stamp(read,inode+12,s->swapped,6);if(r)return r;
   put32(inode+8,length,s->swapped);
   for(i=keep;i<7;i++)put32(inode+24+i*4,0,s->swapped);
   if(keep<=7)put32(inode+52,0,s->swapped);
@@ -375,6 +416,7 @@ CP32_FS_TEXT int cp32_fs_resize_inode(cp32_disk_reader read,cp32_disk_writer wri
       r=store(write,zone*1024+at,zero,n);if(r)return r;at+=n;
     }
   }
+  r=cp32_fs_stamp(read,raw+12,s.swapped,6);if(r)return r;
   put32(raw+8,length,s.swapped);return store(write,itable,raw,64);
 }
 
@@ -396,7 +438,7 @@ CP32_FS_TEXT int cp32_minix_link(cp32_disk_reader read,cp32_disk_writer write,
   struct cp32_minix_dir root;struct cp32_minix_stat info;
   struct cp32_minix_super *s=&root.super;
   unsigned char entry[16],inode[64],parent[64];
-  char name[15];unsigned length,i,slot,base,itable,parent_inode,found;int r;
+  char name[15];unsigned length,i,slot,itable,parent_inode,found;int r;
   if(!read || !write || !path || !destination)return -CP32_SUPER_INVALID;
   cp32_cache_invalidate();
   r=cp32_minix_stat(read,capacity,path,&info);if(r)return r;
@@ -407,9 +449,7 @@ CP32_FS_TEXT int cp32_minix_link(cp32_disk_reader read,cp32_disk_writer write,
   if(r)return r;
   if(found)return -CP32_FILE_EXISTS;
   for(length=0;name[length];length++){}
-  base=root.zones[0]*1024;
-  if(slot==1024 || (slot==root.size && root.size+16>s->max_size))
-    return -CP32_FILE_NOSPACE;
+  r=directory_capacity(read,write,&root,parent_inode,slot);if(r)return r;
   itable=(2+s->imap_blocks+s->zmap_blocks)*1024;
   if(read(itable+(info.inode-1)*64,(char *)inode,64)!=64 ||
      read(itable+(parent_inode-1)*64,(char *)parent,64)!=64)return -CP32_SUPER_IO;
@@ -418,7 +458,7 @@ CP32_FS_TEXT int cp32_minix_link(cp32_disk_reader read,cp32_disk_writer write,
   for(i=0;i<16;i++)entry[i]=0;
   put16(entry,info.inode,s->swapped);
   for(i=0;i<length;i++)entry[2+i]=(unsigned char)name[i];
-  r=store(write,base+slot,entry,16);if(r)return r;
+  r=directory_store(write,&root,slot,entry);if(r)return r;
   if(slot==root.size) {
     put32(parent+8,root.size+16,s->swapped);
     r=store(write,itable+(parent_inode-1)*64,parent,64);if(r)return r;
@@ -464,7 +504,6 @@ CP32_FS_TEXT static int remove_node(cp32_disk_reader read,cp32_disk_writer write
     if(info.inode==1 || info.inode==working.inode)return -CP32_FILE_BUSY;
     if(info.links!=2)return -CP32_FILE_NOT_EMPTY;
     if(info.size<32 || info.size%16)return -CP32_SUPER_INVALID;
-    if(info.size>1024)return -CP32_SUPER_UNSUPPORTED;
   } else if((info.mode&0170000)!=0100000)return -CP32_FILE_IS_DIR;
   if(!info.links)return -CP32_SUPER_INVALID;
   for(fd=0;fd<CP32_OPEN_MAX;fd++) {
@@ -482,7 +521,8 @@ CP32_FS_TEXT static int remove_node(cp32_disk_reader read,cp32_disk_writer write
      * before unlinking, including empty slots left by removed regular files. */
     if(!shrink_zones[0])return -CP32_SUPER_INVALID;
     for(at=0;at<info.size;at+=16) {
-      if(read(shrink_zones[0]*1024+at,(char *)entry,16)!=16)return -CP32_SUPER_IO;
+      if(!shrink_zones[at/1024])return -CP32_SUPER_INVALID;
+      if(read(shrink_zones[at/1024]*1024+at%1024,(char *)entry,16)!=16)return -CP32_SUPER_IO;
       word=cp32_fs_u16(entry,s->swapped);
       if(at>=32) {if(word)return -CP32_FILE_NOT_EMPTY;continue;}
       if(word!=(at ? parent_inode:info.inode) || entry[2]!='.' ||
@@ -497,7 +537,7 @@ CP32_FS_TEXT static int remove_node(cp32_disk_reader read,cp32_disk_writer write
   }
   if(!cwd && info.links==1)held=cp32_fd_defer_unlink(read,write,info.inode);
   for(i=0;i<16;i++)entry[i]=0;
-  r=store(write,dir.zones[0]*1024+slot,entry,16);if(r)return r;
+  r=directory_store(write,&dir,slot,entry);if(r)return r;
   if(!cwd && (info.links>1 || held)) {
     put16(inode+2,info.links-1,s->swapped);
     return store(write,itable,inode,64);
@@ -551,25 +591,102 @@ CP32_FS_TEXT int cp32_minix_rename(cp32_disk_reader read,cp32_disk_writer write,
   put16(entry,oldino,olddir.super.swapped);
   for(i=0;newname[i];i++)entry[2+i]=(unsigned char)newname[i];
   if(oldparent==newparent)
-    return store(write,olddir.zones[0]*1024+oldslot,entry,16);
-  if(newslot==1024 || (newslot==newdir.size && newdir.size+16>newdir.super.max_size))
-    return -CP32_FILE_NOSPACE;
+    return directory_store(write,&olddir,oldslot,entry);
   if(!info.links || info.links>=127)return -CP32_FILE_LINK_LIMIT;
+  r=directory_capacity(read,write,&newdir,newparent,newslot);if(r)return r;
   itable=(2+olddir.super.imap_blocks+olddir.super.zmap_blocks)*1024;
   at=itable+(oldino-1)*64;
   if(read(at,(char *)inode,64)!=64 ||
      read(itable+(newparent-1)*64,(char *)parent,64)!=64)return -CP32_SUPER_IO;
   put16(inode+2,info.links+1,olddir.super.swapped);
   r=store(write,at,inode,64);if(r)return r;
-  r=store(write,newdir.zones[0]*1024+newslot,entry,16);if(r)return r;
+  r=directory_store(write,&newdir,newslot,entry);if(r)return r;
   if(newslot==newdir.size) {
     put32(parent+8,newdir.size+16,newdir.super.swapped);
     r=store(write,itable+(newparent-1)*64,parent,64);if(r)return r;
   }
   for(i=0;i<16;i++)entry[i]=0;
-  r=store(write,olddir.zones[0]*1024+oldslot,entry,16);if(r)return r;
+  r=directory_store(write,&olddir,oldslot,entry);if(r)return r;
   put16(inode+2,info.links,olddir.super.swapped);
   return store(write,at,inode,64);
+}
+
+/* MINIX link.c:do_rename. Validate ancestry and types before removing a
+ * replacement. I/O failure may leave partial changes; never roll back/free
+ * uncertain storage. The no-replace API above retains its old contract. */
+CP32_FS_TEXT int cp32_minix_move(cp32_disk_reader read,cp32_disk_writer write,
+    unsigned capacity,const char *oldpath,const char *newpath)
+{
+  struct cp32_minix_dir olddir,newdir,child,ancestor;
+  struct cp32_minix_stat source,target,parent;
+  unsigned op,np,os,ns,oi,ni,current,depth,table;char on[15],nn[15];
+  unsigned char entry[16],raw[2];int r,isdir;
+  if(!read || !write)return -CP32_FILE_READONLY;
+  cp32_cache_invalidate();
+  r=mutation_location(read,capacity,oldpath,&olddir,&op,on,&os,&oi);if(r)return r;
+  if(!oi)return -CP32_FILE_NOT_FOUND;
+  r=mutation_location(read,capacity,newpath,&newdir,&np,nn,&ns,&ni);if(r)return r;
+  if(oi==ni)return 0;
+  r=cp32_fs_stat_inode(read,&olddir.super,oi,&source);if(r)return r;
+  isdir=(source.mode&0170000)==0040000;
+  if(isdir) {
+    if(oi==1)return -CP32_FILE_BUSY;
+    r=cp32_fs_open_directory(read,&olddir.super,oi,&child);if(r)return r;
+    if(read(child.zones[0]*1024+16,(char *)entry,16)!=16)return -CP32_SUPER_IO;
+    if(cp32_fs_u16(entry,olddir.super.swapped)!=op || entry[2]!='.' || entry[3]!='.' || entry[4])return -CP32_SUPER_INVALID;
+    current=np;
+    for(depth=0;depth<olddir.super.ninodes;depth++) {
+      if(current==oi)return -CP32_SUPER_INVALID;
+      if(current==1)break;
+      r=cp32_fs_open_directory(read,&olddir.super,current,&ancestor);if(r)return r;
+      if(read(ancestor.zones[0]*1024+16,(char *)entry,16)!=16)return -CP32_SUPER_IO;
+      if(entry[2]!='.' || entry[3]!='.' || entry[4])return -CP32_SUPER_INVALID;
+      current=cp32_fs_u16(entry,olddir.super.swapped);
+    }
+    if(depth==olddir.super.ninodes)return -CP32_SUPER_INVALID;
+    if(op!=np) {
+      r=cp32_fs_stat_inode(read,&olddir.super,np,&parent);if(r)return r;
+      if(parent.links>=127 && !ni)return -CP32_FILE_LINK_LIMIT;
+    }
+  }
+  if(!isdir && op!=np && source.links>=127)return -CP32_FILE_LINK_LIMIT;
+  if(ni) {
+    r=cp32_fs_stat_inode(read,&olddir.super,ni,&target);if(r)return r;
+    if(isdir && (target.mode&0170000)!=0040000)return -CP32_FILE_NOT_DIR;
+    if(!isdir && (target.mode&0170000)==0040000)return -CP32_FILE_IS_DIR;
+    r=isdir ? cp32_minix_rmdir(read,write,capacity,newpath,"/"):
+              cp32_minix_unlink(read,write,capacity,newpath);
+    if(r)return r;
+  }
+  if(!isdir)return cp32_minix_rename(read,write,capacity,oldpath,newpath);
+  /* Refresh parents after replacement removal changed link counts. */
+  r=mutation_location(read,capacity,newpath,&newdir,&np,nn,&ns,&ni);if(r)return r;
+  if(ni)return -CP32_SUPER_INVALID;
+  for(depth=0;depth<16;depth++)entry[depth]=0;
+  put16(entry,oi,olddir.super.swapped);
+  for(depth=0;nn[depth];depth++)entry[2+depth]=nn[depth];
+  if(op==np)return directory_store(write,&olddir,os,entry);
+  r=directory_capacity(read,write,&newdir,np,ns);if(r)return r;
+  table=(2+olddir.super.imap_blocks+olddir.super.zmap_blocks)*1024;
+  /* New parent counts dot-dot before it can become visible. */
+  r=cp32_fs_stat_inode(read,&olddir.super,np,&parent);if(r)return r;
+  if(parent.links>=127)return -CP32_FILE_LINK_LIMIT;
+  put16(raw,parent.links+1,olddir.super.swapped);
+  r=store(write,table+(np-1)*64+2,raw,2);if(r)return r;
+  r=directory_store(write,&newdir,ns,entry);if(r)return r;
+  if(ns==newdir.size) {
+    unsigned char size[4];put32(size,ns+16,olddir.super.swapped);
+    r=store(write,table+(np-1)*64+8,size,4);if(r)return r;
+  }
+  /* The directory itself retains its inode and open handles. */
+  put16(raw,np,olddir.super.swapped);
+  r=store(write,child.zones[0]*1024+16,raw,2);if(r)return r;
+  for(depth=0;depth<16;depth++)entry[depth]=0;
+  r=directory_store(write,&olddir,os,entry);if(r)return r;
+  r=cp32_fs_stat_inode(read,&olddir.super,op,&parent);if(r)return r;
+  if(parent.links<3)return -CP32_SUPER_INVALID;
+  put16(raw,parent.links-1,olddir.super.swapped);
+  return store(write,table+(op-1)*64+2,raw,2);
 }
 
 /* MINIX protect.c:do_chmod. Trusted shell, numeric rwx modes only; there is
@@ -626,9 +743,9 @@ CP32_FS_TEXT int cp32_minix_copy(cp32_disk_reader read,cp32_disk_writer write,
 
 /* Regular descriptor writes. Work in verified sector fragments, publishing
  * initialized mappings before EOF. Never report an uncertain fragment as done. */
-CP32_FS_TEXT int cp32_fs_write_inode(cp32_disk_reader read,cp32_disk_writer write,
+CP32_FS_TEXT static int write_inode(cp32_disk_reader read,cp32_disk_writer write,
     const struct cp32_minix_super *super,unsigned number,unsigned offset,
-    const char *bytes,unsigned count)
+    const char *bytes,unsigned count,int directory)
 {
   struct cp32_minix_file f;
   unsigned char raw[64],zero[64],ptr[4];
@@ -644,9 +761,17 @@ CP32_FS_TEXT int cp32_fs_write_inode(cp32_disk_reader read,cp32_disk_writer writ
   for(i=0;i<64;i++)zero[i]=0;
   while(done<count) {
     cp32_cache_invalidate();
-    r=cp32_fs_file_inode(read,super,number,&f);if(r)goto failed;
+    if(directory) {
+      struct cp32_minix_dir d;
+      r=cp32_fs_open_directory(read,super,number,&d);
+      if(r)goto failed;
+      f.size=d.size;
+      if(offset!=d.size || count!=16 || offset%1024){r=-CP32_SUPER_INVALID;goto failed;}
+    } else r=cp32_fs_file_inode(read,super,number,&f);
+    if(r)goto failed;
     if(f.size>263U*1024){r=-CP32_FILE_BIG;goto failed;}
     if(read(itable,(char *)raw,64)!=64){r=-CP32_SUPER_IO;goto failed;}
+    if(!directory){r=cp32_fs_stamp(read,raw+12,super->swapped,6);if(r)goto failed;}
     r=snapshot_zones(read,super,raw);if(r)goto failed;
     position=offset+done;index=position/1024;
     zone=shrink_zones[index];table=shrink_zones[263];
@@ -715,3 +840,8 @@ CP32_FS_TEXT int cp32_fs_reap_inode(cp32_disk_reader read,cp32_disk_writer write
   put16(bits,word&~(1U<<(number%16)),s->swapped);
   return store(write,at,bits,2);
 }
+
+CP32_FS_TEXT int cp32_fs_write_inode(cp32_disk_reader read,cp32_disk_writer write,
+    const struct cp32_minix_super *super,unsigned number,unsigned offset,
+    const char *bytes,unsigned count)
+{ return write_inode(read,write,super,number,offset,bytes,count,0); }

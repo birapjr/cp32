@@ -74,7 +74,13 @@ CP32_FS_TEXT static int refresh(int fd)
 {
   struct cp32_minix_file *f=get_file(fd),next;unsigned position;int r;
   if(!f)return -CP32_FILE_BAD_FD;
-  if(directories[descriptors[fd]-1])return 0;
+  if(directories[descriptors[fd]-1]) {
+    struct cp32_minix_dir dir;unsigned i;
+    r=cp32_fs_open_directory(f->read,&f->super,f->inode,&dir);if(r)return r;
+    f->size=dir.size;f->indirect=dir.indirect;
+    for(i=0;i<7;i++)f->zones[i]=dir.zones[i];
+    return 0;
+  }
   position=f->position;r=cp32_fs_file_inode(f->read,&f->super,f->inode,&next);
   if(!r){*f=next;f->position=position;}
   return r;
@@ -235,6 +241,7 @@ CP32_FS_TEXT int cp32_fd_readdir(int fd,unsigned *inode,char name[15])
   if(!file) return -CP32_FILE_BAD_FD;
   if(!directories[descriptors[fd]-1]) return -CP32_FILE_NOT_DIR;
   if(!inode || !name || file->position%16) return -CP32_SUPER_INVALID;
+  result=refresh(fd);if(result)return result;
   dir.super=file->super;
   dir.read=file->read;
   dir.size=file->size;

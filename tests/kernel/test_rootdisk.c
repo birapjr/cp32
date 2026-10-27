@@ -10,7 +10,8 @@
 static unsigned char *disk;
 static unsigned size,reads,fail,init_fail;
 static uint64_t reported;
-static unsigned writes,write_fail,corrupt;
+static unsigned writes,write_fail,corrupt,sync_fail;
+int cp32_sdcard_sync(void) {return sync_fail ? -1:0;}
 int cp32_sdcard_write(uint32_t lba,const unsigned char *p) {
  writes++;if(write_fail || lba>=size/512)return -1;
  memcpy(disk+lba*512,p,512);if(corrupt)disk[lba*512]^=1;return 0;
@@ -37,6 +38,8 @@ int main(int argc,char **argv) {
  assert(argc==2);FILE *f=fopen(argv[1],"rb");assert(f);fseek(f,0,SEEK_END);size=ftell(f);rewind(f);
  disk=malloc(size);assert(disk && fread(disk,1,size,f)==size);fclose(f);reported=size/512;
  assert(!cp32_root_init() && cp32_root_capacity()==65536);
+ assert(!cp32_root_sync());sync_fail=1;assert(cp32_root_sync()<0 && !cp32_root_writable());
+ sync_fail=0;assert(cp32_root_sync()<0);assert(!cp32_root_init());
  unsigned char buf[1024],old[512];
  assert(!cp32_root_read(511,buf,1024) && !memcmp(buf,disk+2048*512+511,1024));
  assert(cp32_root_read(65535,buf,2)<0 && cp32_root_read(0,0,1)<0);
@@ -159,6 +162,10 @@ int main(int argc,char **argv) {
  assert(!cp32_minix_stat(cached_reader,65536,"/modealias",&source) && source.mode==0100644);
  assert(!cp32_minix_file_open(cached_reader,65536,"/modealias",&file));
  assert(cp32_minix_file_read(&file,(char *)buf,64)==5 && !memcmp(buf,"again",5));
+ /* Release this completed scenario's inode before the directory tests. */
+ assert(!cp32_minix_unlink(cached_reader,writer,65536,"/modealias"));
+ assert(!cp32_minix_unlink(cached_reader,writer,65536,"/boot/moved"));
+ assert(!cp32_root_sync());
  /* Create directly under /boot, remount, then exercise its normal lifecycle. */
  assert(cp32_minix_create(cached_reader,writer,65536,"/boot/nested","nested",6)==6);
  assert(!cp32_root_init());cp32_cache_invalidate();

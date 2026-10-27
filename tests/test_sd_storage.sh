@@ -11,10 +11,13 @@ cc -std=c99 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all
  -I"$root/src/drivers" -idirafter "$root/src/include" \
  "$root/tests/drivers/test_spi_fifo.c" "$root/src/drivers/spi_fifo.c" -o "$work/fifo"
 "$work/fifo"
-disk="$root/src/build/sdcard.img"
-if [ ! -f "$disk" ]; then
- python3 "$root/tests/drivers/make_sd_fixture.py" "$work/disk.img"
- disk="$work/disk.img"
+# Fault-injection offsets below deliberately use the compact 64KiB fixture.
+# The expanded production image is exercised by test_sd_image.sh.
+disk="$work/disk.img"
+if [ -f "$root/src/build/minix-demo.img" ]; then
+ python3 "$root/tools/make_sd_image.py" "$root/src/build/minix-demo.img" "$disk"
+else
+ python3 "$root/tests/drivers/make_sd_fixture.py" "$disk"
 fi
  cc -std=c99 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all \
   -I"$root/src/kernel" "$root/tests/kernel/test_rootdisk.c" "$root/src/kernel/rootdisk.c" \

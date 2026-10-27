@@ -57,6 +57,52 @@ static int io_test(void)
 /* This acceptance command creates an SD file; omit it from RAM recovery's
  * embedded demo application while retaining the kernel's process-state API. */
 /* Process-local state must survive exec, while CLOEXEC applies at commit. */
+/* More than 64 names using one inode: fits the small demo volume. */
+static int full_rename_test(void)
+{
+  int a,b;char c,cwd[32];
+  a=cp32_open_flags("/ra",CP32_O_CREAT|CP32_O_EXCL|CP32_O_RDWR,0600);
+  b=cp32_open_flags("/rb",CP32_O_CREAT|CP32_O_EXCL|CP32_O_RDWR,0600);
+  if(a<0 || b<0 || cp32_write(a,"A",1)!=1 || cp32_write(b,"B",1)!=1)return 192;
+  if(cp32_rename("/ra","/rb") || cp32_pread(b,&c,1,0)!=1 || c!='B')return 193;
+  if(cp32_close(a) || cp32_close(b) || cp32_unlink("/rb"))return 194;
+  if(cp32_mkdir("/rt",0700) || cp32_mkdir("/rt/a",0700) || cp32_mkdir("/rt/b",0700))return 195;
+  if(cp32_chdir("/rt/a") || cp32_rename("/rt/a","/rt/b"))return 196;
+  if(!cp32_getcwd(cwd,sizeof(cwd)) || cwd[4]!='b')return 197;
+  if(cp32_rename("/rt","/rt/b/bad")!=-1 || cp32_errno!=CP32_EINVAL)return 198;
+  if(cp32_rename("/rt/b","/rt")!=-1 || cp32_errno!=CP32_ENOTEMPTY)return 199;
+  if(cp32_rename("/rt","/ru") || !cp32_getcwd(cwd,sizeof(cwd)) || cwd[2]!='u')return 200;
+  if(cp32_rename("/ru/b","/rv") || cp32_chdir("..") || !cp32_getcwd(cwd,sizeof(cwd)) || cwd[1])return 201;
+  if(cp32_rmdir("/rv") || cp32_rmdir("/ru"))return 202;
+  return 0;
+}
+static int growth_test(void)
+{
+  char name[]="/gtest/n00";struct cp32_app_fsinfo a,b;
+  struct cp32_app_stat st;struct cp32_app_dirent entry;int fd,r;unsigned i,n=0;
+  if(cp32_fsinfo(&a) || a.free_zones<2 || a.free_inodes<3)return 180;
+  if(cp32_mkdir("/gtest",0700))return 181;
+  fd=cp32_open_flags("/gtest/base",CP32_O_CREAT|CP32_O_EXCL|CP32_O_RDWR,0600);
+  if(fd<0 || cp32_close(fd))return 182;
+  for(i=0;i<70;i++) {
+    name[8]='0'+i/10;name[9]='0'+i%10;
+    if(cp32_link("/gtest/base",name))return 183;
+  }
+  if(cp32_stat("/gtest",&st) || st.size!=73*16)return 184;
+  fd=cp32_opendir("/gtest");if(fd<0)return 185;
+  while((r=cp32_readdir(fd,&entry))>0)n++;
+  if(r || n!=73 || cp32_close(fd))return 186;
+  if(cp32_rename_noreplace("/gtest/n69","/gtest/last") || cp32_unlink("/gtest/last"))return 187;
+  fd=cp32_open_flags("/gtest/new",CP32_O_CREAT|CP32_O_EXCL|CP32_O_RDWR,0600);
+  if(fd<0 || cp32_close(fd) || cp32_stat("/gtest",&st) || st.size!=73*16 || cp32_unlink("/gtest/new"))return 188;
+  for(i=0;i<69;i++) {
+    name[8]='0'+i/10;name[9]='0'+i%10;
+    if(cp32_unlink(name))return 189;
+  }
+  if(cp32_unlink("/gtest/base") || cp32_rmdir("/gtest"))return 190;
+  if(cp32_fsinfo(&b) || a.free_zones!=b.free_zones || a.free_inodes!=b.free_inodes)return 191;
+  return 0;
+}
 static int space_test(void)
 {
   struct cp32_app_fsinfo a,b,c;int fd;
@@ -282,9 +328,27 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
 {
   unsigned i,n;
 
-  if(!s || (s->version<1 || s->version>22) || !s->write || !s->exit || started) return 1;
+  if(!s || (s->version<1 || s->version>25) || !s->write || !s->exit || started) return 1;
   started=1;
 #if !CP32_ROOT_RAM
+  if(option(argc,argv,"--sync")) {
+    int fd;
+    if(cp32_io_init(s))return 79;
+    fd=cp32_open("/readme");if(fd<0)return 1;
+    if(cp32_fsync(fd) || cp32_close(fd) || cp32_sync())return 2;
+    if(cp32_fsync(fd)!=-1 || cp32_errno!=CP32_EBADF)return 3;
+    return cp32_write(1,"Sync OK\n",8)==8 ? 0:4;
+  }
+  if(option(argc,argv,"--rename")) {
+    int r;if(cp32_io_init(s))return 79;r=full_rename_test();
+    if(!r)cp32_write(1,"Rename OK\n",10);
+    return r;
+  }
+  if(option(argc,argv,"--grow")) {
+    int r;if(cp32_io_init(s))return 79;r=growth_test();
+    if(!r)cp32_write(1,"Growth OK\n",10);
+    return r;
+  }
   if(option(argc,argv,"--space")) {
     int r;if(cp32_io_init(s))return 79;r=space_test();
     if(!r)cp32_write(1,"Space OK\n",9);

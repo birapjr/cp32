@@ -1,0 +1,209 @@
+ => CP32 OS kernel booting              ...
+
+start()                                 ...
+checking initialized memory             ...
+.data sentinel: 0xC032DA7A (expected 0xC032DA7A)
+.bss sentinel:  0x00000000 (expected 0x00000000)
+checking exception vectors              ...
+vector start:  0x40370000
+vector end:    0x40370400
+vector word 0: 0x00104506
+vector word 6: 0x000FE606
+checking call0 stack                    ...
+stack bottom:  0x3FCD2EE0
+stack pointer: 0x3FCDAEC0
+stack top:     0x3FCDAEE0
+stack align:   0 (expected 0)
+initialize memory                       ...
+setup boot parameters to kernel memory  ...
+exiting start()                         ...
+
+main() started                          ...
+init process table                      ...
+init stack                              ...
+init TASKS                              ...
+systemer irq start                      ...
+[FEATURE FS-STACK 162]1
+[KBD probe=1]
+[MM probe alloc=1 release=1 deny=1 zero=1 huge=1 adjacent=1 merge=1 owned=1 clear=1]
+[KBD V122 init=1 stale=0 int=0 status=1 fifo=0]
+[SD V162 transport=spi2 init-hz=400000 read-hz=4000000]
+[ROOT V162 backend=sd result=0 capacity=65536]
+[LCD clear-done]
+[TTY user-ready nr=1 pc=0x4038144C sp=0x3FCE4EE0 flags=0]
+[BOOT SYSTIMER V44 conf=0xC7000000 target=0x00000000 ena=0x00000001 raw=0x00000000]
+[TEST SCHEDULER 2]
+[CORE readyq=1]
+[CORE heldq=1]
+[CORE blockedowner=1]
+[CORE blockedframe=1]
+[CORE runtime=1]
+[CORE maps=1]
+[CORE flags=1]
+[CORE contexts=1]
+[CORE owners=1]
+[CORE ipcstate=1]
+[CORE ipcqueue=1]
+[CORE ipclinks=1]
+[CORE proctab=1]
+[CORE tasks=1]
+[CORE systask=1]
+[UPDATER 162 enabled]
+[TEST FS-STACK 162]
+
+STABLE idle-entry                       ...
+[SCHED return-state owner=4294967287 flags=0 selected=4294967287 fs=4294967295]
+[RFE publish target=4294967287 current=4294967287 seq=1]
+[RFE target=4294967287 current=4294967287 seq=1 pc=0x40387A48 ps=0x00000100]
+[SYSTIMER V44 n=1 before now=0x00000000:0x09552228 target=0x00000000:0x0955210A conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=1 after now=0x00000000:0x0955242E target=0x00000000:0x095934E1 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x095934E1 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x40387A48 sp=0x3FCD7EE0 psout=0x00000100 frame=1]
+[IRQ V68 count=1 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=0]
+[IPC count=1 op=2 src=132]
+[IPC V44 op=2 n=1 owner=4294967287 blocked=1 next=0 frame=1]
+[MM_TASK]
+[SCHED fs-selected pc=0x4038144C sp=0x3FCE4EE0 nest=0]
+[TTY user-entry]
+[IPC blocked-resume=1 owner=4294967287 result=0]
+[IPC V44 op=3 n=1 owner=1 blocked=1 next=4294967293 frame=1]
+[CLOCK_TASK]
+[SYSTIMER V44 n=2 before now=0x00000000:0x09593708 target=0x00000000:0x095934E1 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=2 after now=0x00000000:0x0959390E target=0x00000000:0x095D49C1 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x095D49C1 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IPC V44 op=1 n=1 owner=4294967287 blocked=0 next=4294967287 frame=1]
+[CLOCK V44 received=1 type=2 source=4294967295 tick=6 owner=4294967293 resumed=1]
+[CLOCK V44 received=2 type=2 source=4294967295 tick=12 owner=4294967293 resumed=1]
+[TTY READ V46 reply=3 n=1]
+[TTY line=mm]
+[MM V44 received=1 op=1001 source=1 resumed=1]
+[MM V44 received=2 op=1002 source=1 resumed=1]
+[MM IPC V44 alloc-release-result=0]
+[TTY WRITE V48 bytes=23 ticks=25]
+[CTX kernel-running ticks=1313 heartbeat=1]
+[CTX kernel-running ticks=2803 heartbeat=2]
+[TTY line=hello --exec-fail]
+[DISK V125 op=3 result=1024 n=1]
+[DISK V125 op=3 result=1024 n=2]
+[DISK V125 op=3 result=1024 n=3]
+[DISK V125 op=3 result=1024 n=4]
+[DISK V125 op=3 result=1024 n=5]
+[DISK V125 op=3 result=1024 n=6]
+[DISK V125 op=3 result=1024 n=7]
+[DISK V125 op=3 result=1024 n=8]
+[SCHED fs-publish flags=0 pc=0x40374377 sp=0x3FCE4870 owner=1]
+[IRQ return-frame=1 owner=1]
+[CTX V44 FS-RETURN n=1 tick=3203 pc=0x40374377 sp=0x3FCE4870 a0=0x403722F5 a15=0x3FCE4870 sar=0x0000000C lcount=0x00000000 frame=1]
+[CTX V44 FS-RETURN n=2 tick=3274 pc=0x40374377 sp=0x3FCE49B0 a0=0x403722F5 a15=0x3FCE49B0 sar=0x0000000B lcount=0x00000000 frame=1]
+[IPC V44 op=2 n=5000 owner=4294967293 blocked=1 next=4294967292 frame=1]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4970 nest=0]
+Exec failure recovery OKHello exit=0
+[TTY WRITE V48 bytes=40 ticks=46]
+[RFE target=4294967287 current=4294967287 seq=8929 pc=0x403744A6 ps=0x00000110]
+[SYSTIMER V44 n=5000 before now=0x00000000:0x58EA648A target=0x00000000:0x58EA6361 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=5000 after now=0x00000000:0x58EA669A target=0x00000000:0x58EE7743 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0x58EE7743 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00000110 pc=0x403744A6 sp=0x3FCD7E00 psout=0x00000100 frame=1]
+[IRQ V68 count=5000 nest=1 owner=4294967287 selected=4294967287 handoff=0 gates=1 unknown=0 clock-msgs=787]
+[CTX kernel-running ticks=5957 heartbeat=3]
+[CTX kernel-running ticks=7393 heartbeat=4]
+[IPC V44 op=2 n=10000 owner=4294967287 blocked=1 next=4294967289 frame=1]
+[CTX kernel-running ticks=8829 heartbeat=5]
+[RFE target=4294967287 current=4294967287 seq=14595 pc=0x40374377 ps=0x00000110]
+[SYSTIMER V44 n=10000 before now=0x00000000:0xA87BC2CD target=0x00000000:0xA87BC1A4 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=10000 after now=0x00000000:0xA87BC4DE target=0x00000000:0xA87FD586 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0xA87FD586 ena=0x00000001 ien=0x00000004 pending=0x00000000 ps=0x00060530 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IRQ V68 count=10000 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=1620]
+[CTX kernel-running ticks=10266 heartbeat=6]
+[CTX kernel-running ticks=11744 heartbeat=7]
+[TTY line=hello --exec]
+[IPC V44 op=2 n=15000 owner=4294967292 blocked=1 next=1 frame=1]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4970 nest=0]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE49B0 nest=0]
+[IPC count=20000 op=2 src=132]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4690 nest=0]
+[RFE target=4294967287 current=4294967287 seq=26211 pc=0x40374377 ps=0x00000110]
+[SYSTIMER V44 n=15000 before now=0x00000000:0xF8131904 target=0x00000000:0xF81317E4 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=15000 after now=0x00000000:0xF8131B15 target=0x00000000:0xF8172BBD conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000000:0xF8172BBD ena=0x00000001 ien=0x00000004 pending=0x00018040 ps=0x00000110 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IRQ V68 count=15000 nest=1 owner=4294967292 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=2437]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4590 nest=0]
+[IPC V44 op=2 n=20000 owner=4294967292 blocked=1 next=1 frame=1]
+Exec PID and file OKHello exit=0
+[TTY WRITE V48 bytes=36 ticks=212]
+[TTY line=hello --exec]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4970 nest=0]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4970 nest=0]
+[IPC V44 op=2 n=25000 owner=4294967292 blocked=1 next=1 frame=1]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE45B0 nest=0]
+Exec PID and file OKHello exit=0
+[RFE target=4294967287 current=4294967287 seq=39273 pc=0x40372838 ps=0x00000110]
+[SYSTIMER V44 n=20000 before now=0x00000001:0x47B2D3D0 target=0x00000001:0x47B2D2A8 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=20000 after now=0x00000001:0x47B2D5E1 target=0x00000001:0x47B6E689 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000001:0x47B6E689 ena=0x00000001 ien=0x00000004 pending=0x00018040 ps=0x00000110 pc=0x40372838 sp=0x3FCD7CF0 psout=0x00000100 frame=1]
+[IRQ V68 count=20000 nest=1 owner=4294967287 selected=4294967287 handoff=0 gates=1 unknown=0 clock-msgs=3216]
+[TTY WRITE V48 bytes=36 ticks=166]
+[CTX kernel-running ticks=20292 heartbeat=8]
+[TTY line=hello --rename]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4890 nest=0]
+[IPC V44 op=2 n=30000 owner=4294967287 blocked=1 next=4294967292 frame=1]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4970 nest=0]
+[IPC count=40000 op=2 src=132]
+[IPC V44 op=3 n=5000 owner=1 blocked=1 next=4294967292 frame=1]
+[IPC V44 op=1 n=5000 owner=4294967292 blocked=0 next=4294967292 frame=1]
+[DISK V125 op=3 result=1024 n=5000]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4660 nest=0]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4270 nest=0]
+Rename OK
+Hello exit=0
+[TTY WRITE V48 bytes=27 ticks=159]
+[RFE target=4294967287 current=4294967287 seq=51336 pc=0x40374377 ps=0x00000110]
+[SYSTIMER V44 n=25000 before now=0x00000001:0x974BC64A target=0x00000001:0x974BC521 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=25000 after now=0x00000001:0x974BC85B target=0x00000001:0x974FD904 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000001:0x974FD904 ena=0x00000001 ien=0x00000004 pending=0x00018040 ps=0x00060530 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IRQ V68 count=25000 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=3993]
+[CTX kernel-running ticks=25386 heartbeat=9]
+[IPC V44 op=2 n=35000 owner=4294967293 blocked=1 next=4294967289 frame=1]
+[CTX kernel-running ticks=26822 heartbeat=10]
+[CTX kernel-running ticks=28258 heartbeat=11]
+[CTX kernel-running ticks=29725 heartbeat=12]
+[RFE target=4294967287 current=4294967287 seq=56947 pc=0x40374377 ps=0x00000110]
+[SYSTIMER V44 n=30000 before now=0x00000001:0xE6E17F49 target=0x00000001:0xE6E17E20 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=30000 after now=0x00000001:0xE6E1815A target=0x00000001:0xE6E59202 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000001:0xE6E59202 ena=0x00000001 ien=0x00000004 pending=0x00018040 ps=0x00060530 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IRQ V68 count=30000 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=4813]
+[IPC V44 op=2 n=40000 owner=4294967293 blocked=1 next=4294967289 frame=1]
+[TTY line=hello --rename]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4870 nest=0]
+[CLOCK V44 received=5000 type=2 source=4294967295 tick=31129 owner=4294967293 resumed=1]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4680 nest=0]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4270 nest=0]
+[IPC V44 op=2 n=45000 owner=4294967287 blocked=1 next=4294967292 frame=1]
+[IPC count=60000 op=2 src=132]
+Rename OK
+Hello exit=0
+[TTY WRITE V48 bytes=27 ticks=110]
+[CTX kernel-running ticks=34770 heartbeat=13]
+[RFE target=4294967287 current=4294967287 seq=69285 pc=0x40374377 ps=0x00000110]
+[SYSTIMER V44 n=35000 before now=0x00000002:0x3677C38D target=0x00000002:0x3677C264 conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=35000 after now=0x00000002:0x3677C59E target=0x00000002:0x367BD646 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000002:0x367BD646 ena=0x00000001 ien=0x00000004 pending=0x00018040 ps=0x00060530 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IRQ V68 count=35000 nest=1 owner=4294967289 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=5626]
+[CTX kernel-running ticks=36207 heartbeat=14]
+[IPC V44 op=2 n=50000 owner=4294967293 blocked=1 next=4294967289 frame=1]
+[CTX kernel-running ticks=37641 heartbeat=15]
+[CTX kernel-running ticks=39107 heartbeat=16]
+[TTY line=hello --exec]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4970 nest=0]
+[RFE target=4294967287 current=4294967287 seq=76354 pc=0x40374377 ps=0x00000110]
+[SYSTIMER V44 n=40000 before now=0x00000002:0x860CC37C target=0x00000002:0x860CC25C conf=0xC7000000 raw=0x00000001 st=0x00000001]
+[SYSTIMER V44 n=40000 after now=0x00000002:0x860CC58D target=0x00000002:0x8610D635 conf=0xC7000000 raw=0x00000000 st=0x00000000]
+[SYSTIMER V44 return deadline=0x00000002:0x8610D635 ena=0x00000001 ien=0x00000004 pending=0x00018040 ps=0x00000110 pc=0x40374377 sp=0x3FCD7E80 psout=0x00000100 frame=1]
+[IRQ V68 count=40000 nest=1 owner=4294967292 selected=4294967287 handoff=1 gates=1 unknown=0 clock-msgs=6449]
+[SCHED fs-selected pc=0x40374377 sp=0x3FCE4870 nest=0]
+[IPC V44 op=2 n=55000 owner=4294967293 blocked=1 next=4294967292 frame=1]
+
+!! CP32 EXCEPTION !!
+EXCCAUSE: 0x0000001D
+EXCVADDR: 0x00000028
+EPC1:     0x40382421
+PS:       0x00000110
+system halted

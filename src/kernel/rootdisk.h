@@ -10,9 +10,11 @@
 #define cp32_root_read cp32_ramdisk_read_bytes
 #define cp32_root_write cp32_ramdisk_write_bytes
 #define cp32_root_writable() 1
+#define cp32_root_sync() (cp32_root_capacity() ? 0 : -1)
 #define CP32_ROOT_NAME "ram"
 #else
 #define CP32_ROOT_NAME "sd"
+CP32_IRAM_EXT int cp32_root_sync(void);
 CP32_IRAM_EXT int cp32_root_writable(void);
 CP32_IRAM_EXT int cp32_root_init(void);
 CP32_IRAM_EXT unsigned cp32_root_capacity(void);

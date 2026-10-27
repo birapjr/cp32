@@ -134,3 +134,15 @@ CP32_IRAM_EXT int cp32_sd_write(struct cp32_sd *s,uint32_t lba,const unsigned ch
 done:
   finish(s);return bus_error(s) || r>0 ? CP32_SD_IO:r;
 }
+
+/* No host-side dirty buffers: wait for readiness and inspect card R2 status.
+ * Uses the same CMD13 completion contract as verified single-block writes. */
+CP32_IRAM_EXT int cp32_sd_sync(struct cp32_sd *s)
+{
+  int r;
+  if(!s || !s->ready || !s->bus)return CP32_SD_IO;
+  r=command(s,13,0);
+  if(!r && s->bus->transfer(0xff))r=CP32_SD_IO;
+  finish(s);
+  return bus_error(s) || r>0 ? CP32_SD_IO:r;
+}

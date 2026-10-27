@@ -128,11 +128,17 @@ CP32_IRAM_EXT static void application_exit(int status)
   panic("application exit returned",NO_NUM);
   for(;;) {}
 }
-static const struct cp32_app_services services={22,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+static const struct cp32_app_services services={25,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
 
 /* Transactional foreground exec. Stage all bytes in MM-owned temporary memory
  * while the child is blocked in SENDREC; publish only after every read succeeds.
  * No target-memory writes or fd-table changes occur on a recoverable failure. */
+/* Size optimization also bounds this nested server frame; it contains no
+ * interrupt entry/exit assembly and uses the ordinary call0 ABI. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT static int application_replace(struct proc *child,message *request,
                                             uint32_t *floor,uint32_t *brk)
 {
@@ -301,3 +307,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     if(send(APP_NR,&m)!=OK) panic("application reply failed",NO_NUM);
   }
 }
+
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
