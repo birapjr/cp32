@@ -877,7 +877,7 @@ CP32_IRAM_EXT PUBLIC int cp32_saved_context_check(void)
   int i;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
     struct proc *rp = pproc_addr[i];
-    if (rp->p_flags != P_SLOT_FREE &&
+    if (!(rp->p_flags & (P_SLOT_FREE | NO_MAP)) &&
         (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
          (rp->p_reg.pc & 0x03) != 0 || (rp->p_reg.sp & 0x0F) != 0 ||
          rp->p_reg.a[1] != rp->p_reg.sp ||
@@ -909,7 +909,7 @@ CP32_IRAM_EXT PUBLIC int cp32_map_state_check(void)
   int i, s;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
     struct proc *rp = pproc_addr[i];
-    if (rp->p_flags == P_SLOT_FREE) continue;
+    if (rp->p_flags & (P_SLOT_FREE | NO_MAP)) continue;
     for (s = T; s <= S; s++) {
       /* Idle and the diagnostic user descriptor intentionally have no text
        * map; all active descriptors must still have a valid stack map. */

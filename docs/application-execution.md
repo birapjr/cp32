@@ -1322,3 +1322,31 @@ links, ownership, mode and data. Both disk byte orders are supported.
 This does not supply a persistent RTC, automatic timestamps for ordinary file
 operations, supplementary groups or full ancestor-directory authorization.
 The clock resets each boot; inode timestamps persist on writable SD media.
+
+
+## ABI26: bounded child-first fork/wait
+
+`cp32_fork()` returns0 in the child and its PID in the parent. The parent is
+suspended until child exit. The kernel backs up the complete32KiB fixed-address
+image plus the parent's FS record in an MM-owned allocation, runs the child in
+the live region, and restores the parent before delivering its fork reply.
+Child exec can replace the live image without replacing that backing copy.
+
+Image175 retains up to eight exited child results. The parent can fork again
+before collecting earlier results. Nested forks and a full wait table return
+-1/EAGAIN before allocation. Waiting frees one result slot; parent exit clears
+all remaining results. Retained PIDs are excluded from PID allocation. `cp32_waitpid(pid,status,options)`
+accepts a positive child PID or -1, NULL or a valid application status pointer,
+and options0 or CP32_WNOHANG. It returns the child PID and stores the low8-bit
+exit code shifted left8; wrong/no child gives ECHILD. Invalid options or pointers
+do not consume status. Parent exit discards an uncollected result.
+
+File descriptions and offsets are shared, while local descriptors, CLOEXEC,
+cwd and umask are copied. Suspended-parent cwd state participates in directory
+removal protection and rename rebasing. Closing the child's descriptors does
+not close the parent's copies. Child usage accumulates in the actual parent.
+
+This is a bootstrap fork policy, not general concurrent POSIX processes. No
+parent progress occurs while the child is alive; signals, process-group waits,
+nested trees and fault recovery are not provided. Image174 hardware validated fork continuation and child-exec restoration.
+Image175 multiple-result acceptance remains pending. See [cumulative checks](hardware/pending-tests.md).

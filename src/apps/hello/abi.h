@@ -81,4 +81,7 @@ struct cp32_app_fsinfo {unsigned zone_size,zones,free_zones,inodes,free_inodes,n
 #define CP32_APP_UTIME 39
 struct cp32_app_utime_request {char path[256];unsigned atime,mtime,current;};
 struct cp32_utimbuf {unsigned actime,modtime;};
+/* v26: child-first private-image fork; one outstanding child. */
+#define CP32_APP_FORK 40
+#define CP32_APP_WAITPID 41
 #endif

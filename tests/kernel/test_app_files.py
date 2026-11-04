@@ -90,6 +90,66 @@ int main(int argc,char **argv) {
  int mode=argv[2][0]-'0';
  struct cp32_app_services api={7,put,quit,0,0,0,input,cp32_shell_app_file};
 #ifdef TEST_HELLO
+ if(mode==26) {
+   api.version=25;assert(!cp32_io_init(&api));
+   cp32_fs_time_bind(cp32_shell_disk_read,cp32_shell_disk_write,time_now);
+   struct cp32_app_stat st,parent;struct cp32_app_dirent entry;
+   clock_seconds=100;assert(!cp32_mkdir("/meta",0755));
+   assert(!cp32_stat("/",&parent) && parent.mtime==100 && parent.ctime==100 && parent.atime==0);
+   clock_seconds=200;int fd=cp32_open_flags("/meta/a",CP32_O_CREAT|CP32_O_RDWR,0600);assert(fd>=3);
+   assert(!cp32_stat("/meta",&parent) && parent.atime==100 && parent.mtime==200 && parent.ctime==200);
+   clock_seconds=300;assert(!cp32_link("/meta/a","/meta/b"));
+   assert(!cp32_fstat(fd,&st) && st.atime==200 && st.mtime==200 && st.ctime==300 && st.links==2);
+   assert(!cp32_stat("/meta",&parent) && parent.mtime==300 && parent.atime==100);
+   clock_seconds=400;assert(!cp32_unlink("/meta/b"));
+   assert(!cp32_fstat(fd,&st) && st.links==1 && st.ctime==400 && st.mtime==200);
+   clock_seconds=500;assert(!cp32_rename("/meta/a","/meta/c"));
+   assert(!cp32_fstat(fd,&st) && st.ctime==500 && st.mtime==200);
+   assert(!cp32_stat("/meta",&parent) && parent.mtime==500);
+   clock_seconds=600;assert(!cp32_rename("/meta/c","/meta/c"));
+   assert(!cp32_fstat(fd,&st) && st.ctime==500);
+   assert(!cp32_stat("/meta",&parent) && parent.mtime==500);
+   assert(!cp32_chmod("/meta/c",0640));
+   assert(!cp32_fstat(fd,&st) && st.ctime==600 && st.atime==200 && st.mtime==200);
+   clock_seconds=700;assert(!cp32_unlink("/meta/c"));
+   assert(!cp32_fstat(fd,&st) && !st.links && st.ctime==700);
+   clock_seconds=800;assert(!cp32_fchmod(fd,0600));
+   assert(!cp32_fstat(fd,&st) && st.ctime==800 && st.mtime==200);assert(!cp32_close(fd));
+   clock_seconds=900;int dir=cp32_opendir("/meta");assert(dir>=3);
+   memset(&entry,0x55,sizeof(entry));clock_failure=1;
+   assert(cp32_readdir(dir,&entry)==-1 && ((unsigned char *)&entry)[0]==0x55);
+   clock_failure=0;assert(cp32_readdir(dir,&entry)==1 && !strcmp(entry.name,"."));
+   assert(!cp32_stat("/meta",&parent) && parent.atime==900 && parent.mtime==700);
+   assert(!cp32_close(dir));
+   clock_seconds=950;dir=cp32_opendir("/meta");assert(dir>=3);write_failure=1;
+   memset(&entry,0x55,sizeof(entry));assert(cp32_readdir(dir,&entry)==-1 && ((unsigned char *)&entry)[0]==0x55);
+   write_failure=0;assert(cp32_readdir(dir,&entry)==1 && !strcmp(entry.name,"."));
+   assert(!cp32_close(dir));
+   clock_seconds=1000;assert(!cp32_mkdir("/other",0755));
+   assert(!cp32_mkdir("/meta/sub",0755));
+   clock_seconds=1100;assert(!cp32_rename("/meta/sub","/other/sub"));
+   assert(!cp32_stat("/meta",&parent) && parent.mtime==1100 && parent.atime==950);
+   assert(!cp32_stat("/other",&parent) && parent.mtime==1100);
+   assert(!cp32_stat("/other/sub",&st) && st.atime==1000 && st.mtime==1100 && st.ctime==1100);
+   clock_seconds=1200;assert(!cp32_rename("/other/sub","/other/new"));
+   assert(!cp32_stat("/other/new",&st) && st.mtime==1100 && st.ctime==1200);
+   clock_seconds=1300;assert(!cp32_rmdir("/other/new"));
+   assert(!cp32_stat("/other",&parent) && parent.mtime==1300);
+   clock_seconds=1400;fd=cp32_creat("/meta/x",0600);assert(fd>=3 && !cp32_close(fd));
+   int replaced=cp32_creat("/other/y",0600);assert(replaced>=3);
+   clock_seconds=1500;assert(!cp32_rename("/meta/x","/other/y"));
+   assert(!cp32_fstat(replaced,&st) && !st.links && st.ctime==1500);
+   assert(!cp32_stat("/other/y",&st) && st.ctime==1500 && st.mtime==1400);
+   assert(!cp32_stat("/meta",&parent) && parent.mtime==1500);
+   assert(!cp32_stat("/other",&parent) && parent.mtime==1500);
+   assert(!cp32_close(replaced));
+   clock_seconds=1600;assert(cp32_link("/other/y","/other/y")==-1);
+   assert(!cp32_stat("/other/y",&st) && st.ctime==1500);
+   cp32_fs_time_bind(cp32_shell_disk_read,0,time_now);clock_failure=1;
+   dir=cp32_opendir("/other");assert(dir>=3 && cp32_readdir(dir,&entry)==1 && !cp32_close(dir));
+   assert(!cp32_stat("/other",&parent) && parent.atime==1000);
+   return 0;
+ }
  if(mode==25) {
    api.version=25;assert(!cp32_io_init(&api));
    cp32_fs_time_bind(cp32_shell_disk_read,cp32_shell_disk_write,time_now);
@@ -518,10 +578,10 @@ with tempfile.TemporaryDirectory() as folder:
    '-I'+str(root/'src/fs'),'-I'+str(root/'src/apps/lib'),*(['-DTEST_CAT'] if app=='cat' else ['-DTEST_HELLO'] if app=='hello' else ['-DTEST_LS'] if app=='ls' else []),
    str(p/'test.c'),str(root/f'src/apps/{app}/{app}.c'),str(root/'src/apps/lib/io.c'),*extra,
    *[str(f) for f in (root/'src/fs').glob('*.c')],'-o',str(p/app)],check=True)
-  for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D','E','F','G','H','I') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
+  for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D','E','F','G','H','I','J') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
   if app=='hello' and '--dirs' not in sys.argv:
    sys.path.insert(0,str(root/'tests/fs'))
    from test_fsck import swapped
    (p/'swapped').write_bytes(swapped(build_image(True)))
-   for time_mode in ('H','I'):subprocess.run([str(p/app),str(p/'swapped'),time_mode],check=True)
+   for time_mode in ('H','I','J'):subprocess.run([str(p/app),str(p/'swapped'),time_mode],check=True)
 print('App files: production FS, isolated handles, cleanup, seek, indirect reads, utilities and request bounds pass')

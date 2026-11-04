@@ -363,3 +363,18 @@ int cp32_utime(const char *path,const struct cp32_utimbuf *times)
   if(q.atime>0x7fffffffU || q.mtime>0x7fffffffU)return io_error(CP32_EINVAL);
   return file_call(CP32_APP_UTIME,0,&q,sizeof(q));
 }
+
+int cp32_fork(void)
+{
+  int r;
+  if(!api || api->version<26 || !api->file)return io_error(CP32_ENOSYS);
+  r=api->file(CP32_APP_FORK,0,0,0);
+  return r<0 ? io_error(-r):r;
+}
+int cp32_waitpid(int pid,int *status,unsigned options)
+{
+  int r;
+  if(!api || api->version<26 || !api->file)return io_error(CP32_ENOSYS);
+  r=api->file(CP32_APP_WAITPID,pid,status,options);
+  return r<0 ? io_error(-r):r;
+}

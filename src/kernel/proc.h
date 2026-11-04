@@ -158,4 +158,20 @@ EXTERN int cp32_blocked_frame_check(void);
 EXTERN int cp32_blocked_owner_check(void);
 EXTERN int cp32_irq_return_frame_check(void);
 
+/* Lifecycle operations require the scheduler lock; reserved slots are NO_MAP. */
+CP32_IRAM_EXT struct proc *cp32_proc_reserve(int pid);
+CP32_IRAM_EXT int cp32_proc_clone(int parent,int child,int pid,int broker);
+CP32_IRAM_EXT int cp32_proc_publish(struct proc *p);
+CP32_IRAM_EXT int cp32_proc_release(struct proc *p);
+
+/* Kernel-only observation API: no saved registers or kernel pointers escape. */
+struct cp32_proc_info {
+  int endpoint,pid,flags,running;
+  unsigned user_ticks,system_ticks,child_user_ticks,child_system_ticks;
+  char name[16];
+};
+/* Returns 1 for an occupied row, 0 for free, EINVAL for invalid input.
+ * Each row is coherent; separate rows need not describe the same instant. */
+CP32_IRAM_EXT int cp32_proc_info(int endpoint,struct cp32_proc_info *out);
+
 #endif /* PROC_H */

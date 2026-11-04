@@ -1,6 +1,9 @@
 #ifndef CP32_APPLICATION_H
 #define CP32_APPLICATION_H
 #include "../mm/image.h"
+struct cp32_fproc;
+CP32_IRAM_EXT int cp32_shell_app_files_fork(struct cp32_fproc *,unsigned);
+CP32_IRAM_EXT void cp32_shell_app_files_restore(struct cp32_fproc *);
 /* Trusted foreground application, one slot; called only by FS. */
 typedef void (*cp32_app_output)(const char *,unsigned);
 CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,

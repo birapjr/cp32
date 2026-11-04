@@ -73,6 +73,20 @@ int main(int argc,char **argv)
  assert(call(&parent,CP32_APP_DUP2,6,0,6)==6 && call(&parent,CP32_APP_GETFD,6,0,0)==1);
  cp32_fproc_exec(&parent);assert(!parent.fds[3] && parent.fds[0]);
  cp32_fproc_exit(&parent);
+ parent=(struct cp32_fproc){.pid=1,.root_inode=1,.cwd="/"};
+ q=(struct cp32_app_open_request){"/hold",0,0755};
+ assert(!call(&parent,CP32_APP_MKDIR,0,&q,sizeof(q)));
+ other=(struct cp32_fproc){.pid=8,.root_inode=1,.cwd="/hold"};
+ cp32_fproc_suspended=&other;
+ assert(cp32_fproc_rmdir(&parent,0,rd,wr,sizeof(disk),"/hold")==-16);
+ assert(!cp32_fproc_move(&parent,0,0,rd,wr,sizeof(disk),"/hold","/moved"));
+ assert(!strcmp(other.cwd,"/moved"));
+ q=(struct cp32_app_open_request){"/source",0,0755};
+ assert(!call(&parent,CP32_APP_MKDIR,0,&q,sizeof(q)));
+ assert(cp32_fproc_move(&parent,0,0,rd,wr,sizeof(disk),"/source","/moved")==-CP32_FILE_BUSY);
+ cp32_fproc_suspended=0;
+ assert(!cp32_fproc_rmdir(&parent,0,rd,wr,sizeof(disk),"/source"));
+ assert(!cp32_fproc_rmdir(&parent,0,rd,wr,sizeof(disk),"/moved"));
  for(unsigned i=0;i<CP32_OPEN_MAX;i++)assert(cp32_fd_open(rd,sizeof(disk),"/readme")== (int)i);
  puts("fproc: isolation, clone/rollback, cwd, mask, identity, shared offsets/flags/stdin, exec and exit pass");
 }

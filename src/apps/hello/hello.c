@@ -12,6 +12,66 @@ static __attribute__((noinline)) int option(unsigned argc,char **argv,const char
   return !name[i] && !argv[1][i];
 }
 /* Short, repeatable hardware acceptance for writable file descriptors. */
+static int fork_test(const struct cp32_app_services *s,int exec_child)
+{
+  volatile unsigned local=17;
+  unsigned original=s->getpid();
+  unsigned *memory=(unsigned *)s->sbrk(16);
+  int fd,pid,status=-1;char expected[2],value,cwd[8];
+  if(memory==(void *)-1)return 91;
+  *memory=23;
+  if(cp32_chdir("/"))return 104;cp32_umask(0022);
+  fd=cp32_open("/readme");
+  if(fd<0 || cp32_pread(fd,expected,2,0)!=2)return 92;
+  pid=cp32_fork();
+  if(pid<0)return 93;
+  if(!pid) {
+    if(s->getpid()==(int)original || s->getppid()!=(int)original ||
+       cp32_read(fd,&value,1)!=1 || value!=expected[0])s->exit(94);
+    if(cp32_close(fd) || cp32_chdir("/boot") || cp32_umask(0077)!=0022)s->exit(105);
+    local=99;*memory=77;started=88;
+    if(cp32_fork()!=-1 || cp32_errno!=11)s->exit(95);
+    if(exec_child) {
+      const char *args[]={"echo","Fork exec child",0};
+      cp32_execv("/boot/echo",args);s->exit(96);
+    }
+    s->exit(7);
+  }
+  if(!cp32_getcwd(cwd,sizeof(cwd)) || cwd[0]!='/' || cwd[1] || cp32_umask(0022)!=0022)return 106;
+  if(s->getpid()!=(int)original || local!=17 || *memory!=23 || started!=1)return 97;
+  if(cp32_waitpid(pid+1,&status,0)!=-1 || cp32_errno!=10)return 98;
+  if(cp32_waitpid(pid,&status,0)!=pid || status!=(exec_child ? 0:7<<8))return 99;
+  if(cp32_waitpid(-1,&status,0)!=-1 || cp32_errno!=10)return 100;
+  if(cp32_read(fd,&value,1)!=1 || value!=expected[1] || cp32_close(fd))return 101;
+  if(s->sbrk(-16)==(void *)-1)return 102;
+  return cp32_write(1,"Fork memory/file/wait OK\n",25)==25 ? 0:103;
+}
+/* Several exited children remain independently collectable. Short command
+ * for the Cardputer keyboard; run twice to check parent-exit cleanup. */
+static int wait_test(const struct cp32_app_services *s)
+{
+  int pids[8],i,pid,status;unsigned seen=0;
+  for(i=0;i<8;i++) {
+    pid=cp32_fork();if(pid<0)return 107;
+    if(!pid)s->exit(i+1);
+    pids[i]=pid;
+  }
+  if(cp32_fork()!=-1 || cp32_errno!=11)return 108;
+  if(cp32_waitpid(pids[3],&status,CP32_WNOHANG)!=pids[3] || status!=(4<<8))return 109;
+  pid=cp32_fork();if(pid<0)return 110;if(!pid)s->exit(42);
+  if(cp32_waitpid(pid,&status,0)!=pid || status!=(42<<8))return 111;
+  for(i=0;i<7;i++) {
+    int j;
+    pid=cp32_waitpid(-1,&status,0);
+    for(j=0;j<8 && pids[j]!=pid;j++){}
+    if(j==8 || j==3 || (seen&(1U<<j)) || status!=((j+1)<<8))return 112;
+    seen|=1U<<j;
+  }
+  if(cp32_waitpid(-1,&status,0)!=-1 || cp32_errno!=10)return 113;
+  /* Leave one status behind: parent exit must discard it. */
+  pid=cp32_fork();if(pid<0)return 114;if(!pid)s->exit(0);
+  return cp32_write(1,"Wait children OK\n",17)==17 ? 0:115;
+}
 static int io_check(void)
 {
   char data[64];int fd,n;unsigned at=0,j;
@@ -328,7 +388,7 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
 {
   unsigned i,n;
 
-  if(!s || (s->version<1 || s->version>25) || !s->write || !s->exit || started) return 1;
+  if(!s || (s->version<1 || s->version>26) || !s->write || !s->exit || started) return 1;
   started=1;
 #if !CP32_ROOT_RAM
   if(option(argc,argv,"--sync")) {
@@ -431,6 +491,14 @@ int app_main(unsigned argc,char **argv,char **envp,const struct cp32_app_service
     return r;
   }
 
+  if(option(argc,argv,"--wait")) {
+    if(s->version<26 || cp32_io_init(s))return 90;
+    return wait_test(s);
+  }
+  if(option(argc,argv,"--fork") || option(argc,argv,"--fork-exec")) {
+    if(cp32_io_init(s))return 90;
+    return fork_test(s,option(argc,argv,"--fork-exec"));
+  }
   if(option(argc,argv,"--exec") || option(argc,argv,"--exec-fail")) {
     int pid;char a[8];
     const char *next[]={"hello","--exec-child",0};

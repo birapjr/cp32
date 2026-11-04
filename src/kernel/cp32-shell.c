@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "proc.h"
 #include <termios.h>
 #include <sys/ioctl.h>
 #include "rootdisk.h"
@@ -728,6 +729,21 @@ CP32_IRAM_EXT int cp32_shell_app_files_start(unsigned pid)
   cp32_shell_state.input=0; /* shell launch owns the original redirect handle */
   return r;
 }
+CP32_IRAM_EXT int cp32_shell_app_files_fork(struct cp32_fproc *parent,unsigned pid)
+{
+  int r;
+  *parent=cp32_app_state;
+  memset(&cp32_app_state,0,sizeof(cp32_app_state));
+  r=cp32_fproc_clone(&cp32_app_state,parent,pid);
+  if(r)cp32_app_state=*parent;
+  else cp32_fproc_suspended=parent;
+  return r ? cp32_fs_errno(r):0;
+}
+CP32_IRAM_EXT void cp32_shell_app_files_restore(struct cp32_fproc *parent)
+{
+  cp32_fproc_exit(&cp32_app_state);
+  cp32_app_state=*parent;cp32_fproc_suspended=0;
+}
 CP32_IRAM_EXT void cp32_shell_app_files_exec(void)
 { cp32_fproc_exec(&cp32_app_state); }
 CP32_IRAM_EXT int cp32_shell_app_files_owner(unsigned pid)
@@ -1142,6 +1158,36 @@ usage:
   cp32_shell_print("Usage: cmp file1 file2\r\n");
 }
 
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_ticks(const char *prefix,unsigned user,unsigned system)
+{
+  cp32_shell_print(prefix);cp32_shell_print_u32(user);
+  cp32_shell_print("/");cp32_shell_print_u32(system);
+}
+
+/* One small snapshot on the stack; output can block after the lock is released. */
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_ps(void)
+{
+  struct cp32_proc_info p;int n;const char *state;
+  cp32_shell_print("EP PID ST U/S NAME\r\n");
+  for(n=-NR_TASKS;n<NR_PROCS;n++) {
+    if(cp32_proc_info(n,&p)!=1)continue;
+    state=p.flags&NO_MAP ? "MAP":p.flags&P_STOP ? "STP":
+      (p.flags&(SENDING|RECEIVING))==(SENDING|RECEIVING) ? "SR":
+      p.flags&SENDING ? "SND":p.flags&RECEIVING ? "RCV":
+      p.flags ? "BLK":p.running ? "RUN":"RDY";
+    if(n<0)cp32_shell_print("-");
+    cp32_shell_print_u32(n<0 ? (unsigned)-n:(unsigned)n);
+    cp32_shell_print(" ");cp32_shell_print_u32((unsigned)p.pid);
+    cp32_shell_print(" ");cp32_shell_print(state);
+    cp32_shell_ticks(" ",p.user_ticks,p.system_ticks);
+    cp32_shell_print(" ");cp32_shell_print(p.name);cp32_shell_print("\r\n");
+    if(p.child_user_ticks || p.child_system_ticks) {
+      cp32_shell_ticks(" children ",p.child_user_ticks,p.child_system_ticks);
+      cp32_shell_print("\r\n");
+    }
+  }
+}
+
 CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_date(const char *args)
 {
   unsigned value=0,digit;int setting=*args!=0,r;
@@ -1191,7 +1237,9 @@ CP32_IRAM_EXT static void cp32_shell_command(const char *line)
 #if !CP32_ROOT_RAM
   cp32_fs_time_bind(cp32_shell_disk_read,cp32_shell_disk_write,cp32_shell_time_now);
 #endif
-  if(!strcmp(line,"date") || (line[0]=='d' && line[1]=='a' && line[2]=='t' && line[3]=='e' && line[4]==' ')) {
+  if(!strcmp(line,"ps")) {
+    cp32_shell_ps();
+  } else if(!strcmp(line,"date") || (line[0]=='d' && line[1]=='a' && line[2]=='t' && line[3]=='e' && line[4]==' ')) {
     cp32_shell_date(line[4] ? line+5:"");
   } else if((line[0]=='t' && line[1]=='o' && line[2]=='u' && line[3]=='c' && line[4]=='h' && line[5]==' ')) {
     cp32_shell_touch(line+6);

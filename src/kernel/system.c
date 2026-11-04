@@ -202,57 +202,14 @@ CP32_IRAM_EXT PUBLIC void sys_task()
  *				do_fork					     *
  *===========================================================================*/
 CP32_IRAM_EXT PRIVATE int do_fork(m_ptr)
-register message *m_ptr;	/* pointer to request message */
+register message *m_ptr;
 {
-/* Handle sys_fork().  m_ptr->PROC1 has forked.  The child is m_ptr->PROC2. */
-
-#if (CHIP == INTEL)
-  reg_t old_ldt_sel;
-#endif
-  register struct proc *rpc;
-  struct proc *rpp;
-
-  if (!isoksusern(m_ptr->PROC1) || !isoksusern(m_ptr->PROC2))
-	return(E_BAD_PROC);
-  rpp = proc_addr(m_ptr->PROC1);
-  rpc = proc_addr(m_ptr->PROC2);
-
-  /* Copy parent 'proc' struct to child. */
-#if (CHIP == INTEL)
-  old_ldt_sel = rpc->p_ldt_sel;	/* stop this being obliterated by copy */
-#endif
-
-  *rpc = *rpp;			/* copy 'proc' struct */
-
-#if (CHIP == INTEL)
-  rpc->p_ldt_sel = old_ldt_sel;
-#endif
-  rpc->p_nr = m_ptr->PROC2;	/* this was obliterated by copy */
-
-#if (SHADOWING == 0)
-  rpc->p_flags |= NO_MAP;	/* inhibit the process from running */
-#endif
-
-  rpc->p_flags &= ~(PENDING | SIG_PENDING | P_STOP);
-
-  /* Only 1 in group should have PENDING, child does not inherit trace status*/
-  sigemptyset(&rpc->p_pending);
-  rpc->p_pendcount = 0;
-  rpc->p_pid = m_ptr->PID;	/* install child's pid */
-  rpc->p_reg.a[2] = 0;        /* call0 return value; a1 remains the stack */
-
-
-  rpc->user_time = 0;		/* set all the accounting times to 0 */
-  rpc->sys_time = 0;
-  rpc->child_utime = 0;
-  rpc->child_stime = 0;
-
-#if (SHADOWING == 1)
-  rpc->p_nflips = 0;
-  mkshadow(rpp, (phys_clicks)m_ptr->m1_p1);	/* run child first */
-#endif
-
-  return(OK);
+  int saved,result;
+  if(m_ptr->m_source!=MM_PROC_NR)return EACCES;
+  saved=lock_save();
+  result=cp32_proc_clone(m_ptr->PROC1,m_ptr->PROC2,m_ptr->PID,MM_PROC_NR);
+  restore_lock(saved);
+  return result;
 }
 
 

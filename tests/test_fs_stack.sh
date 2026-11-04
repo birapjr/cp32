@@ -20,7 +20,11 @@ common='cp32_shell_disk_read cp32_cache_read cp32_shell_disk_uncached cp32_shell
 app='cp32_tty_read_client cp32_shell_launch cp32_application_run application_file_request cp32_shell_app_file'.split()
 mutation='cp32_minix_move remove_node mutation_location$part$0 cp32_fs_resolve_path cp32_fs_open_directory cp32_fs_allocated'.split()
 paths={'exec-open':chain,
-       'app-read-time':app+'cp32_fproc_file cp32_fd_read cp32_minix_file_read cp32_fs_data_time cp32_fs_stamp cp32_shell_time_now cp32_shell_clock _sendrec cp32_user_trap_dispatch sys_call mini_send deliver_blocked_message copy_message mem_copy numap'.split(),
+       'fork-start':'cp32_tty_read_client cp32_shell_launch cp32_application_run cp32_fork_start fork_free _sendrec cp32_user_trap_dispatch sys_call mini_send deliver_blocked_message copy_message mem_copy numap'.split(),
+       'fork-finish':'cp32_tty_read_client cp32_shell_launch cp32_application_run cp32_fork_finish fork_free _sendrec cp32_user_trap_dispatch sys_call mini_send deliver_blocked_message copy_message mem_copy numap'.split(),
+       'rename-time':app+'cp32_fproc_move cp32_minix_move cp32_minix_rename directory_store cp32_fs_inode_time cp32_fs_stamp cp32_shell_time_now cp32_shell_clock _sendrec cp32_user_trap_dispatch sys_call mini_send deliver_blocked_message copy_message mem_copy numap'.split(),
+       'readdir-time':app+'cp32_fproc_file cp32_fd_readdir cp32_fs_data_time cp32_fs_inode_time cp32_fs_stamp cp32_shell_time_now cp32_shell_clock _sendrec cp32_user_trap_dispatch sys_call mini_send deliver_blocked_message copy_message mem_copy numap'.split(),
+       'app-read-time':app+'cp32_fproc_file cp32_fd_read cp32_minix_file_read cp32_fs_data_time cp32_fs_inode_time cp32_fs_stamp cp32_shell_time_now cp32_shell_clock _sendrec cp32_user_trap_dispatch sys_call mini_send deliver_blocked_message copy_message mem_copy numap'.split(),
        'app-utime':app+'cp32_fproc_utime cp32_fs_resolve_path cp32_fs_open_directory cp32_fs_allocated'.split()+common,
        'shell-touch':['cp32_tty_read_client','cp32_shell_touch','cp32_fproc_utime','cp32_fs_resolve_path','cp32_fs_open_directory','cp32_fs_allocated']+common,
        'app-rename':app+['cp32_fproc_move']+mutation+common,

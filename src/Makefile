@@ -43,7 +43,7 @@ $(error STORAGE must be sd or ram)
 endif
 
 # Files
-C_SRCS = context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
+C_SRCS = fork.c process.c context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
 MM_SRCS = main.c alloc.c exec.c image.c
 MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
 FS_SRCS = timestamp.c time.c rename.c appfile.c fproc.c misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
@@ -107,10 +107,11 @@ $(C_OBJS): kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h include/e
 
 $(BUILD_DIR)/lib/posix/%.o: lib/posix/%.c lib/posix/dirent.h $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -Os -c $< -o $@
 
 $(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o $(BUILD_DIR)/cp32-shell.o: lib/posix/dirent.h
 $(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o: $(FS_HEADERS)
+$(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o: CFLAGS += -Os
 
 $(BUILD_DIR)/lib/ansi/%.o: lib/ansi/%.c | $(BUILD_DIR)
 	mkdir -p $(@D)
@@ -132,9 +133,16 @@ $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 
 # Shell/FS services are ordinary call0 C, with no IRQ frame construction.
 # Use the same size policy as FS to retain heap/stacks as the service grows.
+$(BUILD_DIR)/lib/ansi/strtol.o: CFLAGS += -Os
 $(BUILD_DIR)/memory.o: CFLAGS += -Os
 $(BUILD_DIR)/clock.o: CFLAGS += -Os
 $(BUILD_DIR)/system.o: CFLAGS += -Os
+$(BUILD_DIR)/drivers/sd_spi.o: CFLAGS += -Os
+$(BUILD_DIR)/fork.o: CFLAGS += -Os
+$(BUILD_DIR)/process.o: CFLAGS += -Os
+$(BUILD_DIR)/application.o: CFLAGS += -Os
+$(BUILD_DIR)/context.o: CFLAGS += -Os
+$(BUILD_DIR)/misc.o: CFLAGS += -Os
 $(BUILD_DIR)/rootdisk.o: CFLAGS += -Os
 $(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
@@ -176,7 +184,8 @@ $(BUILD_DIR)/$(TARGET).elf: $(SRC_DIR)/esp32s3.ld $(C_OBJS) $(LIB_OBJS) $(BUILD_
 	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O) -lgcc -o $@
 
 # Convert to raw binary for flashing
-$(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf
+$(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf ../tools/check_call0.py
+	python3 ../tools/check_call0.py $(BUILD_DIR)/$(TARGET).elf
 	esptool --chip esp32s3 elf2image \
 	  --flash-mode dio \
 	  --flash-freq 40m \
@@ -231,7 +240,7 @@ sections: $(BUILD_DIR)/$(TARGET).elf
 .PHONY: hello
 hello: $(BUILD_DIR)/hello.elf
 $(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/heap.h apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Os -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c lib/ansi/memcpy.c -o $@
+	$(CC) $(CFLAGS) -Os -flto -mno-target-align -Wl,-u,memcpy -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c lib/ansi/memcpy.c -o $@
 
 $(BUILD_DIR)/application.o: kernel/application.h mm/image.h mm/exec.h apps/hello/abi.h
 $(BUILD_DIR)/cp32-shell.o: kernel/application.h mm/image.h mm/exec.h

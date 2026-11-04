@@ -55,14 +55,20 @@ CP32_FS_TEXT int cp32_fproc_move(struct cp32_fproc *p,struct cp32_fproc *other,
         r=cp32_minix_stat(read,capacity,other->cwd,&cwd);if(r)return r;
         if(cwd.inode==target.inode)return -CP32_FILE_BUSY;
       }
+      if(cp32_fproc_suspended) {
+        r=cp32_minix_stat(read,capacity,cp32_fproc_suspended->cwd,&cwd);if(r)return r;
+        if(cwd.inode==target.inode)return -CP32_FILE_BUSY;
+      }
     } else if(r && r!=-CP32_FILE_NOT_FOUND)return r;
     r=rebase(p->cwd,old,next,0);if(r)return r;
     if(other && other->pid){r=rebase(other->cwd,old,next,0);if(r)return r;}
+    if(cp32_fproc_suspended){r=rebase(cp32_fproc_suspended->cwd,old,next,0);if(r)return r;}
     r=rebase(previous,old,next,0);if(r)return r;
   }
   r=cp32_minix_move(read,write,capacity,old,next);if(r || !isdir)return r;
   rebase(p->cwd,old,next,1);
   if(other && other->pid)rebase(other->cwd,old,next,1);
+  if(cp32_fproc_suspended)rebase(cp32_fproc_suspended->cwd,old,next,1);
   rebase(previous,old,next,1);return 0;
 }
 
