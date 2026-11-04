@@ -236,7 +236,7 @@ CP32_FS_TEXT int cp32_fd_readdir(int fd,unsigned *inode,char name[15])
 {
   struct cp32_minix_file *file=get_file(fd);
   struct cp32_minix_dir dir;
-  unsigned i;
+  unsigned i,next_inode=0;char next_name[15]={0};
   int result;
   if(!file) return -CP32_FILE_BAD_FD;
   if(!directories[descriptors[fd]-1]) return -CP32_FILE_NOT_DIR;
@@ -248,10 +248,14 @@ CP32_FS_TEXT int cp32_fd_readdir(int fd,unsigned *inode,char name[15])
   dir.position=file->position;
   for(i=0;i<7;i++) dir.zones[i]=file->zones[i];
   dir.indirect=file->indirect;
-  result=cp32_minix_root_next(&dir,inode,name);
+  result=cp32_minix_root_next(&dir,&next_inode,next_name);
   /* Publish only successful progress (including skipped deleted entries).
    * Errors leave the shared offset and caller outputs unchanged. */
-  if(result>=0) file->position=dir.position;
+  if(result>=0) {
+    int r=cp32_fs_data_time(file,1);if(r)return r;
+    file->position=dir.position;
+    if(result>0){*inode=next_inode;for(i=0;i<15;i++)name[i]=next_name[i];}
+  }
   return result;
 }
 

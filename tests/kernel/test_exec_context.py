@@ -53,7 +53,12 @@ struct proc {
 static struct proc procs[4];
 #define proc_addr(n) (procs+(n))
 static unsigned ready,signals;
-static void sigemptyset(int *p){*p=0;}
+static int locked;
+static int lock_save(void){assert(!locked);locked=1;return 0;}
+static void restore_lock(int old){assert(locked && !old);locked=old;}
+static int cp32_proc_clone(int parent,int child,int pid,int broker){
+ assert(broker==MM_PROC_NR && locked && parent==1 && child==2 && pid==77);return -22;
+}
 static void cause_sig(int n,int sig){assert(n==1 && sig==SIGTRAP);signals++;procs[n].p_flags|=SIG_PENDING;}
 static void lock_ready(struct proc *p) {
  assert(p==procs+1 && !p->p_flags && !p->p_blocked_frame_valid && !p->p_messbuf);
@@ -94,9 +99,8 @@ int main(void) {
  procs[1].p_flags=P_SLOT_FREE;assert(do_exec(&m)==E_BAD_PROC);
  procs[1].p_flags=SENDING|RECEIVING;assert(do_exec(&m)==E_BAD_PROC);
  procs[1].p_flags=RECEIVING;procs[1].p_reg.a[1]=0x3fcefff0;procs[1].p_reg.a[2]=99;
- m.PROC2=2;m.PID=77;assert(!do_fork(&m));
- assert(procs[2].p_reg.a[1]==procs[1].p_reg.a[1] && !procs[2].p_reg.a[2]);
- assert(procs[2].p_pid==77 && (procs[2].p_flags&NO_MAP));
+ m.PROC2=2;m.PID=77;m.m_source=1;assert(do_fork(&m)==EACCES && !locked);
+ m.m_source=0;assert(do_fork(&m)==EINVAL && !locked);
  puts("exec context: call0 frame, stale-state clearing, publication and fork return register pass");
 }
 '''

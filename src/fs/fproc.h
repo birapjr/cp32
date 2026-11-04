@@ -15,6 +15,8 @@ struct cp32_fproc {
   unsigned cloexec;
   int input; /* inherited input backend descriptor+1; zero means console */
 };
+/* One suspended fork parent, owned by the serialized FS broker. */
+extern struct cp32_fproc *cp32_fproc_suspended;
 CP32_FS_TEXT int cp32_fproc_clone(struct cp32_fproc *,const struct cp32_fproc *,unsigned);
 CP32_FS_TEXT void cp32_fproc_exit(struct cp32_fproc *);
 CP32_FS_TEXT void cp32_fproc_exec(struct cp32_fproc *);

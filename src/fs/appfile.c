@@ -52,6 +52,10 @@ CP32_FS_TEXT int cp32_fproc_rmdir(struct cp32_fproc *p,const struct cp32_fproc *
     r=cp32_minix_stat(read,capacity,guard->cwd,&cwd);if(r)return cp32_fs_errno(r);
     if(target.inode==cwd.inode)return -16;
   }
+  if(cp32_fproc_suspended) {
+    r=cp32_minix_stat(read,capacity,cp32_fproc_suspended->cwd,&cwd);if(r)return cp32_fs_errno(r);
+    if(target.inode==cwd.inode)return -16;
+  }
   r=cp32_minix_rmdir(read,write,capacity,path,p->cwd);
   return r ? cp32_fs_errno(r):0;
 #endif

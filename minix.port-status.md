@@ -210,3 +210,79 @@ including hardlink and open-unlinked semantics. CLOCK supplies volatile seconds;
 V2 timestamps are synchronous. Directory enumeration and namespace/chmod times
 remain missing, as do full access control and persistent wall time. Image166
 hardware acceptance is pending; ABI25 application payloads remain compatible.
+
+### Subsequent checkpoint — image167 FS-META-TIME
+
+The supported namespace and permission operations now maintain parent/inode
+timestamps; directory enumeration updates atime without making lookup/stat
+mutate timestamps. Existing synchronous persistence, trusted-client security
+limits, no journaling and volatile wall clock still apply. ABI25 is unchanged.
+Host integration covers both byte orders and iterator error atomicity; hardware
+acceptance is pending. See README's metadata timestamp check and plan/issues.
+
+
+### Subsequent checkpoint — image168 PROC-SLOTS
+
+The revised plan.md now takes precedence over the earlier suggested ordering:
+process table/scheduling, system calls, system-task services, then user-space FS.
+Kernel process.c provides bounded free-slot reservation, context/map-validated
+publication and foreground reap/cancellation. Application IPC follows the
+selected slot. No general fork/wait or concurrent image support is claimed.
+Image168 hardware validation is pending; image167 shell metadata persistence
+is confirmed by docs/hardware/fs-meta-time-v167-pass.log.
+
+
+### Subsequent checkpoint — image169 PROC-INFO
+
+Priority 1 now includes kernel-only process snapshots and shell `ps`: endpoints,
+PIDs, state, CPU tick counters and bounded names, without holding the scheduler
+lock during TTY output. No concurrency, fork/wait or new user syscall is claimed.
+Image168 foreground lifecycle/exec hardware acceptance is recorded; image169
+requires the README hardware sequence.
+
+
+### Subsequent checkpoint — image170 PROC-TIME
+
+Image169 hardware confirms ps and foreground lifecycle but reveals incorrect
+CPU ownership accounting. Image170 adapts the MINIX outer-IRQ convention to
+CP32's depth1 and charges the saved owner before wakeups. Nested interrupts
+remain HARDWARE time. This does not add child-time accumulation or fork/wait.
+Hardware counter validation remains pending.
+
+
+### Subsequent checkpoint — image171 PROC-REAP
+
+Foreground reap now accumulates child and descendant CPU times in the shell,
+following MINIX do_xit. Failed launch cancellation does not charge usage, and
+billing returns to the shell instead of the reserved boot slot. ps exposes
+nonzero child totals. General process trees/fork/wait remain unimplemented.
+Image170 accounting hardware acceptance is recorded; image171 is pending.
+
+
+### Subsequent checkpoint — image172 PROC-FORK
+
+MM-only SYS_FORK now validates a free application destination and unique PID,
+then clones a parent blocked on MM with clean queue/IRQ/accounting state. The
+child remains NO_MAP|RECEIVING. This is host-verified kernel preparation only:
+independent Xtensa images, MM fork/wait and concurrent FS clients remain missing.
+Images171/172 hardware validation is deferred until the user's board is available.
+
+
+### Subsequent checkpoint — image173 APP-FORK / ABI26
+
+Bounded child-first application fork/wait is implemented: MM-backed private
+parent image, cloned context and FS state, child exec, parent restoration and
+one waitable exit status. Parent is suspended until child exits; this is not
+general concurrent fork or a complete MM process tree. Nested forks, multiple
+children, group waits/signals and fault recovery remain missing. Host/build
+validation and later hardware instructions are recorded in plan.md and
+docs/hardware/pending-tests.md. Updated hello is required on SD.
+
+
+### Image175 PROC-WAIT
+
+Image174 hardware accepted startup, fork and child-exec restoration. Image175
+adds eight retained child exit results, selective/any-child wait, PID reservation,
+exhaustion/reuse and parent-exit cleanup. Host validation passed; hardware
+acceptance remains pending. Execution remains child-first, with one live child.
+General concurrent process trees and MM lifecycle ownership remain outstanding.

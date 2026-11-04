@@ -1,5 +1,6 @@
 /* MINIX misc.c do_fork/do_exec/do_exit, bounded for CP32's serialized service. */
 #include "fproc.h"
+struct cp32_fproc *cp32_fproc_suspended;
 CP32_FS_TEXT void cp32_fproc_exit(struct cp32_fproc *p)
 {
   unsigned i;

@@ -21,17 +21,21 @@ CP32_FS_TEXT int cp32_fs_stamp(cp32_disk_reader read,unsigned char *raw,
   return 0;
 }
 
-CP32_FS_TEXT int cp32_fs_data_time(struct cp32_minix_file *file,unsigned mask)
+CP32_FS_TEXT int cp32_fs_inode_time(cp32_disk_reader read,
+    const struct cp32_minix_super *super,unsigned number,unsigned mask)
 {
   unsigned char raw[12];unsigned at,previous[3],i;int r;
-  if(file->read!=time_reader || !time_writer || !time_clock)return 0;
-  at=(2+file->super.imap_blocks+file->super.zmap_blocks)*1024+(file->inode-1)*64+12;
-  if(file->read(at,(char *)raw,12)!=12)return -CP32_SUPER_IO;
-  for(i=0;i<3;i++)previous[i]=cp32_fs_u32(raw+4*i,file->super.swapped);
-  r=cp32_fs_stamp(file->read,raw,file->super.swapped,mask);if(r)return r;
+  if(read!=time_reader || !time_writer || !time_clock)return 0;
+  at=(2+super->imap_blocks+super->zmap_blocks)*1024+(number-1)*64+12;
+  if(read(at,(char *)raw,12)!=12)return -CP32_SUPER_IO;
+  for(i=0;i<3;i++)previous[i]=cp32_fs_u32(raw+4*i,super->swapped);
+  r=cp32_fs_stamp(read,raw,super->swapped,mask);if(r)return r;
   /* Repeated small reads in one second do not wear the card unnecessarily. */
-  for(i=0;i<3;i++)if(cp32_fs_u32(raw+4*i,file->super.swapped)!=previous[i])break;
+  for(i=0;i<3;i++)if(cp32_fs_u32(raw+4*i,super->swapped)!=previous[i])break;
   if(i==3)return 0;
   cp32_cache_invalidate();r=time_writer(at,(const char *)raw,12);cp32_cache_invalidate();
   return r==12 ? 0:-CP32_SUPER_IO;
 }
+
+CP32_FS_TEXT int cp32_fs_data_time(struct cp32_minix_file *file,unsigned mask)
+{ return cp32_fs_inode_time(file->read,&file->super,file->inode,mask); }

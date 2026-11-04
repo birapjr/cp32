@@ -125,3 +125,43 @@ dis_already:
     ret
 
     .size   disable_irq, . - disable_irq
+
+/* Compiler 64-bit shifts: little-endian a2:a3, count a4, call0 return a0.
+ * The toolchain's default libgcc uses ENTRY/RETW (windowed ABI). Never call
+ * those helpers from this kernel. Counts are the C-defined range 0..63.
+ * Explicit zero handling also avoids SRC's shift-by-32 corner case. */
+	.section .text.__ashldi3, "ax"
+	.align 4
+	.global __ashldi3
+	.type __ashldi3, @function
+__ashldi3:
+	beqz a4, 2f
+	ssl a4
+	bgei a4, 32, 1f
+	src a3, a3, a2
+	sll a2, a2
+	ret
+1:
+	sll a3, a2
+	movi a2, 0
+2:
+	ret
+	.size __ashldi3, .-__ashldi3
+
+	.section .text.__lshrdi3, "ax"
+	.align 4
+	.global __lshrdi3
+	.type __lshrdi3, @function
+__lshrdi3:
+	beqz a4, 2f
+	ssr a4
+	bgei a4, 32, 1f
+	src a2, a3, a2
+	srl a3, a3
+	ret
+1:
+	srl a2, a3
+	movi a3, 0
+2:
+	ret
+	.size __lshrdi3, .-__lshrdi3

@@ -23,29 +23,45 @@ MINIX or POSIX system.
 | File lifetime | Shared open descriptions, independent opens, descriptor duplication, close-on-exec, and continued access after unlink until final close reclaims storage. |
 | Applications | Six ELF programs loaded from SD: `hello`, `echo`, `cat`, `wc`, `ls` and `exec`; arguments, initial environment, PID/parent queries, exit status and heap allocation. |
 | Process filesystem state | Application-owned cwd, umask, descriptor namespace and flags, inherited on launch and preserved across successful exec as appropriate. Exit releases owned references. |
+| Fork/wait | ABI26 `cp32_fork()` and `cp32_waitpid()`: private image, inherited shared file offsets, distinct PID, encoded exit status and parent restoration, including after child exec. One executing child; parent suspended until child exit. Up to eight retained exit results; hardware-tested in image176. |
 | Exec | Replace the foreground application's image while retaining PID and non-CLOEXEC files. Invalid paths/images and failed staging return an error without destroying the running program. |
-| Time and persistence | Explicit time APIs, automatic file-data timestamps, synchronous verified SD writes and `sync`/`fsync`. File contents and timestamps survive restart. |
+| Time and persistence | Explicit time APIs, automatic data/directory/permission-change timestamps, synchronous verified SD writes and `sync`/`fsync`. File contents and timestamps survive restart. |
 | Maintenance | Optional firmware updates applications directly on SD. Host tools generate configurable SD images and check offline filesystem consistency without modifying media. |
 
-Current firmware: **FS-DATA-TIME 166**; application service ABI: **25**.
-The host suite contains **52 test scripts**. Normal SD, GPIO-SPI, RAM recovery
+Current firmware: **WAIT-INIT 176**; application service ABI: **26**.
+The host suite contains **56 test scripts**. Normal SD, GPIO-SPI, RAM recovery
 and both SD updater variants build and pass image-layout checks.
 
-The latest [two-boot hardware result](docs/hardware/fs-data-time-v166-pass.log)
+Latest hardware result (**image176**): normal SD boot mounts the 100 MiB root
+and all CORE checks report 1. Two consecutive `hello --wait` runs print
+`Wait children OK` and exit0, confirming eight retained results, selective and
+any-child collection, exhaustion handling, slot reuse and parent-exit cleanup.
+`hello --fork` and `hello --fork-exec` also pass with exit0. The final `ps`
+shows no application rows, shell child totals `0/186` and HARDWARE `0/0`.
+See the [complete hardware capture](docs/hardware/proc-wait-v176-pass.log).
+
+The image175 exit107 defect is resolved: `hello --wait` now initializes its
+application runtime before forking. The corrected hello must be installed on
+SD; firmware-only flashing does not replace the executable. This capture covers
+one boot; repetition after a cold restart remains pending.
+
+The [filesystem two-boot hardware result](docs/hardware/fs-data-time-v166-pass.log)
 confirms the **100 MiB SD root**, 4,096 inodes, automatic timestamps and restart
 persistence. The fresh volume reported **102,073 KiB free** and **4,084 free
 inodes**. Creating `/u` initialized all timestamps; reading changed only access
 time; appending changed modification/change time. After restart, size 3,
 `atime=2009`, `mtime=ctime=3017` and contents `hix` were preserved.
-Both boots used updater firmware. This capture does not establish a separate
+Both boots used updater firmware. The subsequent [image167 hardware check](docs/hardware/fs-meta-time-v167-pass.log) confirms link/chmod/directory-read timestamps and restart persistence. The image166
+capture does not establish a separate
 normal-image boot or every application API path; host tests cover additional
 cases. Detailed results and outstanding work live in [plan.md](plan.md),
 [issues.md](issues.md) and [hardware captures](docs/hardware/).
 
 ### Current boundaries
 
-- The shell is kernel-linked and runs **one trusted foreground application**.
-  General fork/wait, concurrent user applications, memory protection, application
+- The shell is kernel-linked. **Child-first fork/wait runs one child at a time**,
+  with a private parent image backed by MM. Parent and child do not run concurrently.
+  General process trees, memory protection, application
   fault recovery, a user-space shell and full libc remain unimplemented.
 - Each application has **four file slots (3–6)**; the shared backend has eight.
   Standard streams 0–2 use callbacks. Shell input redirection is supported;
@@ -63,8 +79,7 @@ cases. Detailed results and outstanding work live in [plan.md](plan.md),
   Use `df` to check available space.
 - Permission bits affect new file opens and executable loading, but owner/group
   access control, directory-search enforcement and special mode bits remain
-  incomplete. Existing descriptors retain their open-time access. Directory
-  enumeration, link/rename/unlink and chmod timestamp updates remain missing.
+  incomplete. Existing descriptors retain their open-time access.
 - Wall time starts at the Unix epoch after each boot until explicitly set.
   There is no persistent RTC or network time synchronization. Stored inode
   timestamps persist, but a later read can move access time backwards when
@@ -238,6 +253,8 @@ used directly. Builtins take priority.
 | `rm path` or `unlink path` | SD only: remove one regular-file name; the last link releases its inode and supported data/indirect zones. Open regular files survive until their last descriptor closes; directories are rejected. |
 | `run path [arguments]` | Load an executable by absolute or current-directory-relative path; no PATH search. |
 | `echo [arguments]` | Run `/boot/echo` through external-command lookup. Bare external names use `/boot`; names containing `/` use their explicit path. Builtins take priority. |
+| `hello --fork`, `hello --fork-exec` | Test private fork memory, inherited files, cwd/umask, PID relationships and wait status; second case execs echo in the child. Requires updated ABI26 hello. |
+| `hello --wait` | Test eight retained child results, selective/any-child waits, exhaustion, reuse and exit cleanup. Requires image176 hello; two consecutive hardware runs passed. |
 | `hello [arguments]` | Load `/boot/hello`, pass arguments and report its exit status. |
 | `run /boot/ls [-ald] [path ...]` | Standalone listing: `-a` includes hidden entries, `-l` shows mode/links/UID/GID/bytes, `-d` shows directories themselves. Defaults to current directory. |
 | `run /boot/wc [-lwc] < readme` | Run the standalone counter on redirected input. Without options prints lines, words, bytes. Accepts filenames too; multiple files include a total. |
@@ -252,6 +269,7 @@ used directly. Builtins take priority.
 | `sync` | Wait for root-device completion and check SD status; reports errors. |
 | `disk` | SD: validate the superblock through read IPC without writing media. RAM recovery: exercise read/write and restore the tested sector. |
 | `mm` | Check allocation/release through the memory service. |
+| `ps` | List occupied task/process endpoints, PIDs, states, CPU tick counters and names. |
 | `sys` | Query saved stack pointer and uptime through the system task. |
 | `ipc` | Check TTY attributes through an IPC ioctl request. |
 | `write` | Send a sample message through TTY output IPC. |
@@ -308,9 +326,10 @@ The application runtime in [src/apps/lib/io.h](src/apps/lib/io.h) exposes:
 | `fsinfo` | Allocation counts for the mounted filesystem without consuming a descriptor. `df` formats those counts. |
 | `sync`, `fsync` | Check root-device completion/status; fsync accepts owned file/directory handles, including open-unlinked files. |
 | `time`, `stime`, `utime` | Read/set wall time and set explicit or current inode times; clock changes require root, and explicit inode times require owner/root. |
+| `fork`, `waitpid` | Child-first private-image fork and exit-status collection. Single-child, child-exec and eight-result wait tests pass on hardware. |
 | `execv` | Stage and replace the current application; preserve PID, cwd, umask and non-CLOEXEC handles. A failed exec leaves the original application intact. |
 
-The current service ABI is **25**. Runtime names use the `cp32_` prefix;
+The current service ABI is **26**. Runtime names use the `cp32_` prefix;
 failures are reported through application-local `cp32_errno`.
 
 The runtime also provides console I/O, line reads, PID/parent queries, initial
@@ -350,10 +369,16 @@ EOF requests, update `atime`. Writes, appends, patches and resizing update
 unchanged. These rules apply to shell operations and application descriptors,
 including positional I/O and open-but-unlinked files. Loading executable data
 also counts as reading. Times have one-second resolution; unchanged read times
-avoid redundant SD writes. RAM recovery does not write timestamps.
+avoid redundant SD writes. Directory enumeration also updates `atime`, including
+EOF; pathname lookup and `stat` do not. Adding/removing/renaming names updates
+the parent directories' `mtime`/`ctime`. Link-count changes, rename and
+`chmod`/`fchmod` update the affected inode's `ctime`, including files still open
+after unlink. Moving a directory across parents also updates its `mtime` because
+its `..` entry changes. A same-inode rename remains a timestamp-preserving no-op.
+RAM recovery does not write timestamps.
 
-Timestamp I/O errors are reported. Failed read timestamp updates do not publish
-staged bytes or advance the offset; mutation errors can follow partial disk
+Timestamp I/O errors are reported. Failed file or directory read timestamp updates do not publish
+staged output or advance the offset; mutation errors can follow partial disk
 changes. Timestamp updates are synchronous, without journaling or rollback.
 The clock setting is volatile, even though inode timestamps persist on SD.
 
@@ -473,6 +498,178 @@ to at least 3000 and sets size to 3. Restart and run `stat u` **before** `cat u`
 timestamps should persist and contents should be `hix`. Reading after reboot
 updates `atime` using the reset clock. Clean up with `rm u`, then `sync`.
 This sequence passed on the 100 MiB volume in the linked hardware capture.
+
+### Directory and metadata timestamp check
+
+This check needs only `make && make flash` from `src/`; existing ABI25 applications
+and the current SD card remain compatible. Use an unused directory name:
+
+```text
+date 1000
+mkdir m
+create m/a hi
+date 2000
+link m/a m/b
+stat m
+stat m/a
+date 3000
+chmod 600 m/a
+stat m/a
+date 4000
+ls m
+stat m
+sync
+```
+
+After linking, the directory modification/change times and file change time
+should be at least 2000; file access/modification times remain near creation.
+After chmod, only the file change time advances to at least 3000. Listing the
+directory advances its access time to at least 4000 without changing its
+modification time. Restart and inspect `stat m` and `stat m/a` before listing
+or reading: the stored values should persist. `cat m/b` should print `hi`.
+Clean up with `rm m/a`, `rm m/b`, `rmdir m`, then `sync`.
+
+Host tests additionally cover same/cross-directory rename, replacement of open
+files, directory moves, rmdir, descriptor chmod after unlink, failed directory
+reads with unchanged output/offset, and both disk byte orders. Hardware
+coverage beyond the linked shell sequence remains pending.
+
+### Process-slot lifecycle check
+
+Image168 follows priority 1 of the revised plan. Launch reserves a free process
+slot, validates its Xtensa context and data/stack maps before scheduling, and
+releases it on failure or foreground exit. IPC follows the chosen endpoint.
+It still runs one foreground application; general fork/wait and concurrent
+application images are not implemented.
+
+From `src/`, run `make && make flash`. No SD rewrite or application update is
+needed for existing ABI25 applications. Confirm `[TEST PROC-SLOTS 168]`, then:
+
+```text
+hello --pid
+hello --pid
+hello --exec
+hello --exec-fail
+hello --pid
+```
+
+Each fresh launch should have a different PID and return to the prompt.
+Exec should print `Exec PID and file OK`; failed exec should print
+`Exec failure recovery OK`. Repeat the sequence to exercise slot reuse.
+Host tests additionally occupy the first slot, exhaust all available slots,
+and reject unsafe release/publication. The [image168 hardware capture](docs/hardware/proc-slots-v168-pass.log) confirms repeated launch/reap and both exec checks. Alternate-slot and exhaustion cases remain host-tested.
+
+### Process inspection check
+
+Image169 adds `ps`. Flash with `make && make flash` from `src/` and confirm
+`[TEST PROC-INFO 169]`. Existing SD contents and ABI25 applications need no update.
+
+```text
+ps
+hello --pid
+ps
+hello --exec
+ps
+```
+
+The header is `EP PID ST U/S NAME`. Negative endpoints are kernel tasks; PID0
+means a boot/kernel role without a user PID. `RUN` is the current process,
+`RDY` runnable, `SND`/`RCV` IPC blocked, `SR` both IPC flags, `MAP` awaiting a
+map, `STP` stopped and `BLK` another blocking flag. U/S are existing 60Hz CPU
+accounting counters, not elapsed seconds or percentages. Each row is copied
+under the scheduler lock; rows can represent different instants. `ps` itself
+and display output also consume CPU time. Reserved boot placeholders may appear.
+
+After each foreground command exits, its application row should be absent.
+The shell should keep returning to the prompt with working keyboard/cursor.
+The foreground shell cannot run `ps` while its application is active; this
+feature does not add background jobs or concurrent applications. The [image169
+hardware capture](docs/hardware/proc-info-v169-pass.log) confirms this sequence,
+but exposed incorrect CPU accounting, corrected in image170.
+
+### CPU accounting check
+
+Image170 corrects the Xtensa interrupt-depth interpretation used for CPU
+accounting. Flash with `make && make flash` from `src/`; confirm
+`[TEST PROC-TIME 170]`. No SD rewrite or ABI25 application update is needed.
+
+Run `ps`, wait a few seconds, then run `ps` again. Run `hello --pid`, followed
+by another `ps`. Idle and sampled task counters should advance; `hardware`
+should no longer collect almost all timer ticks. A task that runs between
+60Hz samples can still show zero. U/S counts overlap by design: task CPU time
+may also be billed as system time to the billable process. The [image170 capture](docs/hardware/proc-time-v170-pass.log) confirms corrected
+sampled ownership and a successful foreground launch.
+
+### Child accounting check
+
+Image171 retains child CPU totals in the launching shell when a foreground
+application exits. `ps` shows `children U/S` below a parent with nonzero totals;
+these include a child's own and accumulated descendant ticks. Failed launch
+cancellation adds no usage. Billing after reap returns to the shell.
+
+Flash from `src/` with `make && make flash`; confirm `[TEST PROC-REAP 171]`.
+No SD rewrite or ABI25 application update is needed. Run:
+
+```text
+ps
+hello --pid
+ps
+hello --exec
+ps
+```
+
+Child totals should persist and never decrease during this short test. A
+program can finish between timer samples and add zero; repeat if needed.
+Exited application rows must disappear, exec should report success, and the
+shell must remain responsive. These are foreground-reap totals, not general
+fork/wait support. Later image174/175 logs show accumulated shell child totals;
+forced failure/cancellation coverage remains host-tested.
+
+### Kernel fork preparation
+
+Image172 validates MM's `SYS_FORK` requests and prepares a blocked child without
+copying live scheduler/IRQ links or stale alarm, signal and accounting state.
+Occupied slots, duplicate PIDs, invalid parents and unauthorized callers are
+rejected without modifying the target. The child retains `NO_MAP|RECEIVING`.
+
+This is kernel infrastructure, not an application `fork()` API. The inherited
+map still needs independent storage appropriate to Xtensa's flat address space;
+MM lifecycle policy and concurrent FS clients remain outstanding. The clone
+path is host-tested. Images171 and172 have not been tested on hardware.
+
+When hardware is available, flash with `make && make flash` from `src/` and
+confirm `[TEST PROC-FORK 172]`. Existing SD contents and ABI25 apps remain
+compatible. Run `ps`, `hello --pid`, `hello --exec`, then `ps` to check existing
+launch/exec/reap and child accounting. This regression does not exercise
+SYS_FORK; no hardware fork test is claimed.
+
+### Current cumulative hardware checklist
+
+**Image176 fixes `hello --wait`; update hello on the SD card.** Use `make updater` and
+`make flash-updater` from `src/`, run `apps` and `sync` on the Cardputer, then
+install the normal image with `make && make flash`. No SD reformat is needed.
+
+The [cumulative hardware checklist](docs/hardware/pending-tests.md) covers all
+remaining acceptance: additional repeated cycles, earlier exec recovery, service
+checks and a cold restart. The image176 wait/fork sequence has passed. It supersedes
+the firmware/version-specific installation notes in the historical checks above.
+Image174 hardware passed SD startup, the updater, both fork tests and post-exit
+process accounting; see [the normal boot capture](docs/hardware/app-fork-v174-pass.log).
+Image175 hardware passes both fork regressions. Its `hello --wait` exit107
+was caused by missing application runtime initialization, fixed in image176.
+Image176 hardware confirms two consecutive wait tests, both fork regressions
+and no remaining application rows in ps; see [the passing capture](docs/hardware/proc-wait-v176-pass.log).
+
+The fork API is child-first: parent memory is saved in about32.5KiB of MM-owned
+storage and restored only after child exit. The child returns0; the restored
+parent receives the child PID. `cp32_waitpid(pid, &status, 0)` or pid=-1 collects
+one status, encoded as `(exit_code & 255) << 8`; NULL status is permitted.
+`CP32_WNOHANG` is accepted, but by the time the parent resumes this child has
+already exited. Bad status pointers do not consume the result. Nested forks or
+a full eight-result wait table return EAGAIN; allocation
+failure returns ENOMEM. Group waits are unsupported. A child that never exits
+keeps its parent suspended. This is private-memory fork, not shared-memory vfork,
+and does not provide general concurrent POSIX process semantics.
 
 ## Source and further documentation
 

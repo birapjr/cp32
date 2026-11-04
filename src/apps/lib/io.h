@@ -7,6 +7,9 @@
  * Writes collect short transfers and return progress if a later call fails. */
 /* Positive MINIX error numbers; scoped names avoid kernel _SIGN macros.
  * Success/EOF does not clear the previous error. Single-threaded runtime. */
+int cp32_fork(void);
+int cp32_waitpid(int pid,int *status,unsigned options);
+#define CP32_WNOHANG 1
 #define CP32_ERANGE 34
 #define CP32_F_DUPFD 0 /* lowest free file slot >= minimum, skipping 0..2 */
 #define CP32_F_GETFD 1

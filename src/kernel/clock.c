@@ -578,6 +578,21 @@ CP32_IRAM_EXT PUBLIC void syn_alrm_task()
 /*===========================================================================*
  *                              clock_handler                                 *
  *===========================================================================*/
+/* MINIX clock.c charges the interrupted process and bills task time to the
+ * current user. CP32 irq.S increments from zero to one on first entry, unlike
+ * MINIX's outer-entry zero convention. Capture ownership before any wakeup. */
+CP32_IRAM_EXT static void cp32_clock_charge(unsigned ticks)
+{
+  struct proc *owner=k_reenter>1 ? proc_addr(HARDWARE):
+    k_reenter==1 ? (struct proc *)cp32_irq_saved_owner:proc_ptr;
+  struct proc *billed=bill_ptr;
+  if(owner==NIL_PROC)owner=proc_addr(HARDWARE);
+  cp32_clock_accounted_ticks+=ticks;
+  owner->user_time+=ticks;
+  if(billed!=NIL_PROC && owner!=billed && owner!=proc_addr(IDLE))
+    billed->sys_time+=ticks;
+}
+
 PRIVATE int clock_handler(irq)
 int irq;
 {
@@ -595,7 +610,6 @@ int irq;
  *   next_alarm, rdy_head  — tested, not modified; rare race only delays
  *                            do_clocktick() by one tick.
  */
-  register struct proc *rp;
   register unsigned ticks;
   clock_t now;
 
@@ -615,24 +629,12 @@ int irq;
 #endif
   }
 
-  /* Periodic task wakeup for the polled Cardputer keyboard backend. */
+  ticks=lost_ticks+1;
+  lost_ticks=0;
+  cp32_clock_charge(ticks);
+
+  /* Wakeups can select another process; account the interrupted owner first. */
   cp32_tty_poll_tick();
-
-  /* Step 3: Charge CPU time to the running process.
-   * If interrupted inside a kernel handler (k_reenter != 0), charge HARDWARE.
-   * Otherwise charge proc_ptr (current user/task process).
-   * lost_ticks covers any ticks missed while the clock task was busy.    */
-  if (k_reenter != 0)
-    rp = proc_addr(HARDWARE);
-  else
-    rp = proc_ptr;
-
-  ticks      = lost_ticks + 1;
-  lost_ticks = 0;
-  cp32_clock_accounted_ticks += ticks;
-  rp->user_time += ticks;
-  if (rp != bill_ptr && rp != proc_addr(IDLE))
-    bill_ptr->sys_time += ticks;   /* unbillable task time → billed as sys */
 
   /* Step 4: Accumulate ticks; compute virtual 'now' for alarm/TTY checks. */
   pending_ticks += ticks;
