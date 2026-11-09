@@ -2,6 +2,12 @@
  * Keep mm_task as the entry symbol while MM is linked into the kernel image. */
 #include "mm.h"
 
+/* Nonblocking request validation/allocator dispatch, separate from the
+ * hardware-tested O0 receive/reply task loop below. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE int cp32_mm_source_valid(int source)
 {
     struct proc *rp;
@@ -25,7 +31,15 @@ CP32_IRAM_EXT PUBLIC int cp32_mm_handle_request(message *m)
     return m->m_type;
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 /* Removable trace after an actual MM receive resumes. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void cp32_trace_mm_receive(const message *m)
 {
     static unsigned received;
@@ -43,6 +57,10 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_mm_receive(const message *m)
     usbj_print("]\r\n");
     restore_lock(saved_ps);
 }
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /* Minimal MM service: receive, handle, reply, then block again. */
 CP32_IRAM_EXT PUBLIC void mm_task()

@@ -21,6 +21,10 @@ CONSTANTS = {
         (ROOT / "src/kernel/irq_const.h").read_text(), re.M)
 }
 
+CONSTANTS.update({name:int(value,0) for name,value in re.findall(
+    r"^#define\s+(CP32_\w+)\s+(0x[0-9a-fA-F]+|\d+)\s*$",
+    (ROOT / "src/include/esp32s3/app_layout.h").read_text(), re.M)})
+
 
 SPECIAL = ("sar", "lbeg", "lend", "lcount")
 ORIGINAL_SPECIAL = (7, 0x40371000, 0x40371020, 9)
@@ -130,6 +134,10 @@ class Machine:
                 y = 0 if op.endswith("z") else self.value(args[1])
                 if (x == y) == op.startswith("beq"):
                     self.jump(args[-1])
+            elif op in ("bltu", "bgeu"):
+                x,y=map(self.value,args[:2])
+                if (x<y)==(op=="bltu"):
+                    self.jump(args[2])
             elif op == "call0":
                 self.calls.append(args[0])
                 assert self.reg[1] % 16 == 0, "unaligned C stack"

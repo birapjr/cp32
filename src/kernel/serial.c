@@ -178,8 +178,8 @@ void status_line(const char *msg, int width) {
     printk("%-*s...\r\n", widthF, msg);
 }
 
-/* Terminal exception reporter. The interrupted context cannot safely be
- * resumed until a real exception frame and process policy exist. */
+/* Terminal reporter for system/unsupported faults. Supported faults in an
+ * active application are redirected by irq.S before reaching this path. */
 void exception_dump(uint32_t cause, uint32_t address, uint32_t epc, uint32_t ps) {
     usbj_print("\r\n!! CP32 EXCEPTION !!\r\n");
     usbj_print("EXCCAUSE: "); usbj_print_hex32(cause); usbj_print("\r\n");

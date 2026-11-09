@@ -1,3 +1,7 @@
+> Current image188 uses ABI33. Older versioned sections below describe historical
+> bring-up commands; retired hello filesystem/allocator options are host-only
+> fixtures now. See README for the current command list.
+
 # Path to running applications
 
 The current shell and its commands are kernel-linked functions. Successful
@@ -1333,7 +1337,7 @@ the live region, and restores the parent before delivering its fork reply.
 Child exec can replace the live image without replacing that backing copy.
 
 Image175 retains up to eight exited child results. The parent can fork again
-before collecting earlier results. Nested forks and a full wait table return
+before collecting earlier results. A third nested fork level and a full per-parent wait table return
 -1/EAGAIN before allocation. Waiting frees one result slot; parent exit clears
 all remaining results. Retained PIDs are excluded from PID allocation. `cp32_waitpid(pid,status,options)`
 accepts a positive child PID or -1, NULL or a valid application status pointer,
@@ -1347,6 +1351,370 @@ removal protection and rename rebasing. Closing the child's descriptors does
 not close the parent's copies. Child usage accumulates in the actual parent.
 
 This is a bootstrap fork policy, not general concurrent POSIX processes. No
-parent progress occurs while the child is alive; signals, process-group waits,
-nested trees and fault recovery are not provided. Image174 hardware validated fork continuation and child-exec restoration.
-Image175 multiple-result acceptance remains pending. See [cumulative checks](hardware/pending-tests.md).
+parent progress occurs while the child is alive; signals, terminal job control,
+arbitrary-depth trees and fault recovery are not provided. Image177 supports
+two nested child-first fork levels; each parent retains its own wait table,
+image and filesystem state. Exiting a child discards its uncollected descendant
+results; this bootstrap policy does not provide INIT adoption. Image174 hardware validated fork continuation and child-exec restoration.
+Image176 hardware validated multiple-result waits. Image177 nested forks passed hardware testing and a cold restart. See [cumulative checks](hardware/pending-tests.md).
+
+
+## ABI27: process groups and group-selecting waits
+
+`cp32_getpgrp()` returns the active application's group. Bootstrap launches
+inherit shell group1. `cp32_setsid()` assigns the caller PID as its new group
+and returns that ID; a caller already leading its group fails with EPERM,
+matching MINIX2 mm/getset.c. CP32 has no controlling-terminal object to detach;
+this does not implement terminal job control, setpgid, signals or a complete
+POSIX session service. Groups inherit across fork, are private when a child
+changes its group, and persist across exec. Parent-exit reset restores shell
+group1 for the next launch.
+
+waitpid(pid>0) and waitpid(-1) retain their existing meanings. waitpid(0) selects
+only children in the caller's current group; waitpid(pid<-1) selects -pid.
+A child's group is retained with its exit status. Nonmatching groups return
+ECHILD without consuming another group's result. INT_MIN is rejected with
+EINVAL to avoid negation overflow. WNOHANG remains supported; child-first
+execution means the caller resumes only after child exit. PID allocation also
+reserves group IDs retained in active or saved parent state and exit records.
+Image178's extended hello --tree checks these paths on hardware; acceptance
+is pending. The host suite covers group inheritance, leader rejection, wait
+filters, parent restoration and actual IPC dispatch/runtime wrappers.
+
+
+## ABI28: process CPU accounting (image179 PROC-TIMES)
+
+`int cp32_times(struct cp32_app_times *out)` returns0 on success or -1 with
+`cp32_errno`. The20-byte record contains unsigned32-bit `user`, `system`,
+`children_user`, `children_system` and `uptime`. All are60Hz ticks
+(`CP32_CLK_TCK`), wrapping modulo2^32; uptime is boot-relative and independent
+of `stime`. Use unsigned subtraction for intervals. This is the bootstrap
+record API, not a binary-compatible libc `times(struct tms *)` interface.
+
+MINIX2 FS `do_tims` obtains five values through kernel `SYS_TIMES`. CP32's
+trusted FS broker snapshots its actual active child under the scheduler lock;
+the request cannot choose another PID. Null/outside/truncated writable-image
+buffers return EFAULT; wrong size or nonzero descriptor return EINVAL. No
+partial output is written on validation failure. The runtime rejects ABI<28.
+Counters are sampled by the existing60Hz clock path. Child totals accrue when
+the child exits (MINIX sys_xit behavior), including descendant totals exactly
+once; wait only collects status. Fork starts new own/child counters at zero;
+exec preserves the process counters. No clock or scheduling policy is changed.
+
+`hello --time` checks CPU work, child totals and unchanged totals after wait.
+The current shipped hello drops retired filesystem/allocator/duplicate I/O
+checks, reducing text from16382 to4038 bytes including this new test. Historical
+host checks live in tests/mm/legacy_hello.c and are excluded from firmware and
+updater payloads. Current process/exec/line/identity/env/exit checks remain.
+Hardware acceptance of image179 is pending; image178 group tests passed.
+
+
+## Image180: default application fault termination (ABI28 unchanged)
+
+MINIX2 kernel/exception.c converts user exceptions to signals; MM's default
+signal action terminates and forkexit.c puts the signal in the low wait-status
+bits. CP32 now implements that default termination slice for the current trusted
+application broker. ESP32-S3 EXCCAUSE0/6/9/28/29 map to MINIX SIGILL4, SIGFPE8,
+SIGBUS10 and SIGSEGV11. Values are documented in Espressif's ESP32-S3 Xtensa
+core.h/corebits.h (locally available ESP-IDF5.5.3 source); no IDF runtime is used.
+
+Both kernel/user exception vectors retain the existing IRQ/SYSCALL/probe paths.
+For other exceptions, application text bounds are checked before any stack
+write. A fresh aligned stack at the application's known top lets the classifier
+run even with a damaged old SP. It accepts only the active broker endpoint,
+matching current/selected owner, runnable state, outer exception, EXCM set,
+INTLEVEL0 and the supported causes. It resets all call0/loop/SAR state and RFE
+enters the ordinary application exit callback. No damaged instruction resumes.
+The broker consumes the fault reason, closes descriptors, releases backing image
+and process resources, restores a fork parent, and retains the encoded wait
+status. Parent/child accounting continues through the existing exit path.
+
+`CP32_WIFSIGNALED`/`CP32_WTERMSIG` distinguish signal death from normal
+`CP32_WIFEXITED`/`CP32_WEXITSTATUS`. No core-dump or stopped status is produced.
+Foreground shell status is128+signal (SIGILL gives132); normal exit still uses
+the low8 bits, including negative input values. Fault diagnostics are in a
+removable normal-broker function, first4 faults and every64th thereafter.
+
+This is fault termination, not memory isolation or signal-handler delivery.
+Kernel/callback text faults, unsupported causes, fetches outside the application
+text slot, nested/double exceptions, and prior arbitrary kernel-memory corruption
+are not recovered. Default termination hardware tests: hello --fault twice,
+hello --crash (exit132), hello --fault, ps, mm and disk. ABI28 remains compatible,
+but hello must be updated to install the commands. Hardware acceptance pending.
+
+
+### Image181 PROC-YIELD — cooperative application image exchange (ABI29)
+
+[x] Image180 updater hardware acceptance: three fault-recovery runs, foreground
+crash status132, time/tree/wait/fork-exec, ps, MM and disk passed. See
+`docs/hardware/app-fault-v180-updater-pass.log`. No normal-image or cold-restart
+capture was supplied.
+
+Implemented `cp32_yield()` for one first-level parent/child pair. The FS broker
+swaps the complete32KiB fixed-address image with its MM backing while both
+processes are blocked receiving FS. Only the restored image receives a reply.
+Private stacks, heap breaks, cwd/umask, process groups and wait state survive;
+inherited open-file descriptions retain shared offsets. No memory protection
+is required or introduced. MINIX forkexit.c supplies the live-child wait and
+exit semantics; the fixed-address Xtensa image requires cooperative exchange.
+
+A matching live-child WNOHANG returns0 without changing status. Blocking wait
+resumes the child and completes after exit. Parent exec retains the parked child.
+Parent exit/fatal termination drains that child before completing parent exit;
+a nonterminating child can delay this. This is not INIT orphan adoption.
+Nested child-first forks remain supported, but only the first-level pair exchanges.
+A further parent fork while a live child is parked returns EAGAIN. Yield without
+an eligible peer returns0. Timer preemption, multiple independent runnable pairs,
+general process trees, MM-owned lifecycle and signals remain pending in item1.
+
+Host tests cover production image/FS state exchange, private memory and heap,
+shared offsets, live waits, exact IPC reply ownership/order, parent exit/fault,
+cleanup and real hello yield/exit/exec command paths. Hardware is unverified.
+New commands: `hello --yield`, `hello --yexit`, `hello --yexec`.
+
+Five clean builds pass: SD, updater, RAM, GPIO-SPI and GPIO-SPI updater. Normal
+ELF: _iram_end=0x403743e0, _iram_ext_end=0x4038c3f0,
+_runtime_stack_end=0x3fce7580 (2688-byte static margin). Other margins are
+20064,3856,3632,21008 bytes respectively. Read-only boot/process invariant
+validators use Os to retain SRAM headroom; scheduler policy is unchanged and
+heap/stack reservations are unchanged. ELF sections/segments, compiled stack
+budgets and fsck(clean) pass. Marker: [TEST PROC-YIELD 181], feature181,
+SD/ROOT V181 and UPDATER181. No board or card was flashed.
+
+
+### Image182 PROC-YTREE — nested cooperative process exchange
+
+[x] Image181 updater hardware acceptance: apps/sync, three --yield runs,
+--yexit, --yexec, ps with no application rows, MM and disk all pass. All CORE
+checks pass and the SD root is100MiB. Capture:
+`docs/hardware/proc-yield-v181-updater-pass.log`. No normal-image or cold-restart
+capture was supplied, and the older regression commands were not in this log.
+
+Image182 extends image181's cooperative exchange to the second supported fork
+level. A child and grandchild can exchange private images and perform live waits
+while the original parent stays blocked. After the grandchild exits, the child
+can yield to its own parent. The broker's existing exit/fault/exec routing applies
+at either level. PID/group reservation now scans both the parked child and all
+suspended ancestors, without following the child's back-pointer in a cycle.
+
+MINIX2 mm/forkexit.c keeps parent-child wait relationships regardless of tree
+level. CP32 preserves those relationships using fixed-address image backing,
+not address relocation or memory protection. Both participants must be blocked
+receiving FS during exchange; only the restored image receives a reply. FS
+ownership, private stacks/heap/cwd, shared file descriptions and accounting remain
+intact. No allocation or disk I/O occurs in the locked image swap.
+
+The new `hello --ytree` exercises nested private stack/data/heap and cwd/group
+state, shared offsets, live WNOHANG, repeated yields and blocking wait, then
+returns execution to the original parent and reaps the child. Expected output:
+`Yield pair OK`, `Yield tree OK`, `Hello exit=0`. ABI29 is unchanged, but update
+hello on SD. Markers: FEATURE/TEST PROC-YTREE182, SD/ROOT V182, UPDATER182.
+
+This remains a bounded two-level tree with one deepest exchanging pair at a
+time. A process with a parked live child yields toward that child, not its own
+parent. Third-level forks and another fork by a parent with a parked child are
+rejected. Parent exit drains descendants; no INIT adoption, timer-driven app
+preemption or general independent process images are added. Plan item1 remains
+incomplete. Hardware acceptance of182 is pending; no board/card was flashed.
+
+
+### Image183 PROC-KILL — bounded default signal delivery (ABI30)
+
+[x] Image182 updater hardware acceptance: application update, two --ytree runs,
+--yield, ps with no remaining application rows, MM and disk pass. SD100MiB and
+all CORE checks pass. Capture: docs/hardware/proc-ytree-v182-updater-pass.log.
+The mistyped --ytre command was an ordinary hello invocation, not an acceptance
+test. No normal-image/cold-restart capture or other regressions were supplied.
+
+Implemented cp32_kill(pid,signal), positive PIDs only. Signal0 probes live
+applications and the caller's retained, unreaped child results. SIGKILL9 and
+SIGTERM15 terminate self or a parked direct child, at either supported fork
+level. Other signals, nonpositive PIDs and pointer payloads return EINVAL;
+missing targets return ESRCH. Terminating ancestors/other processes or probing
+kernel/server slots returns EPERM. This is a bounded lifecycle policy, not full
+MINIX UID-based signal permission or group selection. Retained exited children
+can be probed but not signalled again; wait consumes their record.
+
+MINIX2 mm/signal.c check_sig supplies the signal0, target selection and no-reply
+on self-death behavior; forkexit.c supplies signal-status wait cleanup. CP32's
+fixed-address parked child is restored solely for cleanup, never replied to or
+made runnable. Parent memory/FS ownership are restored before its kill reply.
+Self termination uses the existing exit/drain path; a parent with a live child
+still drains that child before completing exit. Thus a nonterminating descendant
+can delay parent termination, including SIGKILL: this remains a limitation of
+the bounded broker, not general asynchronous signal delivery. No memory
+protection, pending masks, handlers, signal return, group delivery or blocked-I/O
+interruption is added. Item1 remains incomplete.
+
+New hardware command: hello --kill. It probes self, rejects an invalid target,
+terminates two parked children with SIGKILL/SIGTERM, tests child self-SIGTERM,
+collects each signal wait status, checks ESRCH after reap, and verifies inherited
+shared file offsets survive cleanup. Expected: Kill wait OK and Hello exit=0.
+ABI30 requires an updated hello on SD. Existing older hello rejects newer ABI;
+run the updater's apps command before application tests. No reformat is needed.
+Markers: FEATURE/TEST PROC-KILL183, SD/ROOT V183, UPDATER183.
+Hardware183 remains unverified. No board/card was flashed.
+
+
+### Image184 PROC-MASK — SIGTERM masking and pending delivery (ABI31)
+
+[x] Image183 updater hardware acceptance: apps update, two --kill runs, --ytree,
+--yield, ps without application rows, MM and disk pass. All CORE checks pass.
+Capture: docs/hardware/proc-kill-v183-updater-pass.log. Normal-image and cold
+restart, and regressions not shown in this capture, remain unverified.
+
+Added cp32_sigprocmask(how,set,old) and cp32_sigpending(set). BLOCK, UNBLOCK,
+SETMASK and null-set inquiry follow MINIX2 mm/signal.c do_sigprocmask and
+do_sigpending. Mask values are transferred by value over IPC, so no application
+pointer is dereferenced by the broker. Only SIGTERM has a blocked/pending
+implementation; its bit is1<<14. SIGKILL's bit1<<8 is accepted but removed from
+the mask. Other bits/operations are rejected with EINVAL without mutation.
+
+Blocked SIGTERM to self or a parked direct child records one coalesced pending
+bit and returns success. A child remains live/waitable until delivery. UNBLOCK
+or SETMASK exposing pending SIGTERM enters normal signal termination cleanup
+without replying to the application. SIGKILL remains immediate within the
+existing bounded delivery policy. Each private process state owns mask/pending;
+fork inherits the mask and clears child pending, image exchange preserves both,
+and exec leaves them intact. A fresh foreground launch clears both. Existing
+parent-exit descendant draining remains unchanged.
+
+hello --mask tests mask inheritance, SIGKILL exclusion, repeated TERM requests,
+live WNOHANG, pending inquiry and unblocking termination. Host tests additionally
+cover KILL bypass and clearing pending signals in forked children. Expected: Signal mask OK,
+Hello exit=0. Update hello on SD before tests: ABI31 rejects the previous hello.
+Markers: FEATURE/TEST PROC-MASK184, SD/ROOT V184, UPDATER184.
+
+This is not general asynchronous signal delivery: handlers, sigreturn,
+sigsuspend, group targeting, signals interrupting blocked I/O, independently
+scheduled images and timer-driven application preemption remain pending. No
+memory protection was added. Plan item1 remains incomplete. Hardware184 is
+unverified; no board/card was flashed.
+
+
+### Image185 PROC-IGNORE — default/ignore SIGTERM disposition (ABI32)
+
+[x] Image184 updater hardware acceptance: two --mask runs, --kill, --ytree,
+ps without application rows, MM and disk pass after updating apps. Capture:
+docs/hardware/proc-mask-v184-updater-pass.log. Normal-image/cold-restart and
+other regressions not present in this capture remain pending.
+
+Added cp32_signal(signal,disposition), returning the previous disposition or -1.
+Only SIGTERM and CP32_SIG_DFL/CP32_SIG_IGN are supported; SIGKILL, other signals,
+handler addresses and invalid pointer payloads are rejected with EINVAL without
+state mutation. This is a bounded disposition API, not POSIX signal handlers.
+Following MINIX2 mm/signal.c do_sigaction, setting IGN discards pending TERM;
+subsequent TERM is discarded even when masked. Fork inherits the disposition,
+private image exchanges preserve it, exec keeps it, and a fresh foreground
+launch resets it. SIGKILL remains unblockable/unignorable. Selecting DFL restores
+the existing default termination behavior. General handlers, sigreturn, group
+signals, asynchronous delivery and blocked-I/O interruption remain pending.
+
+The hardware command hello --ignore creates pending TERM, discards it by setting
+IGN, verifies empty pending state, forks, tests ignored self/direct-child TERM
+and live WNOHANG, then execs hello --igexec in the child to check preservation.
+The parent waits for normal exit and restores DFL. Expected: Signal ignore OK,
+Hello exit=0. --igexec is an internal acceptance helper, not a standalone test
+from the shell. Install updated hello: ABI32 requires updating the prior hello.
+Markers: FEATURE/TEST PROC-IGNORE185, SD/ROOT V185, UPDATER185.
+
+The broker now shares its existing reply path for signal operations instead of
+duplicating send/continue blocks. To retain the RAM image margin, only ordinary
+TTY character-processing routines (in_process, echo, rawecho, back_over, reprint,
+out_process) use Os. Blocking task entry/resumption, hardware transport, IRQ
+assembly, heap and stack reservations remain unchanged. This optimization needs
+hardware line editing/echo regression alongside the signal test. No memory
+protection or kernel functionality was removed. Item1 remains incomplete;
+hardware185 is unverified and no board/card was flashed.
+
+
+### Image186 APP-TEST — one-command hardware acceptance
+
+[x] Image185 updater capture passes apps/sync, two --ignore runs, --mask, --kill,
+--ytree, --time, line input, ps with no applications, MM and disk. Capture:
+docs/hardware/proc-ignore-v185-updater-pass.log. The entered line was sdf; this
+confirms input/echo but not the requested Backspace sequence. No normal-image
+or cold-restart capture was supplied.
+
+Added hello --t. The app explicitly requests the launcher suite; the launcher
+loads a fresh foreground image for every case, preserving both fork levels.
+A fork-based supervisor would consume one of those levels and invalidate tree
+tests. Every case gets fresh BSS, runtime/FS/process state and normal cleanup.
+The kernel and MM application lifecycle are unchanged. The same open executable
+reader is reused with offset-based reads, then closed on success or failure.
+
+The removable cp32_shell_app_tests cases list is the single place to update for
+future feature acceptance. Current order: --ignore twice, --mask, --kill,
+--ytree, --yield, --yexit, --yexec, --fault, --time, --tree, --wait, --fork-exec,
+--exec-fail. Then ps prints, MM alloc/release and disk checks run automatically.
+Each case prints [TEST option]; a load error/nonzero exit/service error stops
+immediately with [TEST FAIL] and no all-pass marker. Only complete success
+prints [TEST ALL PASS] followed by Hello exit=0. Stale hello without the explicit
+request reports update hello, rather than pretending its generic greeting was
+a test. Redirection is rejected. run /boot/hello --t is also supported.
+
+Interactive --line remains manual; it cannot be a hands-free check. Foreground
+--crash is omitted; --fault covers supported child faults without deliberately
+terminating the test invocation. --igexec remains an internal --ignore helper.
+ABI32 is unchanged; install updated hello before using --t. Markers:
+FEATURE/TEST APP-TEST186, SD/ROOT V186, UPDATER186. No board/card was flashed;
+hardware acceptance of the aggregate runner is pending.
+
+To retain the existing RAM recovery margin, removable IPC/MM/TTY trace printers
+and ordinary TTY transfer/attribute helpers use Os. Trace content/rate limits,
+MM and TTY task entry loops, IRQ assembly and hardware transports are unchanged.
+Heap and stack reservations are unchanged. These C helpers retain the same
+MINIX line-discipline/transfer semantics; host TTY and compiled stack checks
+cover them. Include line editing in hardware acceptance. No functionality was
+removed. This is test-workflow work; plan item1 is still incomplete.
+
+
+### Image187 PROC-SIGNALS — independent MINIX signal sets and USB-only suite
+
+[x] Image186 updater hardware acceptance: apps/sync and the complete hello --t
+sequence passed, including all14 application cases, ps with no application rows,
+MM and disk, ending [TEST ALL PASS] / Hello exit=0. Capture:
+docs/hardware/app-test-v186-updater-pass.log. Normal-image/cold restart remain
+unverified; this capture does not add manual line-editing acceptance.
+
+hello --t now suppresses LCD output during application tests, process listing,
+service checks and the exit summary. Those messages remain on USB. Buffered
+normal output is flushed before suppression; normal routing is restored on
+success and failure. The display receives only the final [TEST ALL PASS] or
+[TEST FAIL], followed by the normal shell prompt. A failed suite never displays
+a pass marker. Standalone application/shell output is unchanged.
+
+ABI33 extends explicit kill/default-ignore/mask/pending handling to MINIX2
+signals1..15: HUP, INT, QUIT, ILL, TRAP, ABRT, EMT, FPE, KILL, USR1, SEGV, USR2,
+PIPE, ALRM and TERM. SIGBUS10 is MINIX2's historical alias of SIGUSR1; the existing
+Xtensa unaligned-fault mapping remains unchanged. Each signal has its own bit,
+1U<<(signal-1). Independent ignore dispositions discard only that pending bit;
+blocked delivery coalesces only that signal. Unblocking delivers the lowest
+numbered pending signal first, matching MINIX2 mm/signal.c check_pending.
+SIGKILL cannot be blocked or ignored. Fork/exec/private-image/reset behavior
+extends to the full set. Out-of-range bits/signals remain EINVAL.
+
+These are default fatal/ignore dispositions through the existing bounded self/
+parked-direct-child delivery policy. No core dumps, user handlers, automatic
+alarm/pipe/terminal producers, group selection, stop/continue, asynchronous
+blocked-I/O interruption or timer-preempted images are claimed. Hardware faults
+still force the supported default termination path rather than returning to a
+faulting instruction. Plan item1 remains incomplete.
+
+Added hello --signals at the start of --t. It queues USR1 and USR2 independently,
+ignores just USR2, checks the remaining pending bit, unblocks USR1 and verifies
+its wait status. Host tests cover default/ignore/mask behavior for every signal
+1..15. Expected USB: Signals OK.
+Update hello for ABI33 before tests. Markers: FEATURE/TEST PROC-SIGNALS187,
+SD/ROOT V187, UPDATER187. No board/card was flashed; hardware187 is pending.
+
+To retain RAM-recovery headroom without reducing heap/stacks, ordinary TTY
+request handlers do_read/do_write/do_ioctl, handle_events and tty_init use Os.
+Task entry/resumption loops and IRQ/hardware transport code remain unchanged.
+Host TTY canonical/read/write/ioctl and compiled stack tests cover these helpers;
+manual editing remains a hardware regression check.
+
+
+Image188 TEST-DOTS preserves ABI33 and adds a new LCD row with one dot per
+successful suite check (17 currently), then the final result on its own line.
+Details remain USB-only. Firmware update alone suffices from image187.

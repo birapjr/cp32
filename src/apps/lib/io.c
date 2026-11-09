@@ -378,3 +378,55 @@ int cp32_waitpid(int pid,int *status,unsigned options)
   r=api->file(CP32_APP_WAITPID,pid,status,options);
   return r<0 ? io_error(-r):r;
 }
+
+static int group_call(unsigned op)
+{
+  int r;if(!api || api->version<27 || !api->file)return io_error(CP32_ENOSYS);
+  r=api->file(op,0,0,0);return r<0 ? io_error(-r):r;
+}
+int cp32_getpgrp(void){return group_call(CP32_APP_GETPGRP);}
+int cp32_setsid(void){return group_call(CP32_APP_SETSID);}
+
+int cp32_times(struct cp32_app_times *times)
+{
+  if(!api || api->version<28 || !api->file)return io_error(CP32_ENOSYS);
+  if(!times)return io_error(CP32_EFAULT);
+  return file_call(CP32_APP_TIMES,0,times,sizeof(*times));
+}
+
+int cp32_yield(void)
+{
+  if(!api || api->version<29 || !api->file)return io_error(CP32_ENOSYS);
+  return file_call(CP32_APP_YIELD,0,0,0);
+}
+
+int cp32_kill(int pid,int signal)
+{
+  if(!api || api->version<30 || !api->file)return io_error(CP32_ENOSYS);
+  return file_call(CP32_APP_KILL,pid,0,(unsigned)signal);
+}
+
+int cp32_sigprocmask(int how,const unsigned *set,unsigned *old)
+{
+  int r;
+  if(!api || api->version<31 || !api->file)return io_error(CP32_ENOSYS);
+  r=file_call(CP32_APP_SIGMASK,set ? how:4,0,set ? *set:0);
+  if(r<0)return r;
+  if(old)*old=(unsigned)r;
+  return 0;
+}
+int cp32_sigpending(unsigned *set)
+{
+  int r;
+  if(!api || api->version<31 || !api->file)return io_error(CP32_ENOSYS);
+  if(!set)return io_error(CP32_EFAULT);
+  r=file_call(CP32_APP_SIGPENDING,0,0,0);
+  if(r<0)return r;
+  *set=(unsigned)r;return 0;
+}
+
+int cp32_signal(int signal,unsigned disposition)
+{
+  if(!api || api->version<32 || !api->file)return io_error(CP32_ENOSYS);
+  return file_call(CP32_APP_SIGNAL,signal,0,disposition);
+}

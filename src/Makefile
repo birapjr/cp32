@@ -103,7 +103,7 @@ $(BUILD_DIR)/drivers/%.o: drivers/%.c drivers/sd_spi.h drivers/spi_fifo.h includ
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(C_OBJS): kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h include/esp32s3/sd_spi2.h drivers/spi_fifo.h
+$(C_OBJS): include/esp32s3/app_layout.h kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h include/esp32s3/sd_spi2.h drivers/spi_fifo.h
 
 $(BUILD_DIR)/lib/posix/%.o: lib/posix/%.c lib/posix/dirent.h $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
@@ -129,22 +129,23 @@ $(BUILD_DIR)/mm/%.o: mm/%.c $(MM_HEADERS) | $(BUILD_DIR)
 # Optimize this bounded service for SRAM size; kernel/assembly remain -O0.
 $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -Os -c $< -o $@
+	$(CC) $(CFLAGS) -Os -mno-target-align -c $< -o $@
 
 # Shell/FS services are ordinary call0 C, with no IRQ frame construction.
 # Use the same size policy as FS to retain heap/stacks as the service grows.
 $(BUILD_DIR)/lib/ansi/strtol.o: CFLAGS += -Os
+$(BUILD_DIR)/sdcard.o: CFLAGS += -Os
 $(BUILD_DIR)/memory.o: CFLAGS += -Os
 $(BUILD_DIR)/clock.o: CFLAGS += -Os
 $(BUILD_DIR)/system.o: CFLAGS += -Os
 $(BUILD_DIR)/drivers/sd_spi.o: CFLAGS += -Os
 $(BUILD_DIR)/fork.o: CFLAGS += -Os
-$(BUILD_DIR)/process.o: CFLAGS += -Os
-$(BUILD_DIR)/application.o: CFLAGS += -Os
+$(BUILD_DIR)/process.o: CFLAGS += -Os -mno-target-align
+$(BUILD_DIR)/application.o: CFLAGS += -Os -mno-target-align
 $(BUILD_DIR)/context.o: CFLAGS += -Os
 $(BUILD_DIR)/misc.o: CFLAGS += -Os
 $(BUILD_DIR)/rootdisk.o: CFLAGS += -Os
-$(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os
+$(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os -mno-target-align
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
 $(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf $(BUILD_DIR)/cat.elf $(BUILD_DIR)/wc.elf $(BUILD_DIR)/ls.elf $(BUILD_DIR)/exec.elf | $(BUILD_DIR)
@@ -242,7 +243,8 @@ hello: $(BUILD_DIR)/hello.elf
 $(BUILD_DIR)/hello.elf: apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/heap.h apps/lib/io.c apps/lib/io.h lib/ansi/memcpy.c apps/hello/abi.h apps/hello/hello.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Os -flto -mno-target-align -Wl,-u,memcpy -mno-longcalls -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-n -Wl,-s -Wl,-T,apps/hello/hello.ld -Wl,-Map,$(BUILD_DIR)/hello.map apps/hello/start.S apps/hello/hello.c apps/lib/heap.c apps/lib/io.c lib/ansi/memcpy.c -o $@
 
-$(BUILD_DIR)/application.o: kernel/application.h mm/image.h mm/exec.h apps/hello/abi.h
+$(BUILD_DIR)/application.o: kernel/application.h mm/image.h mm/exec.h apps/hello/abi.h include/esp32s3/app_layout.h
+$(BUILD_DIR)/irq.o: include/esp32s3/app_layout.h
 $(BUILD_DIR)/cp32-shell.o: kernel/application.h mm/image.h mm/exec.h
 
 .PHONY: echo

@@ -11,6 +11,8 @@ source=source.replace('__asm__ volatile("memw\\n\\tisync" ::: "memory");','syncs
 source=source.replace('memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);','memset(stack,0,sizeof(stack));')
 source=source.replace('memset((void *)old,0,heap_break-old);','memset(heap+old-CP32_APP_DATA,0,heap_break-old);')
 pre=r'''
+static struct {unsigned signal,cause,pc;} app_fault;
+static unsigned application_fault_take(int pid){(void)pid;return 0;}
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
@@ -28,8 +30,18 @@ pre=r'''
 #define APP_READ 2006
 #define APP_FILE 2007
 #define CP32_APP_EXEC 10
+#define CP32_APP_YIELD 45
+#define CP32_APP_KILL 46
+#define CP32_APP_SIGMASK 47
+#define CP32_APP_SIGPENDING 48
+#define CP32_APP_SIGNAL 49
+#define CP32_SIGTERM 15
+#define CP32_WAIT_LIVE (-1000)
 #define CP32_APP_FORK 40
 #define CP32_APP_WAITPID 41
+#define CP32_APP_TIMES 44
+#define CP32_APP_GETPGRP 42
+#define CP32_APP_SETSID 43
 #define APP_NR 3
 #define LOW_USER 2
 #define FS_PROC_NR 1
@@ -98,11 +110,20 @@ static int cp32_shell_app_files_owner(unsigned pid) {return pid==(unsigned)fs_pi
 static void cp32_shell_app_files_reset(void) {resets++;fs_pid=0;}
 static int reserve_wait_pid;
 static int cp32_fork_pid_used(int pid){return reserve_wait_pid && pid==101;}
+static int cp32_process_group(int p,int c){(void)p;(void)c;return 1;}
+static int cp32_fork_signal_target(struct proc *p,int pid,unsigned sig){(void)p;(void)pid;(void)sig;return -3;}
+static int cp32_fork_sigmask(int how,unsigned mask){(void)how;(void)mask;return 0;}
+static unsigned cp32_fork_sigpending(void){return 0;}
+static int cp32_fork_disposition(int sig,unsigned action){(void)sig;(void)action;return 0;}
+static int cp32_fork_live(void){return 0;}
+static void cp32_fork_request(message *m){memset(m,0,sizeof(*m));}
+static int cp32_fork_handoff(struct proc **p,int *pp,uint32_t *f,uint32_t *b,const message *m){(void)p;(void)pp;(void)f;(void)b;(void)m;return 0;}
 static int cp32_fork_active(void){return 0;}
 static void cp32_fork_reset(void){}
 static int cp32_fork_start(struct proc **p,int pid,int *pp,uint32_t *f,uint32_t *b){(void)p;(void)pid;(void)pp;(void)f;(void)b;return -11;}
-static int cp32_fork_finish(struct proc **p,int st,int *pp,uint32_t *f,uint32_t *b){(void)p;(void)st;(void)pp;(void)f;(void)b;assert(0);return -1;}
+static int cp32_fork_finish(struct proc **p,int st,int *pp,uint32_t *f,uint32_t *b,unsigned sig){(void)sig;(void)p;(void)st;(void)pp;(void)f;(void)b;assert(0);return -1;}
 static int cp32_fork_wait(int pid,void *p,unsigned opts){(void)pid;(void)p;(void)opts;return -10;}
+static int application_times(struct proc *p,message *m){(void)p;(void)m;return -22;}
 static int application_replace(struct proc *p,message *m,uint32_t *f,uint32_t *b) {(void)p;(void)m;(void)f;(void)b;return -8;}
 static int application_file_request(message *m) {(void)m;return -22;}
 static int receive(int nr,message *m) {

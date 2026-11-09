@@ -7,9 +7,24 @@
  * Writes collect short transfers and return progress if a later call fails. */
 /* Positive MINIX error numbers; scoped names avoid kernel _SIGN macros.
  * Success/EOF does not clear the previous error. Single-threaded runtime. */
+/* Return0 with a complete snapshot, or -1 with cp32_errno. */
+int cp32_times(struct cp32_app_times *times);
+int cp32_getpgrp(void);
+int cp32_setsid(void);
+int cp32_yield(void);
+/* v30: terminate self/parked direct child; positive PIDs only. */
+int cp32_kill(int pid,int signal);
+int cp32_sigprocmask(int how,const unsigned *set,unsigned *old);
+int cp32_sigpending(unsigned *set);
+/* Returns previous DFL/IGN disposition, or -1; signals1..15 since ABI33 (SIGKILL cannot change disposition). */
+int cp32_signal(int signal,unsigned disposition);
 int cp32_fork(void);
 int cp32_waitpid(int pid,int *status,unsigned options);
 #define CP32_WNOHANG 1
+#define CP32_WIFEXITED(s) (((s)&0xff)==0)
+#define CP32_WEXITSTATUS(s) (((s)>>8)&0xff)
+#define CP32_WIFSIGNALED(s) (((s)&0x7f)!=0 && ((s)&0x7f)!=0x7f)
+#define CP32_WTERMSIG(s) ((s)&0x7f)
 #define CP32_ERANGE 34
 #define CP32_F_DUPFD 0 /* lowest free file slot >= minimum, skipping 0..2 */
 #define CP32_F_GETFD 1

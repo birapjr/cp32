@@ -15,7 +15,7 @@ CP32_FS_TEXT int cp32_fproc_clone(struct cp32_fproc *child,const struct cp32_fpr
 {
   unsigned i;int fd;
   if(child==parent || child->pid || !parent->pid || !pid)return -CP32_SUPER_INVALID;
-  *child=*parent;
+  *child=*parent;child->suspended=0;
   for(i=0;i<CP32_FPROC_FDS;i++)child->fds[i]=0;
   child->input=0;
   for(i=0;i<CP32_FPROC_FDS;i++)if(parent->fds[i]) {

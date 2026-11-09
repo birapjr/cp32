@@ -215,7 +215,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE WAIT-INIT 176]");
+  usbj_print("[FEATURE TEST-DOTS 188]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -272,12 +272,12 @@ void main(void)
     int storage_result=cp32_root_init();
 #if !CP32_ROOT_RAM
 #ifdef CP32_SD_SOFT
-    usbj_print("[SD V176 transport=gpio]\r\n");
+    usbj_print("[SD V188 transport=gpio]\r\n");
 #else
-    usbj_print("[SD V176 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
+    usbj_print("[SD V188 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
 #endif
 #endif
-    usbj_print("[ROOT V176 backend=" CP32_ROOT_NAME " result=");
+    usbj_print("[ROOT V188 backend=" CP32_ROOT_NAME " result=");
     if(storage_result<0)usbj_print("-");
     usbj_print_u32((uint32_t)(storage_result<0 ? -storage_result:storage_result));
   }
@@ -348,9 +348,9 @@ void main(void)
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
 #if CP32_UPDATE_APPS
-  usbj_print("[UPDATER 176 enabled]\r\n");
+  usbj_print("[UPDATER 188 enabled]\r\n");
 #endif
-  usbj_print("[TEST WAIT-INIT 176]\r\n");
+  usbj_print("[TEST TEST-DOTS 188]\r\n");
   kernel_idle_loop();
 }
 

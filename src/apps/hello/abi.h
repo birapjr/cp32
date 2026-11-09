@@ -84,4 +84,50 @@ struct cp32_utimbuf {unsigned actime,modtime;};
 /* v26: child-first private-image fork; one outstanding child. */
 #define CP32_APP_FORK 40
 #define CP32_APP_WAITPID 41
+/* MINIX default fault signals; wait status carries these in the low7 bits. */
+#define CP32_SIGILL 4
+#define CP32_SIGFPE 8
+#define CP32_SIGKILL 9
+#define CP32_SIGTERM 15
+#define CP32_SIGBUS 10
+#define CP32_SIGSEGV 11
+/* v27: MINIX group identity/session leader and group-selecting waitpid. */
+#define CP32_APP_GETPGRP 42
+#define CP32_APP_SETSID 43
+/* v28: modulo-2^32 ticks at60Hz; copied atomically, no wall-clock epoch. */
+#define CP32_APP_TIMES 44
+/* v29: cooperative first-level parent/child image exchange. */
+#define CP32_APP_YIELD 45
+#define CP32_CLK_TCK 60U
+struct cp32_app_times {unsigned user,system,children_user,children_system,uptime;};
+
+/* v30: positive PID, signal0 probe or SIGKILL/SIGTERM default termination. */
+#define CP32_APP_KILL 46
+/* v31: SIGTERM masking/pending; SIGKILL cannot be blocked. */
+#define CP32_APP_SIGMASK 47
+#define CP32_APP_SIGPENDING 48
+#define CP32_SIG_BLOCK 0
+#define CP32_SIG_UNBLOCK 1
+#define CP32_SIG_SETMASK 2
+#define CP32_SIGTERM_MASK (1U<<14)
+#define CP32_SIGKILL_MASK (1U<<8)
+/* v32: SIGTERM default/ignore only; no user handler addresses. */
+#define CP32_APP_SIGNAL 49
+#define CP32_SIG_DFL 0U
+#define CP32_SIG_IGN 1U
+/* hello --t requests a fresh-process suite from the foreground launcher. */
+#define CP32_HELLO_TEST_REQUEST 200
+/* v33: MINIX2 signals1..15, default/ignore and independent masks. */
+#define CP32_SIGHUP 1
+#define CP32_SIGINT 2
+#define CP32_SIGQUIT 3
+#define CP32_SIGTRAP 5
+#define CP32_SIGABRT 6
+#define CP32_SIGEMT 7
+#define CP32_SIGUSR1 10
+#define CP32_SIGUSR2 12
+#define CP32_SIGPIPE 13
+#define CP32_SIGALRM 14
+#define CP32_SIGSET(sig) (1U<<((sig)-1))
+#define CP32_SIGNAL_MASK 0x7fffU
 #endif

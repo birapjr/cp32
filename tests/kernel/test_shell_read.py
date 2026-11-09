@@ -30,6 +30,7 @@ static char buffer[64];
 static int operation;
 static char cp32_shell_output[256], written[1024];
 static unsigned cp32_shell_output_len;
+static int cp32_shell_usb_only;
 static int batch_mode, writes, written_count;
 static void panic(const char *reason,int result) {
   (void)reason; (void)result; assert(!"unexpected shell panic");

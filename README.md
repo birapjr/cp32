@@ -23,27 +23,41 @@ MINIX or POSIX system.
 | File lifetime | Shared open descriptions, independent opens, descriptor duplication, close-on-exec, and continued access after unlink until final close reclaims storage. |
 | Applications | Six ELF programs loaded from SD: `hello`, `echo`, `cat`, `wc`, `ls` and `exec`; arguments, initial environment, PID/parent queries, exit status and heap allocation. |
 | Process filesystem state | Application-owned cwd, umask, descriptor namespace and flags, inherited on launch and preserved across successful exec as appropriate. Exit releases owned references. |
-| Fork/wait | ABI26 `cp32_fork()` and `cp32_waitpid()`: private image, inherited shared file offsets, distinct PID, encoded exit status and parent restoration, including after child exec. One executing child; parent suspended until child exit. Up to eight retained exit results; hardware-tested in image176. |
+| Fork/wait | ABI26 `cp32_fork()` and `cp32_waitpid()`: private image, inherited shared file offsets, distinct PID, encoded exit status and parent restoration, including after child exec. Child-first execution with up to two nested fork levels and eight retained exit results per parent. Nested forks and repeated waits passed hardware tests through a cold restart in image177. |
+| Process accounting API | ABI28 `cp32_times()` copies caller user/system ticks, child user/system ticks and uptime at60Hz; image179 updater hardware tests passed. |
+| Process groups | ABI27 `cp32_getpgrp()`, `cp32_setsid()` and group-selecting `cp32_waitpid()`. Groups inherit across fork and survive exec. Group creation and group-selecting waits passed image178 hardware tests. |
+| Application faults | Default termination for illegal instruction, divide-by-zero, unaligned access and prohibited load/store in active application text. Parent wait status and resource cleanup; image180 updater hardware acceptance passed. |
 | Exec | Replace the foreground application's image while retaining PID and non-CLOEXEC files. Invalid paths/images and failed staging return an error without destroying the running program. |
 | Time and persistence | Explicit time APIs, automatic data/directory/permission-change timestamps, synchronous verified SD writes and `sync`/`fsync`. File contents and timestamps survive restart. |
 | Maintenance | Optional firmware updates applications directly on SD. Host tools generate configurable SD images and check offline filesystem consistency without modifying media. |
 
-Current firmware: **WAIT-INIT 176**; application service ABI: **26**.
-The host suite contains **56 test scripts**. Normal SD, GPIO-SPI, RAM recovery
+Current firmware: **TEST-DOTS 188**; application service ABI: **33**.
+The host suite contains **64 test scripts**. Normal SD, GPIO-SPI, RAM recovery
 and both SD updater variants build and pass image-layout checks.
 
-Latest hardware result (**image176**): normal SD boot mounts the 100 MiB root
-and all CORE checks report 1. Two consecutive `hello --wait` runs print
-`Wait children OK` and exit0, confirming eight retained results, selective and
-any-child collection, exhaustion handling, slot reuse and parent-exit cleanup.
-`hello --fork` and `hello --fork-exec` also pass with exit0. The final `ps`
-shows no application rows, shell child totals `0/186` and HARDWARE `0/0`.
-See the [complete hardware capture](docs/hardware/proc-wait-v176-pass.log).
+Latest hardware result (**image187 updater**): the full `hello --t` sequence
+passed, including all application cases, process listing and MM/disk checks.
+Normal-image and cold-restart captures remain pending:
+[hardware log](docs/hardware/proc-signals-v187-updater-pass.log).
 
-The image175 exit107 defect is resolved: `hello --wait` now initializes its
-application runtime before forking. The corrected hello must be installed on
-SD; firmware-only flashing does not replace the executable. This capture covers
-one boot; repetition after a cold restart remains pending.
+**Run `hello --t` for current hardware acceptance.** Detailed test logs now go only
+to USB; the display shows a new row of progress dots (one per successful check), then the final `[TEST ALL PASS]` or `[TEST FAIL]` on the next line. The suite
+stops on the first failure and restores normal shell output afterward. The
+current test list lives in `cp32_shell_app_tests` in `src/kernel/cp32-shell.c`.
+Interactive `hello --line` remains separate.
+
+Image187 adds independent pending/mask/default-ignore handling for MINIX signals
+1–15, with SIGKILL unblockable and unignorable. Its new `--signals` check is
+included in `--t`. Update hello for ABI33 before running tests. Image187 updater acceptance passed. Image188 progress-dot hardware acceptance
+is pending; general handlers and asynchronous delivery remain absent.
+
+Hello remains small and retains current process tests, exec recovery, line
+input, identity, environment and exit checks. Retired filesystem/allocator
+demonstrations are host-only fixtures; their runtime APIs remain available.
+There is no memory protection: arbitrary writes can still corrupt kernel RAM.
+Faults in kernel/callback code, unsupported causes, nested/double exceptions and
+instruction fetches outside the application region remain terminal. General
+signal handlers, asynchronous/group signal delivery, job control and timer-preempted application images remain unimplemented.
 
 The [filesystem two-boot hardware result](docs/hardware/fs-data-time-v166-pass.log)
 confirms the **100 MiB SD root**, 4,096 inodes, automatic timestamps and restart
@@ -59,10 +73,11 @@ cases. Detailed results and outstanding work live in [plan.md](plan.md),
 
 ### Current boundaries
 
-- The shell is kernel-linked. **Child-first fork/wait runs one child at a time**,
-  with a private parent image backed by MM. Parent and child do not run concurrently.
-  General process trees, memory protection, application
-  fault recovery, a user-space shell and full libc remain unimplemented.
+- The shell is kernel-linked. The deepest parent/child pair can cooperatively exchange
+  private images at either of two supported fork levels. General
+  concurrent scheduling, arbitrary process trees, a user-space shell and full
+  libc remain unimplemented. Applications are trusted; memory protection is
+  outside the current port target.
 - Each application has **four file slots (3–6)**; the shared backend has eight.
   Standard streams 0–2 use callbacks. Shell input redirection is supported;
   general descriptor-based standard-stream redirection, output redirection and
@@ -253,8 +268,18 @@ used directly. Builtins take priority.
 | `rm path` or `unlink path` | SD only: remove one regular-file name; the last link releases its inode and supported data/indirect zones. Open regular files survive until their last descriptor closes; directories are rejected. |
 | `run path [arguments]` | Load an executable by absolute or current-directory-relative path; no PATH search. |
 | `echo [arguments]` | Run `/boot/echo` through external-command lookup. Bare external names use `/boot`; names containing `/` use their explicit path. Builtins take priority. |
-| `hello --fork`, `hello --fork-exec` | Test private fork memory, inherited files, cwd/umask, PID relationships and wait status; second case execs echo in the child. Requires updated ABI26 hello. |
+| `hello --fork`, `hello --fork-exec` | Test private fork memory, inherited files, cwd/umask, PID relationships and wait status; second case execs echo in the child. Requires updated ABI28 hello. |
+| `hello --signals` | Independent USR1/USR2 pending masks, selective ignore and signal wait status; included in --t. Requires image187/ABI33 hello. |
+| `hello --t` | Run the current noninteractive suite and ps/MM/disk checks; stop on first failure. Requires current hello and firmware; detailed logs are USB-only. |
+| `hello --ignore` | Pending TERM discard, ignored self/child signals, fork/exec inheritance and normal wait. Requires image185/ABI32 hello. |
+| `hello --mask` | Mask inheritance, pending TERM, SIGKILL mask exclusion and unblocking termination. Requires image184/ABI31 hello. |
+| `hello --kill` | Signal0 probes, parked-child SIGKILL/SIGTERM, self-termination, signal waits and file cleanup. Requires image183/ABI30 hello. |
+| `hello --ytree` | Nested cooperative exchange, private state and live waits; requires image182 hello. |
+| `hello --yield`, `hello --yexit`, `hello --yexec` | Cooperative private-image exchange, live wait, parent exit and parent exec with a live child. Requires image181/ABI29 hello. |
+| `hello --fault`, `hello --crash` | Four child fault/recovery cases; foreground illegal instruction returns shell status132. Requires image180 hello. |
+| `hello --time` | Verify application CPU ticks, child accumulation and no double counting after wait; expects `Times OK (60 Hz)`. |
 | `hello --wait` | Test eight retained child results, selective/any-child waits, exhaustion, reuse and exit cleanup. Requires image176 hello; two consecutive hardware runs passed. |
+| `hello --tree` | Test parent/child/grandchild stack restoration, separate wait replies and rejection of a third fork level. Image178 also checks session/group creation and group-selecting waits; requires updated ABI28 hello. |
 | `hello [arguments]` | Load `/boot/hello`, pass arguments and report its exit status. |
 | `run /boot/ls [-ald] [path ...]` | Standalone listing: `-a` includes hidden entries, `-l` shows mode/links/UID/GID/bytes, `-d` shows directories themselves. Defaults to current directory. |
 | `run /boot/wc [-lwc] < readme` | Run the standalone counter on redirected input. Without options prints lines, words, bytes. Accepts filenames too; multiple files include a total. |
@@ -326,10 +351,11 @@ The application runtime in [src/apps/lib/io.h](src/apps/lib/io.h) exposes:
 | `fsinfo` | Allocation counts for the mounted filesystem without consuming a descriptor. `df` formats those counts. |
 | `sync`, `fsync` | Check root-device completion/status; fsync accepts owned file/directory handles, including open-unlinked files. |
 | `time`, `stime`, `utime` | Read/set wall time and set explicit or current inode times; clock changes require root, and explicit inode times require owner/root. |
+| `getpgrp`, `setsid` | Read the inherited process group or create a group led by the caller; an existing group leader gets EPERM. Bootstrap launches inherit shell group1. No controlling-terminal management is provided. |
 | `fork`, `waitpid` | Child-first private-image fork and exit-status collection. Single-child, child-exec and eight-result wait tests pass on hardware. |
 | `execv` | Stage and replace the current application; preserve PID, cwd, umask and non-CLOEXEC handles. A failed exec leaves the original application intact. |
 
-The current service ABI is **26**. Runtime names use the `cp32_` prefix;
+The current service ABI is **27**. Runtime names use the `cp32_` prefix;
 failures are reported through application-local `cp32_errno`.
 
 The runtime also provides console I/O, line reads, PID/parent queries, initial
@@ -425,8 +451,8 @@ allocation cleanup, exec and basic device services:
 
 ```text
 df
-hello --space
-hello --space
+hello --time
+hello --time
 df
 ls
 hello --exec
@@ -434,46 +460,29 @@ disk
 mm
 ```
 
-Expect `Space OK` and `Hello exit=0` for the space tests, identical free counts
-before/after, and no `stest` residue. `df` reports allocatable filesystem space,
-not RAM or the whole SD-card capacity. A full filesystem can prevent tests or updates; use `df` to distinguish data
-space exhaustion from inode exhaustion.
+Expect `Times OK (60 Hz)` and `Hello exit=0` for each timing test. No test
+files are created. `df` reports filesystem space, not RAM or whole-card capacity.
+Use it to distinguish data-space exhaustion from inode exhaustion.
 
-`hello` also provides focused checks:
+The current `hello` checks are:
 
-| Command | Checks / cleanup |
+| Command | Checks |
 | --- | --- |
-| `hello --sync` | Device completion, open-file synchronization and invalid closed descriptors; expects `Sync OK` and exit 0. |
-| `hello --rename` | Replacement with open destination, directory replacement/movement, cwd and dot-dot updates, cycle/type checks; self-cleaning. Needs 3 free KiB and 3 inodes. |
-| `hello --grow` | Grow past 64 directory entries, list/rename/reuse slots, remove the grown directory and verify reclaimed space; self-cleaning, needs at least 2 free KiB and 3 free inodes. |
-| `hello --space` | Free-space/inode allocation and final-close reclamation; self-cleaning. |
-| `hello --at` | Positional I/O, sparse writes and unchanged offsets; self-cleaning. |
-| `hello --fmode` | Descriptor permission changes, including after unlink; self-cleaning. |
-| `hello --fcntl` | Minimum-slot duplication and shared state; self-cleaning. |
-| `hello --dup` | Exact-target duplication and CLOEXEC behavior; self-cleaning. |
-| `hello --size` | File shrink/growth, sparse zero fill and unlink lifetime; self-cleaning. |
-| `hello --move` | Same/cross-directory file moves and open descriptors; self-cleaning. |
-| `hello --rmdir` | Directory protection, removal and recreation; self-cleaning. |
-| `hello --mode` | Path permissions and open-time access; self-cleaning. |
-| `hello --link` | Hard links, shared contents and unlink lifetime; self-cleaning. |
-| `hello --unlink` | Removal while open and same-name recreation; self-cleaning. |
-| `hello --dir` | Nested directory creation and umask; leaves `/dtest/sub` and `/dtest`. Remove with `rmdir dtest/sub`, then `rmdir dtest` from `/`. |
-| `hello --state` | cwd, umask, descriptor flags and exec preservation; leaves `/statefile`. Inspect with `cat statefile`, then `rm statefile`. |
-| `hello --file`, `hello --check` | Create writable `/wtest`, then verify it (also after reboot). Remove with `rm wtest` when finished. |
+| `hello --fault`, `hello --crash` | Four child fault/recovery cases; foreground illegal instruction returns shell status132. Requires image180 hello. |
+| `hello --time` | Caller CPU ticks, child CPU totals and collection without double counting. |
+| `hello --tree` | Nested fork restoration, process groups and group waits. |
+| `hello --wait` | Retained child results, selective waits, exhaustion and reuse. |
+| `hello --fork`, `hello --fork-exec` | Private memory, inherited files/state and child exec. |
 | `hello --exec`, `hello --exec-fail` | Image replacement and failed-exec preservation. |
-| `hello --files` | Reads, offsets, seek, descriptor exhaustion and exit cleanup. |
-| `hello --errno` | Invalid stream/buffer/argument errors. |
-| `hello --line`, `hello --read`, `hello --io` | Interactive line and standard-stream I/O. |
-| `hello --heap`, `hello --malloc` | Heap bounds, allocation, free/reuse and merging. |
-| `hello --alloc`, `hello --resize`, `hello --trim` | calloc/realloc and heap trimming; `--resize` concerns memory, not files. |
-| `hello --pid`, `hello --ppid`, `hello --env` | Process identity, launching shell and initial environment. |
-| `hello --exit N` | Exit status; the shell reports the low eight bits. |
+| `hello --line` | Interactive line input. |
+| `hello --pid`, `hello --ppid`, `hello --env` | Identity, parent and environment. |
+| `hello --exit N` | Exit status; shell reports the low eight bits. |
 
-Successful self-cleaning tests can be repeated. Tests that create files require
-SD storage and unused test names; most are omitted from the RAM demo. If a test
-fails, retain its command and exit code and inspect leftovers before removing
-them. Unknown `hello` options run its generic argument-printing path, so
-`Hello exit=0` alone does not prove a specific test ran—check its success message.
+Old filesystem, descriptor and allocator demonstration options have been removed
+from the shipped application. The host suite retains the old fixture and the
+production filesystem/runtime tests. These removals do not remove filesystem
+commands or runtime functionality. Unknown hello options still print arguments;
+check the specific success message, not just `Hello exit=0`.
 
 ### Timestamp and restart check
 
@@ -645,7 +654,7 @@ SYS_FORK; no hardware fork test is claimed.
 
 ### Current cumulative hardware checklist
 
-**Image176 fixes `hello --wait`; update hello on the SD card.** Use `make updater` and
+**Image188 keeps ABI33; existing image187 hello works. Run `hello --t`.** Use `make updater` and
 `make flash-updater` from `src/`, run `apps` and `sync` on the Cardputer, then
 install the normal image with `make && make flash`. No SD reformat is needed.
 
@@ -660,16 +669,17 @@ was caused by missing application runtime initialization, fixed in image176.
 Image176 hardware confirms two consecutive wait tests, both fork regressions
 and no remaining application rows in ps; see [the passing capture](docs/hardware/proc-wait-v176-pass.log).
 
-The fork API is child-first: parent memory is saved in about32.5KiB of MM-owned
-storage and restored only after child exit. The child returns0; the restored
-parent receives the child PID. `cp32_waitpid(pid, &status, 0)` or pid=-1 collects
-one status, encoded as `(exit_code & 255) << 8`; NULL status is permitted.
-`CP32_WNOHANG` is accepted, but by the time the parent resumes this child has
-already exited. Bad status pointers do not consume the result. Nested forks or
-a full eight-result wait table return EAGAIN; allocation
-failure returns ENOMEM. Group waits are unsupported. A child that never exits
-keeps its parent suspended. This is private-memory fork, not shared-memory vfork,
-and does not provide general concurrent POSIX process semantics.
+Fork initially runs the child. A child at either supported level may call `cp32_yield()` to
+return the fork result to its still-live parent; the parent can yield back or
+wait. WNOHANG returns0 while that child lives. Blocking wait resumes the child
+and completes on exit. Parent exec preserves the child; parent exit drains the
+child before completing, so a nonterminating child can delay exit. There is no
+INIT adoption. A further parent fork while a live child is parked returns EAGAIN.
+Two nested child-first levels and eight retained wait results per parent remain
+supported. Each saved image requires about33KiB of MM storage. Wait accepts a
+PID, -1 for any child, 0 for the caller's group or a negative group ID; invalid
+status pointers do not consume results. This is cooperative execution with one
+live image slot; timer-driven application preemption remains pending.
 
 ## Source and further documentation
 
