@@ -154,6 +154,10 @@ FORWARD _PROTOTYPE( void do_close, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_read, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( void do_write, (tty_t *tp, message *m_ptr)		);
 FORWARD _PROTOTYPE( int in_process, (tty_t *tp, char *buf, int count)	);
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT static void cp32_trace_tty_read(unsigned count)
 {
 	if (++cp32_tty_read_reports == 1 ||
@@ -163,6 +167,10 @@ CP32_IRAM_EXT static void cp32_trace_tty_read(unsigned count)
 		usbj_print("]\r\n");
 	}
 }
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 FORWARD _PROTOTYPE( void sigchar, (tty_t *tp, int sig)			);
 FORWARD _PROTOTYPE( void tty_devnop, (tty_t *tp)			);
 FORWARD _PROTOTYPE( void scr_init, (tty_t *tp)				);
@@ -278,6 +286,10 @@ CP32_IRAM_EXT PUBLIC void tty_task()
 /*===========================================================================*
  *				do_read					     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void do_read(tp, m_ptr)
 register tty_t *tp;		/* pointer to tty struct */
 message *m_ptr;			/* pointer to message sent to the task */
@@ -347,10 +359,18 @@ message *m_ptr;			/* pointer to message sent to the task */
   tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				do_write				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void do_write(tty_t *tp, message *m_ptr)
 {
 /* A process wants to write on a terminal. */
@@ -393,10 +413,18 @@ CP32_IRAM_EXT PRIVATE void do_write(tty_t *tp, message *m_ptr)
   tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				do_ioctl				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void do_ioctl(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
@@ -599,10 +627,18 @@ message *m_ptr;			/* pointer to message sent to task */
   tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				do_open					     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void do_open(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
@@ -626,10 +662,18 @@ message *m_ptr;			/* pointer to message sent to task */
   tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				do_close				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void do_close(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
@@ -648,10 +692,18 @@ message *m_ptr;			/* pointer to message sent to task */
   tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, OK);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				do_cancel				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void do_cancel(tp, m_ptr)
 register tty_t *tp;
 message *m_ptr;			/* pointer to message sent to task */
@@ -684,10 +736,18 @@ message *m_ptr;			/* pointer to message sent to task */
   tty_reply(TASK_REPLY, m_ptr->m_source, proc_nr, EINTR);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				handle_events				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PUBLIC void handle_events(tp)
 tty_t *tp;			/* TTY to check for events. */
 {
@@ -735,10 +795,18 @@ tty_t *tp;			/* TTY to check for events. */
       (tp->tty_termios.c_lflag & ECHO), (unsigned)get_uptime());
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				in_transfer				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void in_transfer(tty_t *tp)
 {
 /* Transfer bytes from the input queue to a process reading from a terminal. */
@@ -807,10 +875,20 @@ CP32_IRAM_EXT PRIVATE void in_transfer(tty_t *tp)
   }
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				in_process				     *
  *===========================================================================*/
+/* Ordinary line editing/echo C: use size optimization to preserve SRAM
+ * headroom. Task IPC entry/resumption and hardware transport stay unchanged. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PUBLIC int in_process(tp, buf, count)
 register tty_t *tp;		/* terminal on which character has arrived */
 char *buf;			/* buffer with input characters */
@@ -1204,6 +1282,13 @@ out_done:
 /*===========================================================================*
  *				dev_ioctl				     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void dev_ioctl(tp)
 tty_t *tp;
 {
@@ -1226,10 +1311,18 @@ tty_t *tp;
   tty_reply(REVIVE, tp->tty_iocaller, tp->tty_ioproc, OK);
 }
 
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /*===========================================================================*
  *				setattr					     *
  *===========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void setattr(tp)
 tty_t *tp;
 {
@@ -1281,6 +1374,10 @@ tty_t *tp;
   /* Set new line speed, character size, etc at the device level. */
   (*tp->tty_ioctl)(tp);
 }
+
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
 
 
 /*===========================================================================*
@@ -1346,6 +1443,10 @@ register tty_t *tp;
 /*==========================================================================*
  *				tty_init				    *
  *==========================================================================*/
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void tty_init(tp)
 tty_t *tp;			/* TTY line to initialize. */
 {
@@ -1365,6 +1466,10 @@ tty_t *tp;			/* TTY line to initialize. */
 	pty_init(tp);
   }
 }
+
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
 
 
 /*==========================================================================*
@@ -1441,6 +1546,10 @@ tty_t *tp;
 
 /* Removable task-context timing trace: include rendering and scheduled-out
  * time, excluding time queued before TTY accepted the request. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT static void cp32_trace_tty_write(unsigned bytes, uint32_t ticks)
 {
   static unsigned reports;
@@ -1452,6 +1561,10 @@ CP32_IRAM_EXT static void cp32_trace_tty_write(unsigned bytes, uint32_t ticks)
     restore_lock(saved_ps);
   }
 }
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /* MINIX cons_write's bounded copy/complete contract, with ST7789 output.
  * The caller remains blocked in IPC while TTY owns its copied output bytes. */

@@ -36,6 +36,7 @@ CP32_FS_TEXT int cp32_fproc_rmdir(struct cp32_fproc *p,const struct cp32_fproc *
   return -30;
 #else
   char path[256];struct cp32_minix_stat target,cwd;int r;
+  struct cp32_fproc *saved;
   if(!p->pid)return -9;
   if(!*name)return -2;
   /* Reject literal terminal dot components before abspath normalizes them. */
@@ -52,8 +53,8 @@ CP32_FS_TEXT int cp32_fproc_rmdir(struct cp32_fproc *p,const struct cp32_fproc *
     r=cp32_minix_stat(read,capacity,guard->cwd,&cwd);if(r)return cp32_fs_errno(r);
     if(target.inode==cwd.inode)return -16;
   }
-  if(cp32_fproc_suspended) {
-    r=cp32_minix_stat(read,capacity,cp32_fproc_suspended->cwd,&cwd);if(r)return cp32_fs_errno(r);
+  for(saved=cp32_fproc_suspended;saved;saved=saved->suspended) {
+    r=cp32_minix_stat(read,capacity,saved->cwd,&cwd);if(r)return cp32_fs_errno(r);
     if(target.inode==cwd.inode)return -16;
   }
   r=cp32_minix_rmdir(read,write,capacity,path,p->cwd);

@@ -576,7 +576,7 @@ with tempfile.TemporaryDirectory() as folder:
   extra=[] if app=='cat' else [str(root/'src/apps/lib/heap.c')] if app=='hello' else [str(root/'src/apps/lib/output.c')] if app=='ls' else [str(root/'src/apps/lib/stream.c'),str(root/'src/apps/lib/output.c')]
   subprocess.run(['cc','-DCP32_ROOT_RAM=0','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=undefined',
    '-I'+str(root/'src/fs'),'-I'+str(root/'src/apps/lib'),*(['-DTEST_CAT'] if app=='cat' else ['-DTEST_HELLO'] if app=='hello' else ['-DTEST_LS'] if app=='ls' else []),
-   str(p/'test.c'),str(root/f'src/apps/{app}/{app}.c'),str(root/'src/apps/lib/io.c'),*extra,
+   str(p/'test.c'),str(root/'tests/mm/legacy_hello.c' if app=='hello' else root/f'src/apps/{app}/{app}.c'),str(root/'src/apps/lib/io.c'),*extra,
    *[str(f) for f in (root/'src/fs').glob('*.c')],'-o',str(p/app)],check=True)
   for mode in (('0','1','2','3','4','5','6','7') if app=='ls' else ('0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D','E','F','G','H','I','J') if app=='hello' else ('0','1','2')):subprocess.run([str(p/app),str(p/'disk'),mode],check=True)
   if app=='hello' and '--dirs' not in sys.argv:

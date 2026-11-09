@@ -3,11 +3,7 @@
 #include "exec.h"
 /* Fixed trusted-application slot. Instruction alias offset is 0x6f0000,
  * matching the kernel linker's existing D/IRAM mapping. */
-#define CP32_APP_TEXT 0x403d8000U
-#define CP32_APP_TEXT_END 0x403dc000U
-#define CP32_APP_DATA 0x3fcec000U
-#define CP32_APP_STACK 0x3fcef000U
-#define CP32_APP_TOP 0x3fcf0000U
+#include "../include/esp32s3/app_layout.h"
 struct cp32_image_segment { uint32_t offset, address, filesz, memsz; };
 struct cp32_image { uint32_t entry; struct cp32_image_segment text, data; };
 /* Reader: 0 on exact read, negative on failure. No writes to target memory.

@@ -19,7 +19,9 @@ static int app_endpoint=-1;
 #define APP_FILE 2007
 #define APP_TEXT_DATA (CP32_APP_TEXT-0x6f0000U)
 static int app_busy;
+static struct {unsigned signal,cause,pc;} app_fault;
 extern struct proc *current_proc;
+extern volatile struct proc *cp32_irq_return_proc;
 extern int _sendrec(int, message *);
 
 /* MINIX forkexit.c uses bounded PIDs independent of reusable table slots.
@@ -36,6 +38,25 @@ CP32_IRAM_EXT static int application_pid(void)
     if(n==NR_PROCS && !cp32_fork_pid_used(next_pid)) return next_pid;
   }
   return -1;
+}
+
+/* MINIX SYS_TIMES snapshots the actual caller, never a user-selected PID.
+ * Nested lock_save in get_uptime preserves this outer lock. Flat Xtensa RAM
+ * requires an explicit writable-image range check before copying the record. */
+CP32_IRAM_EXT static int application_times(struct proc *caller,message *m)
+{
+  uintptr_t p=(uintptr_t)m->m1_p1;
+  struct cp32_app_times t;
+  int saved;
+  if(m->m1_i2 || (unsigned)m->m1_i3!=sizeof(t))return -22;
+  if(p<CP32_APP_DATA || p>CP32_APP_TOP || sizeof(t)>CP32_APP_TOP-p)return -14;
+  saved=lock_save();
+  t.user=caller->user_time;t.system=caller->sys_time;
+  t.children_user=caller->child_utime;t.children_system=caller->child_stime;
+  t.uptime=get_uptime();
+  restore_lock(saved);
+  memcpy((void *)p,&t,sizeof(t));
+  return 0;
 }
 
 CP32_IRAM_EXT static int application_getpid(void)
@@ -129,7 +150,53 @@ CP32_IRAM_EXT static void application_exit(int status)
   panic("app exit",NO_NUM);
   for(;;) {}
 }
-static const struct cp32_app_services services={26,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+/* MINIX exception.c routes user faults to default signal termination. Values
+ * below are ESP32-S3 core.h/corebits.h EXCCAUSE, not x86 vector numbers.
+ * Called by irq.S with EXCM set, on a fresh stack inside the dying app slot.
+ * Faults in callbacks/kernel text, nested handlers and unknown causes halt. */
+CP32_IRAM_EXT struct proc *cp32_application_fault(unsigned cause,unsigned pc,unsigned ps)
+{
+  struct proc *owner;
+  unsigned signal;
+  if(!app_busy || app_endpoint<=LOW_USER || app_endpoint>=NR_PROCS ||
+     pc<CP32_APP_TEXT || pc>=CP32_APP_TEXT_END || k_reenter ||
+     (ps&15U) || !(ps&16U) || app_fault.signal)return NIL_PROC;
+  owner=proc_addr(app_endpoint);
+  if(owner!=current_proc || owner!=proc_ptr || owner->p_flags)return NIL_PROC;
+  switch(cause) {
+    case 0: signal=CP32_SIGILL;break;  /* illegal instruction: SIGILL */
+    case 6: signal=CP32_SIGFPE;break;  /* integer divide by zero: SIGFPE */
+    case 9: signal=CP32_SIGBUS;break; /* unaligned access: SIGBUS (MINIX number) */
+    case 28:case 29:signal=CP32_SIGSEGV;break; /* prohibited load/store: SIGSEGV */
+    default:return NIL_PROC;
+  }
+  if(cp32_exec_frame(owner,(reg_t)application_exit,CP32_APP_TOP-16,0)!=OK)return NIL_PROC;
+  app_fault.signal=signal;app_fault.cause=cause;app_fault.pc=pc;
+  cp32_irq_return_proc=owner;
+  return owner;
+}
+
+/* Removable, bounded fault diagnostic in normal broker context, not an IRQ. */
+CP32_IRAM_EXT static void cp32_trace_app_fault(int pid)
+{
+  static unsigned count;
+  if(++count<=4 || count%64==0) {
+    usbj_print("[CTX V180 fault pid=");usbj_print_u32((unsigned)pid);
+    usbj_print(" signal=");usbj_print_u32(app_fault.signal);
+    usbj_print(" cause=");usbj_print_u32(app_fault.cause);
+    usbj_print(" pc=");usbj_print_hex32(app_fault.pc);usbj_print("]\r\n");
+  }
+}
+/* Consume before restoration so a child's fault cannot leak into the parent. */
+CP32_IRAM_EXT static unsigned application_fault_take(int pid)
+{
+  unsigned signal=app_fault.signal;
+  if(signal)cp32_trace_app_fault(pid);
+  app_fault.signal=0;
+  return signal;
+}
+
+static const struct cp32_app_services services={33,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
 
 /* Transactional foreground exec. Stage all bytes in MM-owned temporary memory
  * while the child is blocked in SENDREC; publish only after every read succeeds.
@@ -216,7 +283,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   struct cp32_image image;
   struct proc *child;
   uint32_t sp,heap_floor,heap_break;
-  message m;
+  message m,resume;
   int result,saved,pid,parent_pid;
   if(!argc || !argv || !output || !status || current_proc!=proc_addr(FS_PROC_NR) || app_busy) return -1;
   parent_pid=current_proc->p_pid;
@@ -224,7 +291,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   saved=lock_save();pid=application_pid();
   child=pid<0 ? NIL_PROC:cp32_proc_reserve(pid);
   if(!child){restore_lock(saved);return -1;}
-  app_endpoint=child->p_nr;app_busy=1;restore_lock(saved);
+  app_endpoint=child->p_nr;app_busy=1;app_fault.signal=0;restore_lock(saved);
   result=cp32_image_load(read,context,size,(unsigned char *)APP_TEXT_DATA,
                         (unsigned char *)CP32_APP_DATA,&image);
   if(result)goto failed;
@@ -261,9 +328,22 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   for(;;) {
     if(receive(app_endpoint,&m)!=OK) panic("app wait",NO_NUM);
     if(!cp32_shell_app_files_owner((unsigned)child->p_pid))panic("FS process owner",NO_NUM);
+    result=m.m_type==APP_EXIT ? application_fault_take(child->p_pid):0;
+app_exit:
+    if(m.m_type==APP_EXIT && cp32_fork_live()) {
+      m.m1_i2=result; /* preserve a foreground fault while its child drains */
+      cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+      app_endpoint=child->p_nr;m.m_type=0;
+      if(send(app_endpoint,&m)!=OK)panic("yield exit",NO_NUM);
+      continue;
+    }
     if(m.m_type==APP_EXIT && cp32_fork_active()) {
-      m.m_type=cp32_fork_finish(&child,m.m1_i1,&parent_pid,&heap_floor,&heap_break);
+      cp32_fork_request(&resume);
+      m.m_type=cp32_fork_finish(&child,m.m1_i1,&parent_pid,&heap_floor,&heap_break,(unsigned)result);
       app_endpoint=child->p_nr;
+      if(resume.m_type==APP_EXIT){m=resume;result=m.m1_i2;goto app_exit;}
+      if(resume.m_type) m.m_type=resume.m1_i1==CP32_APP_WAITPID ?
+        cp32_fork_wait(resume.m1_i2,resume.m1_p1,(unsigned)resume.m1_i3):0;
       if(send(app_endpoint,&m)!=OK)panic("fork reply",NO_NUM);
       continue;
     }
@@ -271,7 +351,7 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
       cp32_fork_reset();
       /* MINIX MM retains an eight-bit exit status. This bootstrap API
        * returns that value directly, not a POSIX encoded wait status. */
-      *status=(unsigned)m.m1_i1 & 255U;
+      *status=result ? 128+result:((unsigned)m.m1_i1 & 255U);
       cp32_shell_app_files_reset();
       saved=lock_save();
       /* SENDREC must leave the child waiting for FS's reply. */
@@ -285,13 +365,50 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
     }
     result=m.m_type==APP_GETPID ? child->p_pid :
            m.m_type==APP_GETPPID ? parent_pid : -1;
-    if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_FORK) {
+    if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_SIGNAL) {
+      result=m.m1_p1 ? -22:cp32_fork_disposition(m.m1_i2,(unsigned)m.m1_i3);
+    } else if(m.m_type==APP_FILE && (m.m1_i1==CP32_APP_SIGMASK || m.m1_i1==CP32_APP_SIGPENDING)) {
+      result=m.m1_p1 ? -22:m.m1_i1==CP32_APP_SIGMASK ?
+        cp32_fork_sigmask(m.m1_i2,(unsigned)m.m1_i3):
+        (m.m1_i2 || m.m1_i3 ? -22:(int)cp32_fork_sigpending());
+      if(result<=-1001 && result>=-1015){result=-1000-result;m.m_type=APP_EXIT;m.m1_i1=0;goto app_exit;}
+    } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_KILL) {
+      result=m.m1_p1 ? -22:cp32_fork_signal_target(child,m.m1_i2,(unsigned)m.m1_i3);
+      if(result==1) {
+        result=m.m1_i3;m.m_type=APP_EXIT;m.m1_i1=0;
+        goto app_exit; /* normal exit cleanup, signal status, no caller reply */
+      }
+      if(result==2) {
+        unsigned signal=(unsigned)m.m1_i3;
+        /* The target is parked in FS receive. Restore it for the existing
+         * cleanup path, without publishing a reply that could run its code. */
+        cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+        cp32_fork_finish(&child,0,&parent_pid,&heap_floor,&heap_break,signal);
+        app_endpoint=child->p_nr;result=0;
+      }
+    } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_FORK) {
       saved=lock_save();pid=application_pid();restore_lock(saved);
       result=(m.m1_i2 || m.m1_p1 || m.m1_i3) ? -22:
         cp32_fork_start(&child,pid,&parent_pid,&heap_floor,&heap_break);
       app_endpoint=child->p_nr;
+    } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_YIELD) {
+      cp32_fork_request(&resume);
+      result=(m.m1_i2 || m.m1_p1 || m.m1_i3) ? -22:0;
+      if(!result && (cp32_fork_live() || !resume.m_type ||
+          (resume.m_type==APP_FILE && resume.m1_i1==CP32_APP_YIELD)))
+        result=cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+      app_endpoint=child->p_nr;
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_WAITPID) {
       result=cp32_fork_wait(m.m1_i2,m.m1_p1,(unsigned)m.m1_i3);
+      if(result==CP32_WAIT_LIVE) {
+        result=cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+        app_endpoint=child->p_nr;
+      }
+    } else if(m.m_type==APP_FILE && (m.m1_i1==CP32_APP_GETPGRP || m.m1_i1==CP32_APP_SETSID)) {
+      result=(m.m1_i2 || m.m1_p1 || m.m1_i3) ? -22:
+        cp32_process_group(child->p_pid,m.m1_i1==CP32_APP_SETSID);
+    } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_TIMES) {
+      result=application_times(child,&m);
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_EXEC) {
       result=application_replace(child,&m,&heap_floor,&heap_break);
       if(!result)continue; /* new image resumes at entry, never through send */

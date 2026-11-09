@@ -26,6 +26,7 @@
  */
 
 #include "irq_const.h"
+#include "../include/esp32s3/app_layout.h"
 
 
 .section .text, "ax"
@@ -141,7 +142,8 @@ irq_nmi:
 /* ── Kernel exception ─────────────────────────────────────────────────── */
 /*
  * Route level-1 IRQs and the enabled syscall probe without clobbering the
- * interrupted registers. Other exceptions still report a terminal dump.
+ * interrupted registers. Application instruction faults may terminate through the broker; system
+ * faults still report a terminal dump.
  */
 .align 4
 .global irq_kernel
@@ -153,10 +155,29 @@ irq_kernel:
     rsr     a0, exccause
     beqi    a0, 4, irq_level1
     beqi    a0, 1, .Luser_saved_a0
-    bnez    a0, .Lkernel_fatal
+    bnez    a0, .Lapp_fault
     movi    a0, cp32_user_probe_mode
     l32i    a0, a0, 0
     bnez    a0, .Luser_saved_a0
+.Lapp_fault:
+    /* Only application text may abandon its context. Check EPC before any
+     * stack write. The dying app's stack is disposable; use its known top,
+     * even if its original SP is invalid. No kernel/boot stack is borrowed. */
+    rsr     a0, epc1
+    movi    a2, CP32_APP_TEXT
+    bltu    a0, a2, .Lkernel_fatal
+    movi    a2, CP32_APP_TEXT_END
+    bgeu    a0, a2, .Lkernel_fatal
+    mov     a3, a0
+    rsr     a2, exccause
+    rsr     a4, ps
+    movi    a1, CP32_APP_TOP
+    addi    a1, a1, -16
+    mov     a15, a1
+    call0   cp32_application_fault
+    beqz    a2, .Lkernel_fatal
+    mov     a15, a2
+    j       .Lrestore_process_frame
 .Lkernel_fatal:
     rsr     a2, exccause
     rsr     a3, excvaddr
@@ -325,6 +346,11 @@ irq_user:
      * path as a kernel-mode IRQ, before building a syscall frame. */
     rsr     a0, exccause
     beqi    a0, 4, irq_level1
+    beqi    a0, 1, .Luser_frame
+    movi    a0, cp32_user_probe_mode
+    l32i    a0, a0, 0
+    beqz    a0, .Lapp_fault
+.Luser_frame:
     /* Build the frame before reading exception CSRs.  In particular, the
      * original user a2 is the syscall number and must not be replaced by
      * EXCCAUSE.  a0 is used as the temporary frame base; original a0 is

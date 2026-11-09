@@ -77,10 +77,11 @@ int main(int argc,char **argv)
  q=(struct cp32_app_open_request){"/hold",0,0755};
  assert(!call(&parent,CP32_APP_MKDIR,0,&q,sizeof(q)));
  other=(struct cp32_fproc){.pid=8,.root_inode=1,.cwd="/hold"};
- cp32_fproc_suspended=&other;
+ struct cp32_fproc nearest={.pid=9,.root_inode=1,.cwd="/",.suspended=&other};
+ cp32_fproc_suspended=&nearest;
  assert(cp32_fproc_rmdir(&parent,0,rd,wr,sizeof(disk),"/hold")==-16);
  assert(!cp32_fproc_move(&parent,0,0,rd,wr,sizeof(disk),"/hold","/moved"));
- assert(!strcmp(other.cwd,"/moved"));
+ assert(!strcmp(other.cwd,"/moved") && !strcmp(nearest.cwd,"/"));
  q=(struct cp32_app_open_request){"/source",0,0755};
  assert(!call(&parent,CP32_APP_MKDIR,0,&q,sizeof(q)));
  assert(cp32_fproc_move(&parent,0,0,rd,wr,sizeof(disk),"/source","/moved")==-CP32_FILE_BUSY);

@@ -687,6 +687,12 @@ CP32_IRAM_EXT PRIVATE int proc_is_ready_queued(struct proc *target)
   return FALSE;
 }
 
+/* Pure state validators: retain SRAM headroom without reducing runtime
+ * reservations. No assembly save/restore or scheduling policy is changed. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PUBLIC int cp32_ready_queue_check(void)
 {
   int q;
@@ -968,6 +974,10 @@ CP32_IRAM_EXT PUBLIC int cp32_blocked_owner_check(void)
     return FALSE;
   return TRUE;
 }
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /* Process table storage for the CP32 port. */
 struct proc proc[NR_TASKS + NR_PROCS];
@@ -1036,6 +1046,10 @@ CP32_IRAM_EXT PUBLIC void interrupt(int task)
 }
 
 /* Optional IPC execution trace, isolated for easy removal. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void cp32_trace_ipc(int operation, int endpoint)
 {
   cp32_ipc_trace_calls++;
@@ -1051,6 +1065,10 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_ipc(int operation, int endpoint)
     usbj_print("]\r\n");
   }
 }
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
  
 /*===========================================================================*
  *				sys_call				     * 
@@ -1099,6 +1117,10 @@ report:
 }
  
 /* Removable first-use/per-5000 IPC return diagnostics, one counter per op. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT PRIVATE void cp32_trace_task_ipc(struct proc *owner, int operation)
 {
   static unsigned counts[4];
@@ -1114,6 +1136,10 @@ CP32_IRAM_EXT PRIVATE void cp32_trace_task_ipc(struct proc *owner, int operation
   usbj_print(" frame="); usbj_print_u32((uint32_t)cp32_irq_return_frame_check());
   usbj_print("]\r\n");
 }
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
+
 
 /* Production SYSCALL entry: EXCM excludes level-1 IRQs until assembly RFE.
  * MINIX mpx saves the caller before sys_call and restarts the selected process.

@@ -2,7 +2,10 @@
 #define CP32_APPLICATION_H
 #include "../mm/image.h"
 struct cp32_fproc;
+struct proc;
+CP32_IRAM_EXT struct proc *cp32_application_fault(unsigned cause,unsigned pc,unsigned ps);
 CP32_IRAM_EXT int cp32_shell_app_files_fork(struct cp32_fproc *,unsigned);
+CP32_IRAM_EXT void cp32_shell_app_files_exchange(struct cp32_fproc *);
 CP32_IRAM_EXT void cp32_shell_app_files_restore(struct cp32_fproc *);
 /* Trusted foreground application, one slot; called only by FS. */
 typedef void (*cp32_app_output)(const char *,unsigned);

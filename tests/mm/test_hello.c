@@ -104,6 +104,10 @@ int main(int argc,char **argv) {
     assert(!app_main(2,args,env,&services) && !writes);
     return 0;
   }
+  if(argc>1 && !strcmp(argv[1],"--suite")) {
+    char *args[]={"hello","--t",0};services.version=32;
+    assert(app_main(2,args,0,&services)==CP32_HELLO_TEST_REQUEST && !writes);return 0;
+  }
   if(argc>1) {
     char *args[]={"hello","--exit",argv[1],0};
     if(argc>2) {
@@ -116,7 +120,7 @@ int main(int argc,char **argv) {
     return 0;
   }
   assert(app_main(0,0,0,0)==1);
-  services.version=27; assert(app_main(0,0,0,&services)==1);
+  services.version=34; assert(app_main(0,0,0,&services)==1);
   char *args[]={"hello","one","two",0};
   services.version=1; assert(!app_main(3,args,0,&services)); assert(writes==7);
   assert(!strcmp(captured,"Hello from a CP32 application!\narg: one\narg: two\n"));

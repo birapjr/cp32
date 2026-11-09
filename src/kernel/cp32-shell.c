@@ -24,6 +24,7 @@ static char cp32_shell_previous[CP32_MINIX_PATH_MAX+1];
 static unsigned cp32_tty_line_len;
 static char cp32_shell_output[256];
 static unsigned cp32_shell_output_len;
+static int cp32_shell_usb_only;
 CP32_IRAM_EXT static int cp32_shell_tty_io(int operation, char *buffer, int count);
 
 /* TTY is the only runtime LCD owner. Batch command output in FS memory,
@@ -41,6 +42,7 @@ CP32_IRAM_EXT static void cp32_shell_flush(void)
 
 CP32_IRAM_EXT static void cp32_shell_display(const char *s)
 {
+  if(cp32_shell_usb_only)return;
   while (*s) {
     if (cp32_shell_output_len == sizeof(cp32_shell_output)) cp32_shell_flush();
     cp32_shell_output[cp32_shell_output_len++] = *s++;
@@ -732,17 +734,24 @@ CP32_IRAM_EXT int cp32_shell_app_files_start(unsigned pid)
 CP32_IRAM_EXT int cp32_shell_app_files_fork(struct cp32_fproc *parent,unsigned pid)
 {
   int r;
-  *parent=cp32_app_state;
+  *parent=cp32_app_state;parent->suspended=cp32_fproc_suspended;
   memset(&cp32_app_state,0,sizeof(cp32_app_state));
   r=cp32_fproc_clone(&cp32_app_state,parent,pid);
-  if(r)cp32_app_state=*parent;
+  if(r){cp32_app_state=*parent;cp32_app_state.suspended=0;}
   else cp32_fproc_suspended=parent;
   return r ? cp32_fs_errno(r):0;
+}
+CP32_IRAM_EXT void cp32_shell_app_files_exchange(struct cp32_fproc *other)
+{
+  struct cp32_fproc temp=cp32_app_state;
+  cp32_app_state=*other;temp.suspended=other->suspended;*other=temp;
+  cp32_app_state.suspended=0;cp32_fproc_suspended=other;
 }
 CP32_IRAM_EXT void cp32_shell_app_files_restore(struct cp32_fproc *parent)
 {
   cp32_fproc_exit(&cp32_app_state);
-  cp32_app_state=*parent;cp32_fproc_suspended=0;
+  cp32_app_state=*parent;cp32_fproc_suspended=parent->suspended;
+  cp32_app_state.suspended=0;
 }
 CP32_IRAM_EXT void cp32_shell_app_files_exec(void)
 { cp32_fproc_exec(&cp32_app_state); }
@@ -858,6 +867,42 @@ CP32_IRAM_EXT static int cp32_shell_redirect(char *text,const char **path)
   return 0;
 }
 
+CP32_IRAM_EXT static void cp32_shell_ps(void);
+CP32_IRAM_EXT static int cp32_shell_mm_exchange(void);
+CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_test_progress(char *text,int count)
+{
+  if(cp32_shell_tty_io(DEV_WRITE,text,count)!=count)panic("test display",NO_NUM);
+}
+/* Removable acceptance runner. Each case starts at fork depth zero; do not
+ * wrap tests in an application fork or nested tree tests lose a fork level.
+ * Edit this list when the current feature's hardware checklist changes. */
+CP32_IRAM_EXT static int cp32_shell_app_tests(int *fd,unsigned size)
+{
+  static const char *const cases[]={"--signals","--ignore","--ignore","--mask","--kill",
+    "--ytree","--yield","--yexit","--yexec","--fault","--time","--tree",
+    "--wait","--fork-exec","--exec-fail"};
+  const char *argv[]={"hello",0};unsigned i;int result,status;
+  cp32_shell_test_progress("\r\n",2);
+  for(i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {
+    argv[1]=cases[i];cp32_shell_print("[TEST ");cp32_shell_print(cases[i]);cp32_shell_print("]\r\n");
+    status=0;
+    result=cp32_application_run(cp32_shell_app_read,fd,size,2,argv,cp32_shell_app_output,&status);
+    if(result || status) {
+      cp32_shell_print("[TEST FAIL]\r\n");
+      return result ? -1:status;
+    }
+    cp32_shell_test_progress(".",1);
+  }
+  cp32_shell_ps();
+  cp32_shell_print("[TEST mm]\r\n");
+  if(cp32_shell_mm_exchange()) {cp32_shell_print("[TEST FAIL]\r\n");return 202;}
+  cp32_shell_test_progress(".",1);
+  cp32_shell_print("[TEST disk]\r\n");
+  if(cp32_shell_disk_check()) {cp32_shell_print("[TEST FAIL]\r\n");return 203;}
+  cp32_shell_test_progress(".",1);
+  cp32_shell_print("[TEST ALL PASS]\r\n");return 0;
+}
+
 CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
 {
   struct cp32_minix_stat info;
@@ -865,7 +910,7 @@ CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
   const char *argv[9],*input_path;
   int hello=mode==1;
   unsigned argc=hello ? 1 : 0,n=0;
-  int status=0,result,fd;
+  int status=0,result,fd,suite;
   if(hello) argv[0]="hello";
   while(n<sizeof(copy)-1 && args[n]) { copy[n]=args[n]; n++; }
   if(args[n]) goto usage;
@@ -885,6 +930,8 @@ CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
   result=cp32_minix_abspath(mode==2 && !*p ? "/boot" : cp32_shell_cwd,
                            hello ? "/boot/hello" : argv[0],full);
   if(result) { cp32_shell_print("Invalid executable path\r\n"); return; }
+  suite=argc==2 && !strcmp(argv[1],"--t") && !strcmp(full,"/boot/hello");
+  if(suite && input_path) {cp32_shell_print("[TEST no redirection]\r\n");return;}
   fd=cp32_shell_open_file(full);
   if(fd<0) {
     cp32_shell_print(mode==2 ? "Command not found\r\n" : "Cannot open executable\r\n");
@@ -904,8 +951,15 @@ CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
       cp32_fd_close(fd);cp32_shell_print("Cannot open input\r\n");return;
     }
   }
+  if(suite){cp32_shell_flush();cp32_shell_usb_only=1;}
   if(!result) result=cp32_application_run(cp32_shell_app_read,&fd,info.size,
                                         argc,argv,cp32_shell_app_output,&status);
+  if(!result && suite) {
+    if(status==CP32_HELLO_TEST_REQUEST) {
+      status=cp32_shell_app_tests(&fd,info.size);
+      if(status<0)result=-1;
+    } else {cp32_shell_print("[TEST unavailable: update hello]\r\n");status=201;}
+  }
   if(cp32_shell_input_fd>=0) {cp32_fd_close(cp32_shell_input_fd);cp32_shell_input_fd=-1;}
   cp32_fd_close(fd);
   if(result) cp32_shell_print(hello ? "Hello load failed\r\n" : "Application load failed\r\n");
@@ -914,6 +968,11 @@ CP32_IRAM_EXT static void cp32_shell_launch(const char *args,int mode)
     if(status<0) { cp32_shell_print("-"); cp32_shell_print_u32(0U-(unsigned)status); }
     else cp32_shell_print_u32((unsigned)status);
     cp32_shell_print("\r\n");
+  }
+  if(suite) {
+    cp32_shell_usb_only=0;
+    cp32_shell_display("\r\n");
+    cp32_shell_display(!result && !status ? "[TEST ALL PASS]\r\n":"[TEST FAIL]\r\n");
   }
   return;
 usage:

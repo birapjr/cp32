@@ -18,16 +18,9 @@ if [ -f "$root/src/build/exec.elf" ]; then "$work/test" "$root/src/build/exec.el
 if [ -f "$root/src/build/cat.elf" ]; then "$work/test" "$root/src/build/cat.elf"; fi
 cc -std=c99 -Wall -Wextra -Werror -I"$root/src/apps/hello" \
   "$root/tests/mm/test_hello.c" "$root/src/apps/hello/hello.c" "$root/src/apps/lib/heap.c" "$root/src/apps/lib/io.c" -o "$work/hello"
+"$work/hello" --suite
 "$work/hello"
-"$work/hello" errno
 "$work/hello" line
-"$work/hello" io
-"$work/hello" read
-"$work/hello" trim
-"$work/hello" resize
-"$work/hello" alloc
-"$work/hello" malloc
-"$work/hello" heap
 "$work/hello" ppid
 "$work/hello" pid
 "$work/hello" env
@@ -41,3 +34,6 @@ cc -std=c99 -Wall -Wextra -Werror -I"$root/src/apps/hello" \
 "$work/echo"
 "$work/echo" empty
 "$work/echo" failure
+cc -std=c99 -Wall -Wextra -Werror -I"$root/src/apps/hello" \
+  "$root/tests/mm/test_hello.c" "$root/tests/mm/legacy_hello.c" "$root/src/apps/lib/heap.c" "$root/src/apps/lib/io.c" -o "$work/legacy"
+for mode in errno io read trim resize alloc malloc heap; do "$work/legacy" "$mode"; done
