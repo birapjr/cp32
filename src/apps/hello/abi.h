@@ -115,8 +115,8 @@ struct cp32_app_times {unsigned user,system,children_user,children_system,uptime
 #define CP32_APP_SIGNAL 49
 #define CP32_SIG_DFL 0U
 #define CP32_SIG_IGN 1U
-/* hello --t requests a fresh-process suite from the foreground launcher. */
-#define CP32_HELLO_TEST_REQUEST 200
+/* Image-specific suite handshake: reject stale on-card hello test lists. */
+#define CP32_HELLO_TEST_REQUEST 198
 /* v33: MINIX2 signals1..15, default/ignore and independent masks. */
 #define CP32_SIGHUP 1
 #define CP32_SIGINT 2
@@ -130,4 +130,6 @@ struct cp32_app_times {unsigned user,system,children_user,children_system,uptime
 #define CP32_SIGALRM 14
 #define CP32_SIGSET(sig) (1U<<((sig)-1))
 #define CP32_SIGNAL_MASK 0x7fffU
+/* v35 removes the two-level fork cap; slots and MM allocation bound depth. */
+/* v34 extends KILL selectors to application groups and saved ancestors. */
 #endif

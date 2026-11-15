@@ -67,6 +67,48 @@ static void output(const char *p,unsigned n){(void)p;(void)n;assert(0);}
 static int receive(int endpoint,message *m){
  memset(m,0,sizeof(*m));struct proc *p=proc_addr(endpoint);
  p->p_flags=RECEIVING;p->p_getfrom=FS_PROC_NR;p->p_messbuf=m;
+ if(yielding>=15){
+  int step=received++;m->m_type=APP_FILE;
+  if(yielding==15 || yielding==19) {
+   static const int owners[]={3,4,4,5,5,5,3,3};assert(step<8 && endpoint==owners[step]);
+   switch(step){
+    case 0:case 2:m->m1_i1=CP32_APP_FORK;break;
+    case 1:m->m1_i1=CP32_APP_SETSID;break;
+    case 3:m->m1_i1=yielding==19 ? CP32_APP_SETSID:CP32_APP_SIGNAL;m->m1_i2=yielding==19 ? 0:15;m->m1_i3=yielding==19 ? 0:1;break;
+    case 4:m->m1_i1=CP32_APP_KILL;m->m1_i2=yielding==19 ? -101:0;m->m1_i3=15;break;
+    case 6:m->m1_i1=CP32_APP_WAITPID;m->m1_i2=101;m->m1_p1=(char *)CP32_APP_DATA;break;
+    default:m->m_type=APP_EXIT;
+   }
+  } else if(yielding==20) {
+   static const int owners[]={3,4,4,5,5,4,4,3,3};assert(step<9 && endpoint==owners[step]);
+   switch(step){
+    case 0:case 2:m->m1_i1=CP32_APP_FORK;break;
+    case 1:m->m1_i1=CP32_APP_SIGMASK;m->m1_i3=1<<14;break;
+    case 3:m->m1_i1=CP32_APP_KILL;m->m1_i2=101;m->m1_i3=15;break;
+    case 5:m->m1_i1=CP32_APP_SIGPENDING;break;
+    case 6:m->m1_i1=CP32_APP_SIGMASK;m->m1_i2=1;m->m1_i3=1<<14;break;
+    case 7:m->m1_i1=CP32_APP_WAITPID;m->m1_i2=101;m->m1_p1=(char *)CP32_APP_DATA;break;
+    default:m->m_type=APP_EXIT;
+   }
+  } else if(yielding==16) {
+   assert(step<5 && endpoint==(step==0 ? 3:step==1 ? 4:5));
+   if(step<2)m->m1_i1=CP32_APP_FORK;
+   else if(step==2){m->m1_i1=CP32_APP_SIGNAL;m->m1_i2=15;m->m1_i3=1;}
+   else if(step==3){m->m1_i1=CP32_APP_KILL;m->m1_i2=-1;m->m1_i3=15;}
+   else m->m_type=APP_EXIT;
+  } else if(yielding==17) {
+   assert(step<3 && endpoint==(step==1 ? 4:3));
+   if(!step)m->m1_i1=CP32_APP_FORK;
+   else if(step==1)m->m1_i1=CP32_APP_YIELD;
+   else {m->m1_i1=CP32_APP_KILL;m->m1_i3=9;}
+  } else {
+   assert(yielding==18 && step<4 && endpoint==(!step ? 3:4));
+   if(!step)m->m1_i1=CP32_APP_FORK;
+   else if(step==1){m->m1_i1=CP32_APP_KILL;m->m1_i2=100;m->m1_i3=15;}
+   else if(step==2)m->m1_i1=CP32_APP_YIELD;
+   else m->m_type=APP_EXIT;
+  }return 0;
+ }
  if(yielding==13){
   int step=received++;m->m_type=APP_FILE;
   assert(endpoint==((step==6 || step==7 || step==11) ? 4:3));
@@ -117,7 +159,7 @@ static int receive(int endpoint,message *m){
    assert(endpoint==3);m->m1_i1=CP32_APP_KILL;m->m1_i2=100;
    switch(step){
     case 0:break;
-    case 1:m->m1_i2=0;m->m1_i3=9;break;
+    case 1:m->m1_i2=(-2147483647-1);m->m1_i3=9;break;
     case 2:m->m1_i3=16;break;
     case 3:m->m1_p1=(char *)1;break;
     case 4:m->m1_i2=9999;break;
@@ -200,6 +242,14 @@ static int receive(int endpoint,message *m){
  }return 0;
 }
 static int send(int endpoint,message *m){
+ if(yielding>=15){
+  static const int dest[6][8]={{4,4,5,5,5,3,3},{4,5,5,5},{4,3},{4,4,4},{4,4,5,5,5,3,3},{4,4,5,5,4,4,3,3}};
+  static const int values[6][8]={{0,101,0,0,0,101,101},{0,0,0,0},{0,101},{0,0,0},{0,101,0,102,0,101,101},{0,0,0,0,102,1<<14,101,101}};
+  static const int counts[]={7,4,2,3,7,8};int row=yielding-15;
+  assert(replied<counts[row] && endpoint==dest[row][replied] && m->m_type==values[row][replied]);
+  if(((yielding==15 || yielding==19) && replied==6) || (yielding==20 && replied==7)){int status;memcpy(&status,live+16384,4);assert(status==15);}
+  replied++;return 0;
+ }
  if(yielding==13){
   static const int dest[]={3,3,3,3,3,4,4,3,3,3,4,3,3};
   static const int values[]={0,0,0,0,1<<14,0,0,101,0,0,0,101,1};
@@ -261,7 +311,7 @@ functions+=extract_function(f.root/'src/kernel/application.c','application_fault
 functions+=extract_function(f.root/'src/kernel/application.c','application_times').replace('memcpy((void *)p,&t,sizeof(t));','memcpy(live+16384+p-CP32_APP_DATA,&t,sizeof(t));')
 run=extract_function(f.root/'src/kernel/application.c','cp32_application_run')
 run=run.replace('__asm__ volatile("memw\\n\\tisync" ::: "memory");','syncs++;')
-run=run.replace('memset((void *)old,0,heap_break-old);','memset(live+16384+old-CP32_APP_DATA,0,heap_break-old);')
+run=run.replace('memset((void *)old,0,child->p_heap_break-old);','memset(live+16384+old-CP32_APP_DATA,0,child->p_heap_break-old);')
 run=run.replace('memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);','/* fake loader supplies backing bytes */')
 test=r'''
 int main(int argc,char **argv){
@@ -270,8 +320,8 @@ int main(int argc,char **argv){
  for(int n=3;n<NR_PROCS;n++){procs[n].p_nr=n;procs[n].p_flags=P_SLOT_FREE;}
  const char *args[]={"hello"};int status=-1;
  assert(!cp32_application_run(0,0,0,1,args,output,&status));
- assert(status==(yielding==14 ? 138:yielding==12 ? 143:yielding==9 ? 137:yielding==3 || faults ? 132:yielding==2 ? 23:0) && !app_fault.signal && !app_busy && app_endpoint==-1);
- assert(received==(yielding==13 ? 14:yielding>=10 ? ((yielding==12 || yielding==14) ? 6:12):yielding>=6 ? (yielding==9 ? 7:yielding==7 ? 4:8):yielding>=4 ? 13:yielding ? (yielding>1 ? 8:9):11) && replied==(yielding==13 ? 13:yielding>=10 ? ((yielding==12 || yielding==14) ? 5:11):yielding>=6 ? (yielding==9 ? 6:yielding==7 ? 3:7):yielding>=4 ? 12:yielding ? (yielding>1 ? 7:8):10));
+ assert(status==(yielding==16 || yielding==18 ? 143:yielding==17 ? 137:yielding==14 ? 138:yielding==12 ? 143:yielding==9 ? 137:yielding==3 || faults ? 132:yielding==2 ? 23:0) && !app_fault.signal && !app_busy && app_endpoint==-1);
+ assert(received==(yielding>=15 ? (yielding==20 ? 9:yielding==19 ? 8:yielding==15 ? 8:yielding==16 ? 5:yielding==17 ? 3:4):yielding==13 ? 14:yielding>=10 ? ((yielding==12 || yielding==14) ? 6:12):yielding>=6 ? (yielding==9 ? 7:yielding==7 ? 4:8):yielding>=4 ? 13:yielding ? (yielding>1 ? 8:9):11) && replied==(yielding>=15 ? (yielding==20 ? 8:yielding==19 ? 7:yielding==15 ? 7:yielding==16 ? 4:yielding==17 ? 2:3):yielding==13 ? 13:yielding>=10 ? ((yielding==12 || yielding==14) ? 5:11):yielding>=6 ? (yielding==9 ? 6:yielding==7 ? 3:7):yielding>=4 ? 12:yielding ? (yielding>1 ? 7:8):10));
  assert(!allocated && allocs==frees && !refs && !cp32_fproc_suspended);
  assert(procs[3].p_flags==P_SLOT_FREE && procs[4].p_flags==P_SLOT_FREE && procs[5].p_flags==P_SLOT_FREE);
  assert(procs[1].child_utime==(yielding>=6 ? 0:yielding && yielding<4 ? 2:4) && procs[1].child_stime==(yielding>=6 ? 0:yielding && yielding<4 ? 3:6));
@@ -283,4 +333,4 @@ with tempfile.TemporaryDirectory() as d:
  subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-pointer-to-int-cast',str(p/'test.c'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)
  subprocess.run([str(p/'test'),'faults'],check=True)
- for n in range(2,16):subprocess.run([str(p/'test')]+['yield']*n,check=True)
+ for n in range(2,22):subprocess.run([str(p/'test')]+['yield']*n,check=True)

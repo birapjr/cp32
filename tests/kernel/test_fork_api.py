@@ -18,6 +18,8 @@ int main(void){
  result=-11;assert(cp32_fork()==-1 && cp32_errno==11);
  result=123;assert(cp32_waitpid(123,&status,CP32_WNOHANG)==123);
  assert(operation==CP32_APP_WAITPID && fd_value==123 && pointer==&status && options==1);
+ result=124;assert(cp32_wait(&status)==124 && operation==CP32_APP_WAITPID && fd_value==-1 && pointer==&status && !options);
+ result=-10;assert(cp32_wait(0)==-1 && cp32_errno==10 && pointer==0);
  result=-10;assert(cp32_waitpid(-1,0,0)==-1 && cp32_errno==10);
  assert(cp32_getpgrp()==-1 && cp32_errno==CP32_ENOSYS);
  s.version=27;result=123;assert(cp32_getpgrp()==123 && operation==CP32_APP_GETPGRP && !fd_value && !pointer && !options);

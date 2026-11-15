@@ -9,7 +9,7 @@ from test_idle_handoff import extract_function
 source=extract_function(root/'src/kernel/application.c','cp32_application_run')
 source=source.replace('__asm__ volatile("memw\\n\\tisync" ::: "memory");','syncs++;')
 source=source.replace('memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);','memset(stack,0,sizeof(stack));')
-source=source.replace('memset((void *)old,0,heap_break-old);','memset(heap+old-CP32_APP_DATA,0,heap_break-old);')
+source=source.replace('memset((void *)old,0,child->p_heap_break-old);','memset(heap+old-CP32_APP_DATA,0,child->p_heap_break-old);')
 pre=r'''
 static struct {unsigned signal,cause,pc;} app_fault;
 static unsigned application_fault_take(int pid){(void)pid;return 0;}
@@ -49,6 +49,7 @@ static unsigned application_fault_take(int pid){(void)pid;return 0;}
 #define APP_WRITE 2001
 #define APP_EXIT 2002
 #define APP_TEXT_DATA (CP32_APP_TEXT-0x6f0000U)
+#define P_ZOMBIE 0200
 #define P_SLOT_FREE 1
 #define RECEIVING 4
 #define D 1
@@ -61,6 +62,8 @@ typedef uintptr_t reg_t;
 typedef void (*cp32_app_output)(const char *,unsigned);
 typedef struct {int m_type,m1_i1,m1_i2,m1_i3; char *m1_p1;} message;
 struct proc {
+ unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
+ unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
  int p_nr,p_pid,p_flags,p_getfrom;
  unsigned user_time,sys_time,child_utime,child_stime;
  int p_alarm,p_pending,p_pendcount,p_blocked_frame_result;
@@ -113,15 +116,17 @@ static int cp32_fork_pid_used(int pid){return reserve_wait_pid && pid==101;}
 static int cp32_process_group(int p,int c){(void)p;(void)c;return 1;}
 static int cp32_fork_signal_target(struct proc *p,int pid,unsigned sig){(void)p;(void)pid;(void)sig;return -3;}
 static int cp32_fork_sigmask(int how,unsigned mask){(void)how;(void)mask;return 0;}
+static int cp32_fork_signal_ready(int child){(void)child;return 0;}
 static unsigned cp32_fork_sigpending(void){return 0;}
 static int cp32_fork_disposition(int sig,unsigned action){(void)sig;(void)action;return 0;}
 static int cp32_fork_live(void){return 0;}
 static void cp32_fork_request(message *m){memset(m,0,sizeof(*m));}
-static int cp32_fork_handoff(struct proc **p,int *pp,uint32_t *f,uint32_t *b,const message *m){(void)p;(void)pp;(void)f;(void)b;(void)m;return 0;}
+static int cp32_fork_handoff(struct proc **p,const message *m){(void)p;(void)m;return 0;}
+static void cp32_fork_bind(struct proc *p){p->p_app_group=1;}
 static int cp32_fork_active(void){return 0;}
 static void cp32_fork_reset(void){}
-static int cp32_fork_start(struct proc **p,int pid,int *pp,uint32_t *f,uint32_t *b){(void)p;(void)pid;(void)pp;(void)f;(void)b;return -11;}
-static int cp32_fork_finish(struct proc **p,int st,int *pp,uint32_t *f,uint32_t *b,unsigned sig){(void)sig;(void)p;(void)st;(void)pp;(void)f;(void)b;assert(0);return -1;}
+static int cp32_fork_start(struct proc **p,int pid){(void)p;(void)pid;return -11;}
+static int cp32_fork_finish(struct proc **p,int st,unsigned sig){(void)sig;(void)p;(void)st;assert(0);return -1;}
 static int cp32_fork_wait(int pid,void *p,unsigned opts){(void)pid;(void)p;(void)opts;return -10;}
 static int application_times(struct proc *p,message *m){(void)p;(void)m;return -22;}
 static int application_replace(struct proc *p,message *m,uint32_t *f,uint32_t *b) {(void)p;(void)m;(void)f;(void)b;return -8;}
@@ -197,6 +202,7 @@ int main(void) {
  struct proc *p=cp32_proc_reserve(500);
  assert(p==procs+3 && p->p_flags==NO_MAP);
  assert(!cp32_proc_reserve(500));
+ assert(!cp32_proc_reserve(30001));
  assert(cp32_proc_publish(p)==EINVAL); /* No frame/map may run. */
  p->p_reg.pc=CP32_APP_TEXT;p->p_reg.psw=0x100;
  p->p_reg.sp=p->p_reg.a[1]=p->p_reg.a[15]=CP32_APP_TOP-32;
@@ -205,6 +211,7 @@ int main(void) {
    p->p_map[n].mem_phys=CP32_APP_DATA>>CLICK_SHIFT;
    p->p_map[n].mem_len=(CP32_APP_TOP-CP32_APP_DATA)>>CLICK_SHIFT;
  }
+ p->p_shadow=123;assert(cp32_proc_publish(p)==EINVAL && p->p_flags==NO_MAP);p->p_shadow=0;
  p->p_map[S].mem_phys++;assert(cp32_proc_publish(p)==EINVAL);p->p_map[S].mem_phys--;
  p->p_reg.a[15]--;assert(cp32_proc_publish(p)==EINVAL);p->p_reg.a[15]++;
  p->p_map[S].mem_len=0;assert(cp32_proc_publish(p)==EINVAL);
@@ -221,6 +228,7 @@ int main(void) {
  p->p_flags=RECEIVING;p->p_getfrom=2;assert(cp32_proc_release(p)==EINVAL);
  p->p_getfrom=FS_PROC_NR;
  cp32_irq_return_proc=cp32_blocked_return_proc=cp32_irq_saved_owner=p;
+ p->p_shadow=123;assert(cp32_proc_release(p)==EINVAL);p->p_shadow=0;
  assert(!cp32_proc_release(p));
  assert(!cp32_irq_return_proc && !cp32_blocked_return_proc && !cp32_irq_saved_owner);
  assert(cp32_proc_release(p)==EINVAL); /* Double release is rejected. */
@@ -251,6 +259,7 @@ int main(void) {
  assert(cp32_proc_clone(3,3,701,MM_PROC_NR)==EINVAL);
  assert(cp32_proc_clone(3,4,700,MM_PROC_NR)==EINVAL);
  rdy_head[0]=child;assert(cp32_proc_clone(3,4,701,MM_PROC_NR)==EINVAL);rdy_head[0]=0;
+ assert(cp32_proc_clone(3,4,701,MM_PROC_NR)==EINVAL);parent->p_shadow=0;
  struct proc parent_before=*parent;
  assert(!cp32_proc_clone(3,4,701,MM_PROC_NR));
  assert(!memcmp(parent,&parent_before,sizeof(*parent)));

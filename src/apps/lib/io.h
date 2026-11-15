@@ -12,13 +12,21 @@ int cp32_times(struct cp32_app_times *times);
 int cp32_getpgrp(void);
 int cp32_setsid(void);
 int cp32_yield(void);
-/* v30: terminate self/parked direct child; positive PIDs only. */
+/* v34: positive PID, 0 caller group, -1 application family, -pgrp.
+ * Saved ancestors receive pending delivery before resuming; services excluded. */
 int cp32_kill(int pid,int signal);
+typedef unsigned cp32_sigset_t;
+int cp32_sigemptyset(cp32_sigset_t *set);
+int cp32_sigfillset(cp32_sigset_t *set);
+int cp32_sigaddset(cp32_sigset_t *set, int signo);
+int cp32_sigdelset(cp32_sigset_t *set, int signo);
+int cp32_sigismember(const cp32_sigset_t *set, int signo);
 int cp32_sigprocmask(int how,const unsigned *set,unsigned *old);
 int cp32_sigpending(unsigned *set);
 /* Returns previous DFL/IGN disposition, or -1; signals1..15 since ABI33 (SIGKILL cannot change disposition). */
 int cp32_signal(int signal,unsigned disposition);
 int cp32_fork(void);
+int cp32_wait(int *status);
 int cp32_waitpid(int pid,int *status,unsigned options);
 #define CP32_WNOHANG 1
 #define CP32_WIFEXITED(s) (((s)&0xff)==0)

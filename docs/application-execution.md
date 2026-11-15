@@ -1718,3 +1718,171 @@ manual editing remains a hardware regression check.
 Image188 TEST-DOTS preserves ABI33 and adds a new LCD row with one dot per
 successful suite check (17 currently), then the final result on its own line.
 Details remain USB-only. Firmware update alone suffices from image187.
+
+
+### Image190 PROC-GSIG — application-family group signal delivery
+
+Implemented ABI34 kill selectors (PID, caller group, negative group ID and
+family broadcast), signal0 zombie probes, and pending delivery to saved ancestors.
+Recipients are queued before tree mutation; fatal pending signals are checked
+before restored continuations receive replies. Group self/child termination
+uses existing resource cleanup and encoded wait statuses. Kernel/services are
+excluded. INT_MIN is EINVAL; unmatched groups are ESRCH. Dispositions and masks
+remain private to each image. No asynchronous preemption, handlers or blocked-I/O
+interruption is claimed. Priority1 remains incomplete.
+
+hello --groups is part of hello --t (18 success dots); ABI34 apps must be installed
+with updater/apps/sync before normal firmware. Capture normal boot and cold
+restart logs; expect Group signals OK and [TEST ALL PASS]. Hardware pending.
+The scheduling draft's expiry flag no longer bypasses the context-handoff gate;
+its original concurrent-application claim is corrected in plan.md.
+
+Selectors operate on the live foreground family plus its retained exit results,
+not arbitrary kernel table entries. The family remains limited to two fork
+levels, one resident image and one deepest cooperative pair. Ancestor signals
+are not delivered while a descendant keeps executing without a broker handoff.
+A fatal signal cannot resume an ignored faulting instruction: hardware-fault
+termination rules are unchanged. Public service-table layout is unchanged;
+ABI34 identifies the new kill semantics and the updated hello test.
+
+[x] Image190 updater hardware acceptance: apps/sync and the complete hello --t
+suite passed, including Group signals OK, Signals OK, every remaining test,
+MM/disk and [TEST ALL PASS] / Hello exit=0. ps has no application rows left.
+Capture: docs/hardware/proc-gsig-v190-updater-pass.log. This records one updater
+boot, not normal-image/cold-restart or independent LCD appearance acceptance.
+
+
+### Priority1: resource-bounded fork nesting — image191 PROC-DEPTH
+
+Removed the fixed two-level fork/handoff limit. The process table supplies the
+structural upper bound; available MM backing storage and file references determine
+whether a fork can succeed. Eight retained wait results per parent and the rule
+against another fork while a live direct child is parked remain unchanged.
+ENOMEM/EAGAIN and descriptor-clone failure leave the caller's image/state intact.
+The deepest pair may exchange at any allocated depth. Restoration, group signals,
+waits and descendant accounting follow the existing saved-state chain.
+
+MINIX2 reference: mm/forkexit.c do_fork checks process-table capacity and allocates
+an independent image. CP32 still uses fixed-address Xtensa shadow copies: only
+the restored image is runnable, and the FS broker owns the lifecycle. This removes
+a nesting limit, not the single-resident-image restriction. General independent
+scheduling, branching runnable families and INIT orphan adoption remain pending;
+plan item1 is not complete.
+
+ABI35 identifies the new nesting behavior. hello --depth exhausts resources,
+yields at the deepest level, waits/unwinds each private continuation and repeats
+to check reuse. At least three levels must succeed; the exact depth depends on
+build and available memory. It is first in hello --t (19 success dots). The old
+--tree test retains its two-level/group checks without expecting a third fork to
+fail. Update applications using updater/apps/sync, then flash normal firmware.
+Markers: FEATURE/TEST PROC-DEPTH191, ROOT/SD V191, UPDATER191. No hardware flashed;
+image191 hardware acceptance is pending.
+
+### Image194 PROC-REAP — retained child process capacity
+
+MINIX2 mm/forkexit.c keeps HANGING children in procs_in_use until cleanup.
+CP32's fixed-address Xtensa image model releases the child's image and kernel
+slot on exit, so retained PID/status records now reserve equivalent logical
+capacity across saved ancestors and a parked child. Fork returns EAGAIN before
+MM allocation or file cloning when free kernel slots are covered by retained
+results. Successful wait releases the reservation; failed status copyout keeps
+it. Parent termination discards its own retained results, restoring capacity.
+No general orphan adoption or independent application scheduling is claimed.
+Priority 1 remains incomplete.
+
+Retired hello process tests moved to tests/mm/process_hello.c and remain in
+host regressions. The shipped hello keeps --slots and basic interactive/demo
+options. hello --t runs --slots and an MM check, with two LCD dots and USB-only
+details. Its image-specific handshake rejects old SD applications. ABI36 is
+unchanged. Install via make updater / make flash-updater, apps, sync; then
+make / make flash. Run hello --t twice and again after a cold restart; expect
+Process slots OK, [TEST ALL PASS], Hello exit=0. Hardware194 is pending.
+Markers: FEATURE/TEST PROC-REAP194, SD/ROOT V194, UPDATER194.
+
+### Image195 PROC-STATE
+
+MINIX2 src/mm/mproc.h owns per-process identity and memory information. CP32
+now stores parent PID, heap floor and heap break in each proc entry, outside
+fixed-address application images. Fields are appended so existing assembly
+field offsets remain stable. Fork inherits bounds and sets parent identity;
+handoff selects the target record; successful exec commits new bounds and
+failed exec preserves them. Release zeros the fields. The saved fork metadata
+no longer duplicates these values. Heap/stack reservations are unchanged.
+
+This completes persistent ownership of these three fields, not the full MM
+process manager or concurrent/preemptive application scheduling. FS still
+brokers the foreground family. hello --state exercises two creation/swap/exec/
+wait cycles; hello --t runs it plus MM with two LCD dots. Detailed logs stay on
+USB. Install the new hello via updater/apps/sync; suite handshake195 rejects
+stale applications. Service ABI36 is unchanged. Hardware195 remains pending.
+FEATURE/TEST PROC-STATE195, SD/ROOT V195, UPDATER195 identify this image.
+
+Image194 updater hardware passed: Process slots OK, [TEST ALL PASS], exit0.
+Capture: docs/hardware/proc-reap-v194-updater-pass.log. No normal/cold-boot or
+LCD result is inferred from that single USB capture.
+
+### Image196 PROC-SIGOWN
+
+MINIX2 mproc.h/forkexit.c keeps group and signal state per process, with pending
+signals cleared in the new child. CP32 now uses appended process fields for
+these values instead of copying them with the shadow image. Existing assembly
+field offsets stay unchanged. Saved family metadata identifies its owner.
+Fork inherits masks/dispositions/group; handoff uses the owner's record; exec
+preserves that record; release zeros it and waits retain the exited group.
+Full asynchronous handlers and independent scheduling are not implemented.
+
+The focused hello --owner test replaces --state on device; previous tests stay
+in host-only fixtures. hello --t produces two dots and USB Signal ownership OK.
+Suite handshake196 requires updated hello; application service ABI36 remains.
+Update via updater/apps/sync and test normal/cold boots. Hardware196 pending.
+FEATURE/TEST PROC-SIGOWN196, SD/ROOT V196, UPDATER196 identify the build.
+
+Image195 updater hardware passed apps, sync, Process state OK, ALL PASS and
+exit0: docs/hardware/proc-state-v195-updater-pass.log. No normal/cold/LCD result
+is inferred from this single USB capture.
+
+### Image197 PROC-IMAGE
+
+MINIX system.c uses p_shadow/mkshadow for saved images. CP32 now records the MM
+click base of each full saved image in its owning process rather than duplicate
+base/live_base fields in family metadata. Zero denotes residency. Ownership is
+committed only after allocation/FD cloning succeeds, transferred during locked
+swaps, and cleared on restore before freeing. A process with a saved image
+cannot be cloned, published or released through the lifecycle helpers.
+CP32 copies text/data/stack plus FS/family metadata; MINIX M68000's data-only
+shadow translation is not enabled. MM requests remain owned by the FS broker.
+
+The focused --image test replaces --owner; previous device tests remain host
+fixtures. hello --t performs nested repeated exchanges, private memory checks,
+deepest-child exec and two reuse cycles, followed by MM. Expect two dots and
+USB Image ownership OK. Handshake197 rejects stale hello; service ABI36 is
+unchanged. FEATURE/TEST PROC-IMAGE197, ROOT/SD V197 and UPDATER197 identify it.
+No hardware flashed; normal/cold/LCD acceptance for197 remains pending.
+
+Image196 updater hardware passed Signal ownership OK, ALL PASS and exit0:
+docs/hardware/proc-sigown-v196-updater-pass.log. That capture does not establish
+normal/cold-boot or LCD appearance.
+
+### Image198 PROC-ZOMBIE
+
+MINIX2 forkexit.c retains HANGING children until cleanup. CP32 now retains a
+P_ZOMBIE proc slot with PID/parent/group/status after releasing the child's
+image and files. Wait validates copyout before collecting the record. Real
+slot occupancy replaces private eight-entry wait arrays and logical capacity
+reservations. Kernel flags/context/map checks recognize zombies, scheduler
+ready insertion and IPC reject them, and ps labels them ZOM. Collection does
+not double-charge CPU accounting. Parent exit preserves the existing discard
+policy for uncollected children; INIT adoption remains unimplemented.
+
+Parent PID and encoded exit status use16-bit fields within the existing layout;
+process PID allocation/clone validation enforces the existing30000 ceiling.
+Status copyout promotes to an int before copying, preserving the application
+ABI. The focused --zombie test fills the table, checks >8 retained exits,
+EFAULT retention, selective collection, reuse and full drain. Handshake198
+requires updated hello; service ABI36 remains unchanged. Detailed output is
+USB-only; hello --t produces two dots and Zombie wait OK. Markers are
+FEATURE/TEST PROC-ZOMBIE198, ROOT/SD V198, UPDATER198. Hardware198 is pending.
+
+Image197 updater passed Image ownership OK, ALL PASS and exit0; capture in
+docs/hardware/proc-image-v197-updater-pass.log. No normal/cold/LCD acceptance
+is inferred from that single capture.

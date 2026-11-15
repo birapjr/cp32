@@ -56,7 +56,7 @@ int main(int argc,char **argv){
   tree_mode=argv[1][0]-'0';args[1]="--tree";
   if(!setjmp(done)){assert(!app_main(2,args,0,&s));assert(tree_mode==1 && writes==1);}
   else assert(exited==9 && !writes);
-  assert(calls==tree_mode);return 0;
+  assert(calls==(tree_mode==3 ? 2:tree_mode));return 0;
  }
  assert(!app_main(2,args,0,&s) && calls==10 && writes==1);
  int pending=0;for(int i=0;i<8;i++)pending+=!!ids[i];assert(pending==1);
@@ -69,7 +69,7 @@ with tempfile.TemporaryDirectory() as d:
         '-Wno-misleading-indentation','-Wno-int-to-pointer-cast',
         '-Wno-pointer-to-int-cast','-fsanitize=undefined',
         '-I'+str(root/'src/apps/hello'),str(p/'test.c'),
-        str(root/'src/apps/hello/hello.c'),str(root/'src/apps/lib/io.c'),
+        str(root/'tests/mm/process_hello.c'),str(root/'src/apps/lib/io.c'),
         str(root/'src/apps/lib/heap.c'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)
     for mode in ("1","2","3"):

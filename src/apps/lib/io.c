@@ -379,6 +379,12 @@ int cp32_waitpid(int pid,int *status,unsigned options)
   return r<0 ? io_error(-r):r;
 }
 
+/* MINIX WAIT selects any child and blocks until a status is available. */
+int cp32_wait(int *status)
+{
+  return cp32_waitpid(-1, status, 0);
+}
+
 static int group_call(unsigned op)
 {
   int r;if(!api || api->version<27 || !api->file)return io_error(CP32_ENOSYS);
@@ -404,6 +410,51 @@ int cp32_kill(int pid,int signal)
 {
   if(!api || api->version<30 || !api->file)return io_error(CP32_ENOSYS);
   return file_call(CP32_APP_KILL,pid,0,(unsigned)signal);
+}
+
+int cp32_sigemptyset(cp32_sigset_t *set)
+{
+  if (!set) return io_error(CP32_EFAULT);
+  *set = 0;
+  return 0;
+}
+
+int cp32_sigfillset(cp32_sigset_t *set)
+{
+  if (!set) return io_error(CP32_EFAULT);
+  *set = CP32_SIGNAL_MASK;
+  return 0;
+}
+
+/* Check the number before shifting, including for a negative caller argument. */
+static int signal_bit(const cp32_sigset_t *set, int signo)
+{
+  if (!set) return io_error(CP32_EFAULT);
+  if (signo < CP32_SIGHUP || signo > CP32_SIGTERM) return io_error(CP32_EINVAL);
+  return (int)CP32_SIGSET(signo);
+}
+
+int cp32_sigaddset(cp32_sigset_t *set, int signo)
+{
+  int bit = signal_bit(set, signo);
+  if (bit < 0) return -1;
+  *set |= (unsigned)bit;
+  return 0;
+}
+
+int cp32_sigdelset(cp32_sigset_t *set, int signo)
+{
+  int bit = signal_bit(set, signo);
+  if (bit < 0) return -1;
+  *set &= ~(unsigned)bit;
+  return 0;
+}
+
+int cp32_sigismember(const cp32_sigset_t *set, int signo)
+{
+  int bit = signal_bit(set, signo);
+  if (bit < 0) return -1;
+  return (*set & (unsigned)bit) != 0;
 }
 
 int cp32_sigprocmask(int how,const unsigned *set,unsigned *old)

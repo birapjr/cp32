@@ -36,7 +36,7 @@ PRELUDE = r'''
 #define NIL_PROC ((struct proc *)0)
 enum { OK=0, EINVAL=-1, EFAULT=-2, ELOCKED=-3, E_BAD_DEST=-4,
        E_BAD_SRC=-5, EBADCALL=-6, SEND=1, RECEIVE=2, BOTH=3,
-       P_SLOT_FREE=1, SENDING=4, RECEIVING=8, P_STOP=64, NR_TASKS=9, NR_PROCS=4,
+       P_ZOMBIE=128, P_SLOT_FREE=1, SENDING=4, RECEIVING=8, P_STOP=64, NR_TASKS=9, NR_PROCS=4,
        TTY_PROC_NR=-9, IDLE=-7, MEM=-4, CLOCK=-3, SYSTASK=-2, HARDWARE=-1, HARD_INT=2, FS_PROC_NR=1, MM_PROC_NR=0, LOW_USER=2,
        ANY=104, NQ=3, TASK_Q=0, SERVER_Q=1, USER_Q=2 };
 typedef uintptr_t reg_t;
@@ -276,6 +276,15 @@ int main(void) {
   valid.sp++;valid.a[1]++;assert(!cp32_user_frame_contract_valid(&valid));
   valid.sp--;valid.a[1]--;valid.pc=0;assert(!cp32_user_frame_contract_valid(&valid));
   assert(!cp32_user_frame_contract_valid(0));
+
+  reset();
+  struct proc *z=proc_addr(3);z->p_flags=P_ZOMBIE;
+  message probe={0};
+  assert(mini_send(proc_addr(FS_PROC_NR),3,&probe)==E_BAD_DEST);
+  assert(mini_rec(proc_addr(FS_PROC_NR),3,&probe)==E_BAD_SRC);
+  assert(mini_send(z,FS_PROC_NR,&probe)==EINVAL);
+  assert(mini_rec(z,ANY,&probe)==EINVAL);
+  ready(z);assert(!proc_is_ready_queued(z) && cp32_ipc_state_check());
 
   for (int i=0;i<100;i++) { exchange(i&1,TTY_PROC_NR); exchange(i&1,MM_PROC_NR); exchange(i&1,SYSTASK); exchange(i&1,MEM); hardware_receive(i&1); }
   hardware_filtered_receive();

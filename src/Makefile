@@ -139,8 +139,10 @@ $(BUILD_DIR)/memory.o: CFLAGS += -Os
 $(BUILD_DIR)/clock.o: CFLAGS += -Os
 $(BUILD_DIR)/system.o: CFLAGS += -Os
 $(BUILD_DIR)/drivers/sd_spi.o: CFLAGS += -Os
-$(BUILD_DIR)/fork.o: CFLAGS += -Os
-$(BUILD_DIR)/process.o: CFLAGS += -Os -mno-target-align
+# Lifecycle helpers call only linked internal-IRAM code, within call0 range.
+# Direct calls avoid literal trampolines; the linker checks displacement bounds.
+$(BUILD_DIR)/fork.o: CFLAGS += -Os -mno-target-align -mno-longcalls
+$(BUILD_DIR)/process.o: CFLAGS += -Os -mno-target-align -mno-longcalls
 $(BUILD_DIR)/application.o: CFLAGS += -Os -mno-target-align
 $(BUILD_DIR)/context.o: CFLAGS += -Os
 $(BUILD_DIR)/misc.o: CFLAGS += -Os

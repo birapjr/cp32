@@ -74,7 +74,7 @@ int main(int argc,char **argv){
 '''
 with tempfile.TemporaryDirectory() as d:
  p=Path(d)
- for name,code,extra in [('snapshot',pre+source+checks,[]),('app',app,[str(root/'src/apps/hello/hello.c'),str(root/'src/apps/lib/io.c')])]:
+ for name,code,extra in [('snapshot',pre+source+checks,[]),('app',app,[str(root/'tests/mm/process_hello.c'),str(root/'src/apps/lib/io.c')])]:
   (p/(name+'.c')).write_text(code)
   subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/hello'),'-I'+str(root/'src/apps/lib'),str(p/(name+'.c')),*extra,'-o',str(p/name)],check=True)
   subprocess.run([str(p/name)],check=True)

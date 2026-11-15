@@ -21,6 +21,7 @@ pre=r'''
 #define FS_PROC_NR 1
 #define IDLE -6
 #define HARDWARE -7
+#define P_ZOMBIE 0200
 #define P_SLOT_FREE 1
 #define NO_MAP 2
 #define SENDING 4

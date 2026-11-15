@@ -230,7 +230,7 @@ PUBLIC int cp32_user_trap_dispatch(struct proc *owner,
   }
   if (src_dest != ANY &&
       (proc_addr(src_dest) == NIL_PROC ||
-       (proc_addr(src_dest)->p_flags & P_SLOT_FREE))) {
+       (proc_addr(src_dest)->p_flags & (P_SLOT_FREE | P_ZOMBIE)))) {
     if (cp32_user_probe_mode && !cp32_user_free_destination_marker_reported) {
       cp32_user_free_destination_marker_reported = 1;
       usbj_print("[CTX V91 user-free-destination-reject]\r\n");
@@ -701,7 +701,7 @@ CP32_IRAM_EXT PUBLIC int cp32_ready_queue_check(void)
     int hops = 0;
     while (rp != NIL_PROC && hops++ <= NR_TASKS + NR_PROCS) {
       if (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
-          (rp->p_flags & (P_SLOT_FREE | SENDING | RECEIVING))) return FALSE;
+          (rp->p_flags & (P_SLOT_FREE | SENDING | RECEIVING | P_ZOMBIE))) return FALSE;
       if (rp->p_nr < -NR_TASKS || rp->p_nr >= NR_PROCS ||
           pproc_addr[rp->p_nr + NR_TASKS] != rp) return FALSE;
       last = rp;
@@ -818,7 +818,7 @@ CP32_IRAM_EXT PUBLIC int cp32_ipc_state_check(void)
   int i;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
     struct proc *rp = pproc_addr[i];
-    if (rp->p_flags & P_SLOT_FREE) {
+    if (rp->p_flags & (P_SLOT_FREE | P_ZOMBIE)) {
       if (rp->p_callerq != NIL_PROC || rp->p_sendlink != NIL_PROC)
         return FALSE;
       if (rp->p_messbuf != (message *)0) return FALSE;
@@ -883,7 +883,7 @@ CP32_IRAM_EXT PUBLIC int cp32_saved_context_check(void)
   int i;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
     struct proc *rp = pproc_addr[i];
-    if (!(rp->p_flags & (P_SLOT_FREE | NO_MAP)) &&
+    if (!(rp->p_flags & (P_SLOT_FREE | NO_MAP | P_ZOMBIE)) &&
         (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
          (rp->p_reg.pc & 0x03) != 0 || (rp->p_reg.sp & 0x0F) != 0 ||
          rp->p_reg.a[1] != rp->p_reg.sp ||
@@ -903,7 +903,8 @@ CP32_IRAM_EXT PUBLIC int cp32_process_flags_check(void)
 {
   int i;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
-    if ((pproc_addr[i]->p_flags & ~0177) != 0 ||
+    if ((pproc_addr[i]->p_flags & ~0377) != 0 ||
+        ((pproc_addr[i]->p_flags & P_ZOMBIE) && pproc_addr[i]->p_flags!=P_ZOMBIE) ||
         ((pproc_addr[i]->p_flags & P_SLOT_FREE) &&
          (pproc_addr[i]->p_flags & (SENDING | RECEIVING)))) return FALSE;
   }
@@ -915,7 +916,7 @@ CP32_IRAM_EXT PUBLIC int cp32_map_state_check(void)
   int i, s;
   for (i = 0; i < NR_TASKS + NR_PROCS; i++) {
     struct proc *rp = pproc_addr[i];
-    if (rp->p_flags & (P_SLOT_FREE | NO_MAP)) continue;
+    if (rp->p_flags & (P_SLOT_FREE | NO_MAP | P_ZOMBIE)) continue;
     for (s = T; s <= S; s++) {
       /* Idle and the diagnostic user descriptor intentionally have no text
        * map; all active descriptors must still have a valid stack map. */
@@ -940,7 +941,7 @@ CP32_IRAM_EXT PUBLIC int cp32_runtime_owner_check(void)
     if (rp == NIL_PROC || rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR ||
         rp->p_nr < -NR_TASKS || rp->p_nr >= NR_PROCS ||
         pproc_addr[rp->p_nr + NR_TASKS] != rp ||
-        (rp->p_flags & P_SLOT_FREE) != 0)
+        (rp->p_flags & (P_SLOT_FREE|P_ZOMBIE)) != 0)
       return FALSE;
     if (rp == proc_ptr && current_proc != rp && !switching) return FALSE;
   }
@@ -1008,7 +1009,7 @@ CP32_IRAM_EXT PUBLIC void interrupt(int task)
   int saved_ps;
   if (!isokprocn(task) || task >= 0 || isidlehardware(task)) return;
   rp = proc_addr(task);
-  if (rp->p_flags & P_SLOT_FREE) return;
+  if (rp->p_flags & (P_SLOT_FREE|P_ZOMBIE)) return;
   /* CP32 uses 0 at task level and 1 in the outer IRQ (MINIX uses -1/0). */
   if (switching || k_reenter > 1) {
     saved_ps = lock_save();
@@ -1198,6 +1199,7 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
   int result;
 
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
+  if (caller_ptr->p_flags&P_ZOMBIE) return EINVAL;
   if (!isokprocn(dest)) return E_BAD_DEST;
   if (dest == caller_ptr->p_nr) return ELOCKED;
   /* A blocked sender owns exactly one caller-queue link until its saved
@@ -1205,7 +1207,7 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
    * overwriting that link and losing the wakeup path. */
   if (caller_ptr->p_flags & SENDING) return ELOCKED;
   dest_ptr = proc_addr(dest);
-  if (dest_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+  if (dest_ptr->p_flags & (P_SLOT_FREE | P_ZOMBIE)) return E_BAD_DEST;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
 
   /* Check identity before SENDING: the caller closing a cycle is still
@@ -1217,7 +1219,7 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
     if (hops >= NR_TASKS + NR_PROCS) return ELOCKED;
     if (!isokprocn(next_ptr->p_sendto)) return E_BAD_DEST;
     next_ptr = proc_addr(next_ptr->p_sendto);
-    if (next_ptr == NIL_PROC || (next_ptr->p_flags & P_SLOT_FREE))
+    if (next_ptr == NIL_PROC || (next_ptr->p_flags & (P_SLOT_FREE | P_ZOMBIE)))
       return E_BAD_DEST;
   }
 
@@ -1241,7 +1243,7 @@ CP32_IRAM_EXT PUBLIC int mini_send(struct proc *caller_ptr, int dest, message *m
             next_ptr->p_sendto != dest ||
             next_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
         next_ptr = next_ptr->p_sendlink;
-        if (next_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+        if (next_ptr->p_flags & (P_SLOT_FREE | P_ZOMBIE)) return E_BAD_DEST;
       }
       if (!(next_ptr->p_flags & SENDING) || next_ptr->p_sendto != dest ||
           next_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
@@ -1278,6 +1280,8 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
 
   if (caller_ptr == NIL_PROC || m_ptr == (message *)0) return EINVAL;
   if (!isoksrc_dest(src)) return E_BAD_SRC;
+  if (src!=ANY && (proc_addr(src)->p_flags&P_ZOMBIE)) return E_BAD_SRC;
+  if (caller_ptr->p_flags&P_ZOMBIE) return EINVAL;
   if (!numap(caller_ptr->p_nr, (vir_bytes)m_ptr, MESS_SIZE)) return EFAULT;
   /* A blocked receiver owns its receive buffer and source selector until a
    * matching sender or hardware notification completes the call.  Do not
@@ -1294,7 +1298,7 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
          previous_ptr = sender_ptr, sender_ptr = sender_ptr->p_sendlink) {
       if (hops++ >= NR_TASKS + NR_PROCS) return ELOCKED;
-      if (sender_ptr->p_flags & P_SLOT_FREE) return E_BAD_DEST;
+      if (sender_ptr->p_flags & (P_SLOT_FREE | P_ZOMBIE)) return E_BAD_DEST;
       if (!(sender_ptr->p_flags & SENDING) ||
           sender_ptr->p_sendto != caller_ptr->p_nr ||
           sender_ptr->p_messbuf == (message *)0) return E_BAD_DEST;
@@ -1426,7 +1430,7 @@ CP32_IRAM_EXT PRIVATE void ready(struct proc *rp)
 {
   int q;
 
-  if (rp == NIL_PROC) return;
+  if (rp == NIL_PROC || (rp->p_flags&P_ZOMBIE)) return;
   if (blocked_handoff_eligible(rp)) {
     cp32_blocked_ready_guard_count++;
     return;
