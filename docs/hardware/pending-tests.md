@@ -1,30 +1,27 @@
-# Pending hardware acceptance — image188 TEST-DOTS
+# Pending hardware acceptance — image198 PROC-ZOMBIE
 
 ## Current quick procedure (supersedes the older per-image lists below)
 
-On the computer, from src/: make updater, then make flash-updater. On hardware,
-run apps and sync. Install normal firmware with make and make flash. Confirm
-[TEST TEST-DOTS 188], then type:
+From `src/`, run `make updater` and `make flash-updater`. On the Cardputer run
+`apps`, then `sync`. Run `hello --t` on the updater, then install normal firmware
+with `make && make flash`. Confirm `[TEST PROC-ZOMBIE 198]` over USB.
 
-```text
-hello --t
-```
+Run `hello --t` twice, then once after a full power-off/restart. Expect:
 
-Detailed progress, application output, ps and MM/disk checks go only to USB.
-The display starts a new line and adds one dot per successful check (17 for
-the current complete suite). The final [TEST ALL PASS] or [TEST FAIL] starts
-on the next line, followed by the normal prompt. No detailed logs should appear
-on the display. Expect Signals OK in the USB log and the
-usual final Hello exit=0 there. --signals is included automatically. Ensure the
-normal shell output works after the suite; repeated runs must not leave routing
-suppressed. Save USB logs from a normal boot and a full cold restart.
+- LCD: a new row with `..`, followed by `[TEST ALL PASS]` on the next line.
+- USB: `[TEST --zombie]`, `Zombie wait OK`, the MM check, `[TEST ALL PASS]`,
+  and `Hello exit=0`.
+- Normal prompt, keyboard and blinking cursor remain responsive.
 
-For interactive TTY acceptance, separately run hello --line; type abc, erase c,
-type d, then Enter. Expect abd and exit0; also check cursor blink and normal echo.
-Repeat hello --t after a full cold restart and save both complete logs. The suite
-list can change each image; no need to type the older individual command lists.
-No SD reformat is needed. Image185 updater passed its supplied tests:
-[log](proc-ignore-v185-updater-pass.log). Image186 aggregate acceptance passed: [log](app-test-v186-updater-pass.log). Image187 signals/output-routing acceptance is pending.
+The test retains more than eight exited children, fills the process table,
+checks EAGAIN and invalid-pointer recovery, selectively collects/reuses a slot,
+drains remaining results and creates another child. No SD reformat is needed;
+update hello even though service ABI36 is unchanged. Save updater, normal and
+cold-boot logs and verify the two dots directly.
+
+Image197 updater acceptance passed: [USB log](proc-image-v197-updater-pass.log).
+Image198 updater acceptance also passed: [USB log](proc-zombie-v198-updater-pass.log).
+Normal-firmware/cold-boot and LCD checks remain unconfirmed.
 
 ## Earlier acceptance records and detailed regression commands
 
@@ -79,7 +76,7 @@ root initialization and all `[CORE ...=1]` checks. The root should still report
 
 Cold boot twice with the existing SD card. Each boot must reach `[ROOT V180
 backend=sd result=0 capacity=104857600]`, `[LCD clear-done]`, all CORE checks,
-and `[TEST TEST-DOTS 188]` before `[TTY user-entry]`. Run `ls` and `disk`;
+and `[TEST APP-FAULT 180]` before `[TTY user-entry]`. Run `ls` and `disk`;
 the prompt, cursor and keyboard must remain responsive. Save both complete
 serial logs. No SD reformat is needed. Install image180 hello even if ABI28 applications are already installed.
 Image175 hello fails before reaching the kernel; flashing firmware alone is insufficient.

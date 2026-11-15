@@ -27,7 +27,7 @@ CP32_IRAM_EXT static int process_detached(struct proc *p)
 CP32_IRAM_EXT static int process_pid_free(int pid)
 {
   int n;
-  if(pid<=0)return 0;
+  if(pid<=0 || pid>30000)return 0;
   for(n=0;n<NR_PROCS;n++)
     if(!(proc_addr(n)->p_flags&P_SLOT_FREE) && proc_addr(n)->p_pid==pid)return 0;
   return 1;
@@ -56,11 +56,14 @@ CP32_IRAM_EXT int cp32_proc_clone(int parent,int child,int pid,int broker)
   if(parent<=LOW_USER || parent>=NR_PROCS || child<=LOW_USER ||
      child>=NR_PROCS || parent==child || pid<=0)return EINVAL;
   p=proc_addr(parent);c=proc_addr(child);
-  if(p->p_pid<=0 || p->p_flags!=RECEIVING || p->p_getfrom!=broker ||
+  if(p->p_shadow || p->p_pid<=0 || p->p_pid>30000 || p->p_flags!=RECEIVING || p->p_getfrom!=broker ||
      !p->p_messbuf || !p->p_reg.pc || !p->p_reg.sp ||
      c->p_flags!=P_SLOT_FREE || !process_detached(c))return EINVAL;
   if(!process_pid_free(pid))return EINVAL;
   *c=*p;c->p_nr=child;c->p_pid=pid;c->p_flags=NO_MAP|RECEIVING;
+  c->p_exitstatus=0;
+  c->p_app_pending=0; /* MINIX fork inherits masks/dispositions, not pending signals. */
+  c->p_parent_pid=p->p_pid; /* Heap bounds inherit with the copied record. */
   c->p_reg.a[2]=0;c->p_alarm=0;c->p_pending=0;c->p_pendcount=0;
   c->p_nextready=c->p_nextheld=c->p_callerq=c->p_sendlink=NIL_PROC;
   c->p_int_held=c->p_int_blocked=0;
@@ -74,7 +77,7 @@ CP32_IRAM_EXT int cp32_proc_publish(struct proc *p)
 {
   unsigned base,bytes,sp;int segment;
   if(!p || p->p_nr<=LOW_USER || p->p_nr>=NR_PROCS || proc_addr(p->p_nr)!=p ||
-     p->p_flags!=NO_MAP || p->p_pid<=0 || !process_detached(p))return EINVAL;
+     p->p_shadow || p->p_flags!=NO_MAP || p->p_pid<=0 || !process_detached(p))return EINVAL;
   sp=p->p_reg.sp;
   /* Flat internal SRAM: D and S must describe identity-mapped storage. */
   for(segment=D;segment<=S;segment++) {
@@ -94,8 +97,8 @@ CP32_IRAM_EXT int cp32_proc_release(struct proc *p)
 {
   int nr;
   if(!p || p->p_nr<=LOW_USER || p->p_nr>=NR_PROCS || proc_addr(p->p_nr)!=p ||
-     !process_detached(p))return EINVAL;
-  if(p->p_flags!=NO_MAP &&
+     p->p_shadow || !process_detached(p))return EINVAL;
+  if(p->p_flags!=NO_MAP && p->p_flags!=P_ZOMBIE &&
      !(p->p_flags==RECEIVING && p->p_getfrom==FS_PROC_NR))return EINVAL;
   nr=p->p_nr;
   /* This foreground broker is the parent. Cancellation of NO_MAP is not

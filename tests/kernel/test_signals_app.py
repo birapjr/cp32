@@ -3,6 +3,7 @@ import subprocess,tempfile
 root=Path(__file__).resolve().parents[2]
 code=r'''
 #include <assert.h>
+#include <limits.h>
 #include <string.h>
 #include <setjmp.h>
 #include "io.h"
@@ -11,7 +12,7 @@ static int mode,child,writes;static unsigned mask,pending,ignored;static jmp_buf
 static int pid(void){return child ? 101:100;}
 static void quit(int n){(void)n;assert(0);}
 static int input(char *p,unsigned n){(void)p;(void)n;return 0;}
-static int output(const char *p,unsigned n){assert(n==11 && !memcmp(p,"Signals OK\n",11));writes++;return n;}
+static int output(const char *p,unsigned n){assert(n==15 && !memcmp(p,"Signal sets OK\n",15));writes++;return n;}
 static int file(unsigned op,int fd,void *p,unsigned n){
  switch(op){
  case CP32_APP_SIGMASK:{unsigned old=mask;if(fd==0)mask|=n;else if(fd==1)mask&=~n;else mask=n;if(pending&~mask)longjmp(done,10);return old;}
@@ -25,6 +26,29 @@ static int file(unsigned op,int fd,void *p,unsigned n){
  }
 }
 int main(int argc,char **argv){
+ cp32_sigset_t set;
+ assert(cp32_sigemptyset(&set)==0 && set==0);
+ for(int sig=1;sig<=15;sig++){
+  assert(cp32_sigaddset(&set,sig)==0 && cp32_sigismember(&set,sig)==1);
+  assert(cp32_sigaddset(&set,sig)==0);
+ }
+ assert(set==CP32_SIGNAL_MASK);
+ int invalid[]={INT_MIN,-1,0,16,INT_MAX};
+ for(unsigned i=0;i<sizeof(invalid)/sizeof(invalid[0]);i++){
+  assert(cp32_sigdelset(&set,invalid[i])==-1 && cp32_errno==CP32_EINVAL);
+  assert(cp32_sigaddset(&set,invalid[i])==-1 && cp32_errno==CP32_EINVAL);
+  assert(cp32_sigismember(&set,invalid[i])==-1 && cp32_errno==CP32_EINVAL);
+  assert(set==CP32_SIGNAL_MASK);
+ }
+ for(int sig=15;sig>=1;sig--){
+  assert(cp32_sigdelset(&set,sig)==0 && cp32_sigismember(&set,sig)==0);
+ }
+ assert(set==0 && cp32_sigfillset(&set)==0 && set==CP32_SIGNAL_MASK);
+ assert(cp32_sigemptyset(0)==-1 && cp32_errno==CP32_EFAULT);
+ assert(cp32_sigfillset(0)==-1 && cp32_errno==CP32_EFAULT);
+ assert(cp32_sigaddset(0,1)==-1 && cp32_errno==CP32_EFAULT);
+ assert(cp32_sigdelset(0,1)==-1 && cp32_errno==CP32_EFAULT);
+ assert(cp32_sigismember(0,1)==-1 && cp32_errno==CP32_EFAULT);
  mode=argc>1 ? argv[1][0]-'0':0;
  struct cp32_app_services s={.version=mode==2 ? 32:33,.read=input,.write=output,.exit=quit,.file=file,.getpid=pid};
  char *args[]={"hello","--signals",0};int signal=setjmp(done);
@@ -34,6 +58,6 @@ int main(int argc,char **argv){
 '''
 with tempfile.TemporaryDirectory() as d:
  p=Path(d);(p/'test.c').write_text(code)
- subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'src/apps/hello/hello.c'),str(root/'src/apps/lib/io.c'),'-o',str(p/'test')],check=True)
+ subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'tests/mm/process_hello.c'),str(root/'src/apps/lib/io.c'),'-o',str(p/'test')],check=True)
  for n in range(3):subprocess.run([str(p/'test'),str(n)],check=True)
 print('signals app: independent masks, pending-bit removal, wait status and ABI gate PASS')

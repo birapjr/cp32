@@ -40,6 +40,6 @@ int main(int argc,char **argv){
 '''
 with tempfile.TemporaryDirectory() as d:
  p=Path(d);(p/'test.c').write_text(code)
- subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'src/apps/hello/hello.c'),str(root/'src/apps/lib/io.c'),'-o',str(p/'test')],check=True)
+ subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'tests/mm/process_hello.c'),str(root/'src/apps/lib/io.c'),'-o',str(p/'test')],check=True)
  for n in range(3):subprocess.run([str(p/'test'),str(n)],check=True)
 print('mask app: parent/child, pending termination, fork mask and ABI gate PASS')

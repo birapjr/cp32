@@ -108,3 +108,7 @@ with tempfile.TemporaryDirectory(prefix='cp32-clock-task-') as folder:
     p=Path(folder); (p/'test.c').write_text(PRELUDE+prototypes+'\n'+'\n'.join(bodies)+TESTS)
     subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror',str(p/'test.c'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)
+
+# A pending scheduling quantum cannot authorize an unsafe context handoff.
+clock_source=(Path(__file__).resolve().parents[1]/"src/kernel/clock.c").read_text()
+assert "cp32_quantum_expired || cp32_context_handoff_gate" not in clock_source

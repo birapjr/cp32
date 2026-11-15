@@ -48,7 +48,7 @@ struct proc {
   struct stackframe_s p_reg;	/* process' registers saved in stack frame */
 
   reg_t *p_stguard;		/* stack guard word */
-  reg_t p_shadow;		/* shadow pointer for MM */
+  reg_t p_shadow;		/* CP32: MM backing base in clicks; zero for resident image */
 
   int p_nr;			/* number of this process (for fast access) */
 
@@ -83,6 +83,13 @@ struct proc {
   reg_t p_blocked_frame_sp;
 
   char p_name[16];		/* name of the process */
+  /* MINIX mproc-style identity/heap state outside the swapped image.
+   * Appended to preserve existing assembly-visible field offsets. */
+  /* Application PIDs <=30000; encoded wait status uses at most16 bits. */
+  unsigned short p_parent_pid, p_exitstatus;
+  reg_t p_heap_floor, p_heap_break;
+  /* Application PIDs <=30000, signals 1..15: bounded 16-bit storage. */
+  unsigned short p_app_group, p_app_sigmask, p_app_pending, p_app_ignore;
 };
 
 /* Guard word for task stacks. */
@@ -95,6 +102,7 @@ struct proc {
 #define RECEIVING        010	/* set when process blocked trying to recv */
 #define PENDING          020	/* set when inform() of signal pending */
 #define SIG_PENDING      040	/* keeps to-be-signalled proc from running */
+#define P_ZOMBIE        0200 /* exited, retained until parent collects */
 #define P_STOP		0100	/* set when process is being traced */
 
 /* Magic process table addresses. */

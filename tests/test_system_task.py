@@ -32,6 +32,7 @@ PRELUDE=r'''
 #define E_BAD_PROC -1
 #define E_BAD_FCN -2
 #define EIO -3
+#define P_ZOMBIE 0200
 #define P_SLOT_FREE 1
 #define isoksusern(n) ((n)>=0 && (n)<4)
 typedef struct { int m_source,m_type,PROC1; char *STACK_PTR;

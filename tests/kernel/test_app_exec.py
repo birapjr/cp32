@@ -37,6 +37,8 @@ pre=r'''
 typedef uintptr_t reg_t;
 typedef struct {unsigned NEW_TIME;int m_type,m_source,m1_i1,m1_i3;char *m1_p1;} message;
 struct proc {
+ unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
+ unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
  struct {reg_t a[16],pc,psw,sp,sar,lbeg,lend,lcount;} p_reg;
  int p_pid,p_flags,p_getfrom,p_sendto;
  struct proc *p_callerq,*p_sendlink;
@@ -89,7 +91,8 @@ static int disk_write(unsigned off,const char *data,int n) {
  assert(n>0 && off+(unsigned)n<=sizeof(disk));memcpy(disk+off,data,n);return n;
 }
 static struct proc child;
-static uint32_t floor_value,break_value;
+#define floor_value child.p_heap_floor
+#define break_value child.p_heap_break
 static int services,syncs,publishes,allocated,alloc_fail,allocs,releases;
 static void panic(const char *s,int n) {(void)n;fprintf(stderr,"panic %s\n",s);assert(0);}
 static int lock_save(void) {return 7;}
@@ -113,7 +116,7 @@ static int _sendrec(int nr,message *m) {
 '''
 test=r'''
 static void setup(void) {
- memset(&child,0,sizeof(child));child.p_pid=123;child.p_flags=RECEIVING;child.p_getfrom=FS_PROC_NR;
+ memset(&child,0,sizeof(child));child.p_pid=123;child.p_parent_pid=77;child.p_app_group=123;child.p_app_sigmask=4;child.p_app_pending=4;child.p_app_ignore=8;child.p_flags=RECEIVING;child.p_getfrom=FS_PROC_NR;
  child.p_blocked_frame_valid=1;child.p_blocked_frame_pc=99;child.p_messbuf=(message *)1234;
  memset(live_text,0xa5,sizeof(live_text));memset(live_data,0x5a,sizeof(live_data));
  floor_value=CP32_APP_DATA+64;break_value=floor_value+128;syncs=publishes=read_count=0;
@@ -129,7 +132,8 @@ static int attempt(struct cp32_app_exec_request *q,int expected) {
   assert(!memcmp(&child,&old,sizeof(child)) && !memcmp(live_text,old_text,sizeof(live_text)) && !memcmp(live_data,old_data,sizeof(live_data)));
   assert(f==floor_value && b==break_value && !syncs && !publishes);
  } else {
-  assert(syncs==1 && publishes==1 && floor_value==break_value);
+  assert(syncs==1 && publishes==1 && floor_value==break_value && child.p_parent_pid==77);
+  assert(child.p_app_group==123 && child.p_app_sigmask==4 && child.p_app_pending==4 && child.p_app_ignore==8);
   assert(live_text[0]==0x11 && live_data[0]==0x22);
   for(unsigned i=4;i<12288;i++)assert(!live_data[i]);
   uint32_t *sp=(uint32_t *)(live_data+(child.p_reg.sp-CP32_APP_DATA));

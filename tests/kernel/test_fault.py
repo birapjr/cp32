@@ -138,8 +138,8 @@ int main(int argc,char **argv){
  else {assert(triggered && mode);if(mode==5)assert(!forks && !opens);else assert(forks==mode && waits==mode-1 && opens==2 && !closed);}
 }
 '''
-hello=(root/'src/apps/hello/hello.c').read_text()
-trigger=extract_function(root/'src/apps/hello/hello.c','trigger_fault')
+hello=(root/'tests/mm/process_hello.c').read_text().replace('../../src/apps/',str(root/'src/apps')+'/')
+trigger=extract_function(root/'tests/mm/process_hello.c','trigger_fault')
 hello=hello.replace(trigger,'''extern void simulated_fault(int);
 static __attribute__((noreturn)) void trigger_fault(int kind){simulated_fault(kind);__builtin_unreachable();}''')
 hello=hello.replace('#include "../lib/io.h"','#include "io.h"')

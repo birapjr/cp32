@@ -17,6 +17,7 @@ pre=r'''
 #define EINVAL -22
 #define EACCES -13
 #define E_BAD_PROC -4
+#define P_ZOMBIE 0200
 #define P_SLOT_FREE 1
 #define SENDING 2
 #define RECEIVING 4
@@ -42,6 +43,8 @@ typedef struct {int PROC1,PROC2,m_source,PID;void *STACK_PTR,*IP_PTR,*NAME_PTR;}
 '''
 post=r'''
 struct proc {
+ unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
+ unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
  struct stackframe_s p_reg;
  int p_nr,p_pid,p_flags,p_alarm,p_pending,p_pendcount,p_getfrom;
  int p_blocked_frame_valid,p_blocked_frame_result;

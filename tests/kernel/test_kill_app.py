@@ -24,7 +24,7 @@ static int file(unsigned op,int fd,void *p,unsigned n){
  case CP32_APP_YIELD:assert(mode==1 && child);longjmp(done,9);
  case CP32_APP_KILL:
   assert(!p);
-  if(fd==0)return -22;
+  if(fd==(-2147483647-1))return -22;
   if(fd==pid()) {if(!n)return 0;assert(mode==2 && child && n==15);longjmp(done,15);}
   assert(fd==200+forks);if(!exists)return -3;
   if(!n)return 0;assert(!dead && (n==9 || n==15));dead=1;sig=n;return 0;
@@ -45,6 +45,6 @@ int main(int argc,char **argv){
 '''
 with tempfile.TemporaryDirectory() as d:
  p=Path(d);(p/'test.c').write_text(code)
- subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'src/apps/hello/hello.c'),str(root/'src/apps/lib/io.c'),'-o',str(p/'test')],check=True)
+ subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=undefined','-I'+str(root/'src/apps/lib'),str(p/'test.c'),str(root/'tests/mm/process_hello.c'),str(root/'src/apps/lib/io.c'),'-o',str(p/'test')],check=True)
  for n in range(4):subprocess.run([str(p/'test'),str(n)],check=True)
 print('kill app: real runtime, parent delivery/wait, child suspension, self termination and ABI gate PASS')

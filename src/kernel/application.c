@@ -196,7 +196,7 @@ CP32_IRAM_EXT static unsigned application_fault_take(int pid)
   return signal;
 }
 
-static const struct cp32_app_services services={33,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
+static const struct cp32_app_services services={36,application_write,application_exit,application_getpid,application_getppid,application_sbrk,application_read,application_file};
 
 /* Transactional foreground exec. Stage all bytes in MM-owned temporary memory
  * while the child is blocked in SENDREC; publish only after every read succeeds.
@@ -282,21 +282,22 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
   static const char *const environment[]={"HOME=/", "PATH=/boot", "USER=root"};
   struct cp32_image image;
   struct proc *child;
-  uint32_t sp,heap_floor,heap_break;
+  uint32_t sp;
   message m,resume;
-  int result,saved,pid,parent_pid;
+  int result,saved,pid;
   if(!argc || !argv || !output || !status || current_proc!=proc_addr(FS_PROC_NR) || app_busy) return -1;
-  parent_pid=current_proc->p_pid;
-  if(parent_pid<=0) return -1;
+  if(current_proc->p_pid<=0) return -1;
   saved=lock_save();pid=application_pid();
   child=pid<0 ? NIL_PROC:cp32_proc_reserve(pid);
   if(!child){restore_lock(saved);return -1;}
+  child->p_parent_pid=current_proc->p_pid;
+  cp32_fork_bind(child);
   app_endpoint=child->p_nr;app_busy=1;app_fault.signal=0;restore_lock(saved);
   result=cp32_image_load(read,context,size,(unsigned char *)APP_TEXT_DATA,
                         (unsigned char *)CP32_APP_DATA,&image);
   if(result)goto failed;
-  heap_floor=(CP32_APP_DATA+image.data.memsz+15U)&~15U;
-  heap_break=heap_floor;
+  child->p_heap_floor=(CP32_APP_DATA+image.data.memsz+15U)&~15U;
+  child->p_heap_break=child->p_heap_floor;
   memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);
   /* Limit arguments to the top 512 bytes, leaving >3K for C/IPC/IRQ frames. */
   result=cp32_exec_stack((unsigned char *)(CP32_APP_TOP-512),512,
@@ -332,15 +333,19 @@ CP32_IRAM_EXT int cp32_application_run(cp32_image_reader read,void *context,
 app_exit:
     if(m.m_type==APP_EXIT && cp32_fork_live()) {
       m.m1_i2=result; /* preserve a foreground fault while its child drains */
-      cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+      cp32_fork_handoff(&child,&m);
       app_endpoint=child->p_nr;m.m_type=0;
+      result=cp32_fork_signal_ready(0);
+      if(result){m.m_type=APP_EXIT;m.m1_i1=0;goto app_exit;}
       if(send(app_endpoint,&m)!=OK)panic("yield exit",NO_NUM);
       continue;
     }
     if(m.m_type==APP_EXIT && cp32_fork_active()) {
       cp32_fork_request(&resume);
-      m.m_type=cp32_fork_finish(&child,m.m1_i1,&parent_pid,&heap_floor,&heap_break,(unsigned)result);
+      m.m_type=cp32_fork_finish(&child,m.m1_i1,(unsigned)result);
       app_endpoint=child->p_nr;
+      result=cp32_fork_signal_ready(0);
+      if(result){m.m_type=APP_EXIT;m.m1_i1=0;goto app_exit;}
       if(resume.m_type==APP_EXIT){m=resume;result=m.m1_i2;goto app_exit;}
       if(resume.m_type) m.m_type=resume.m1_i1==CP32_APP_WAITPID ?
         cp32_fork_wait(resume.m1_i2,resume.m1_p1,(unsigned)resume.m1_i3):0;
@@ -364,7 +369,7 @@ app_exit:
       return 0;
     }
     result=m.m_type==APP_GETPID ? child->p_pid :
-           m.m_type==APP_GETPPID ? parent_pid : -1;
+           m.m_type==APP_GETPPID ? child->p_parent_pid : -1;
     if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_SIGNAL) {
       result=m.m1_p1 ? -22:cp32_fork_disposition(m.m1_i2,(unsigned)m.m1_i3);
     } else if(m.m_type==APP_FILE && (m.m1_i1==CP32_APP_SIGMASK || m.m1_i1==CP32_APP_SIGPENDING)) {
@@ -375,33 +380,35 @@ app_exit:
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_KILL) {
       result=m.m1_p1 ? -22:cp32_fork_signal_target(child,m.m1_i2,(unsigned)m.m1_i3);
       if(result==1) {
-        result=m.m1_i3;m.m_type=APP_EXIT;m.m1_i1=0;
+        result=cp32_fork_signal_ready(0);if(!result)result=m.m1_i3;
+        m.m_type=APP_EXIT;m.m1_i1=0;
         goto app_exit; /* normal exit cleanup, signal status, no caller reply */
       }
       if(result==2) {
-        unsigned signal=(unsigned)m.m1_i3;
+        unsigned signal=(unsigned)cp32_fork_signal_ready(1);
+        if(!signal)signal=(unsigned)m.m1_i3;
         /* The target is parked in FS receive. Restore it for the existing
          * cleanup path, without publishing a reply that could run its code. */
-        cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
-        cp32_fork_finish(&child,0,&parent_pid,&heap_floor,&heap_break,signal);
+        cp32_fork_handoff(&child,&m);
+        cp32_fork_finish(&child,0,signal);
         app_endpoint=child->p_nr;result=0;
       }
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_FORK) {
       saved=lock_save();pid=application_pid();restore_lock(saved);
       result=(m.m1_i2 || m.m1_p1 || m.m1_i3) ? -22:
-        cp32_fork_start(&child,pid,&parent_pid,&heap_floor,&heap_break);
+        cp32_fork_start(&child,pid);
       app_endpoint=child->p_nr;
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_YIELD) {
       cp32_fork_request(&resume);
       result=(m.m1_i2 || m.m1_p1 || m.m1_i3) ? -22:0;
       if(!result && (cp32_fork_live() || !resume.m_type ||
           (resume.m_type==APP_FILE && resume.m1_i1==CP32_APP_YIELD)))
-        result=cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+        result=cp32_fork_handoff(&child,&m);
       app_endpoint=child->p_nr;
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_WAITPID) {
       result=cp32_fork_wait(m.m1_i2,m.m1_p1,(unsigned)m.m1_i3);
       if(result==CP32_WAIT_LIVE) {
-        result=cp32_fork_handoff(&child,&parent_pid,&heap_floor,&heap_break,&m);
+        result=cp32_fork_handoff(&child,&m);
         app_endpoint=child->p_nr;
       }
     } else if(m.m_type==APP_FILE && (m.m1_i1==CP32_APP_GETPGRP || m.m1_i1==CP32_APP_SETSID)) {
@@ -410,14 +417,14 @@ app_exit:
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_TIMES) {
       result=application_times(child,&m);
     } else if(m.m_type==APP_FILE && m.m1_i1==CP32_APP_EXEC) {
-      result=application_replace(child,&m,&heap_floor,&heap_break);
+      result=application_replace(child,&m,&child->p_heap_floor,&child->p_heap_break);
       if(!result)continue; /* new image resumes at entry, never through send */
     } else if(m.m_type==APP_FILE) result=application_file_request(&m);
     if(m.m_type==APP_SBRK) {
-      uint32_t old=heap_break;
-      result=application_break(heap_floor,&heap_break,m.m1_i1);
+      uint32_t old=child->p_heap_break;
+      result=application_break(child->p_heap_floor,&child->p_heap_break,m.m1_i1);
       if(!result) {
-        if(heap_break>old) memset((void *)old,0,heap_break-old);
+        if(child->p_heap_break>old) memset((void *)old,0,child->p_heap_break-old);
         m.m1_p1=(char *)(uintptr_t)old;
       }
     }
@@ -432,6 +439,10 @@ app_exit:
         output(m.m1_p1,n); result=n;
       }
     }
+    /* Handoff may have restored a signaled ancestor. Never reply into its
+     * saved application image before processing pending fatal delivery. */
+    saved=cp32_fork_signal_ready(0);
+    if(saved){result=saved;m.m_type=APP_EXIT;m.m1_i1=0;goto app_exit;}
     m.m_type=result;
     if(send(app_endpoint,&m)!=OK) panic("app reply",NO_NUM);
   }

@@ -878,9 +878,7 @@ CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_test_progress(cha
  * Edit this list when the current feature's hardware checklist changes. */
 CP32_IRAM_EXT static int cp32_shell_app_tests(int *fd,unsigned size)
 {
-  static const char *const cases[]={"--signals","--ignore","--ignore","--mask","--kill",
-    "--ytree","--yield","--yexit","--yexec","--fault","--time","--tree",
-    "--wait","--fork-exec","--exec-fail"};
+  static const char *const cases[]={"--zombie"};
   const char *argv[]={"hello",0};unsigned i;int result,status;
   cp32_shell_test_progress("\r\n",2);
   for(i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {
@@ -896,9 +894,6 @@ CP32_IRAM_EXT static int cp32_shell_app_tests(int *fd,unsigned size)
   cp32_shell_ps();
   cp32_shell_print("[TEST mm]\r\n");
   if(cp32_shell_mm_exchange()) {cp32_shell_print("[TEST FAIL]\r\n");return 202;}
-  cp32_shell_test_progress(".",1);
-  cp32_shell_print("[TEST disk]\r\n");
-  if(cp32_shell_disk_check()) {cp32_shell_print("[TEST FAIL]\r\n");return 203;}
   cp32_shell_test_progress(".",1);
   cp32_shell_print("[TEST ALL PASS]\r\n");return 0;
 }
@@ -1230,7 +1225,7 @@ CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_ps(void)
   cp32_shell_print("EP PID ST U/S NAME\r\n");
   for(n=-NR_TASKS;n<NR_PROCS;n++) {
     if(cp32_proc_info(n,&p)!=1)continue;
-    state=p.flags&NO_MAP ? "MAP":p.flags&P_STOP ? "STP":
+    state=p.flags&P_ZOMBIE ? "ZOM":p.flags&NO_MAP ? "MAP":p.flags&P_STOP ? "STP":
       (p.flags&(SENDING|RECEIVING))==(SENDING|RECEIVING) ? "SR":
       p.flags&SENDING ? "SND":p.flags&RECEIVING ? "RCV":
       p.flags ? "BLK":p.running ? "RUN":"RDY";

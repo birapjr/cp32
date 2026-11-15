@@ -94,6 +94,7 @@ PRIVATE int syn_table[NR_TASKS+NR_PROCS];      /* which tasks get CLOCK_INT     
 PRIVATE clock_t pending_ticks;                  /* ticks seen by low level only     */
 PRIVATE int sched_ticks = SCHED_RATE;           /* counter: when 0, call scheduler  */
 PRIVATE struct proc *prev_ptr;                  /* last user process run by clock task */
+PRIVATE volatile int cp32_quantum_expired = 0;  /* flag to trigger preemption in IRQ return */
 
 /* Count only interrupts dispatched to the registered TARGET0 handler. */
 volatile uint32_t cp32_timer_irq_ticks;
@@ -662,6 +663,7 @@ int irq;
   if (--sched_ticks == 0) {
     sched_ticks = SCHED_RATE;   /* reset quantum        */
     prev_ptr    = bill_ptr;     /* new previous process */
+    cp32_quantum_expired = 1;   /* trigger preemption */
   }
 
   return 1;   /* re-enable clock interrupt */
@@ -689,11 +691,13 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
 
   /* The clock path may schedule while outside the IRQ-owned return contract.
    * Reconcile once here, while publication is explicitly owned by this IRQ. */
+  /* Quantum expiry must never bypass the validated IRQ handoff gate. */
   if (cp32_context_handoff_gate && k_reenter <= 1 &&
       (rdy_head[TASK_Q] != NIL_PROC || rdy_head[SERVER_Q] != NIL_PROC ||
        rdy_head[USER_Q] != NIL_PROC)) {
     cp32_irq_dispatch_active = 1;
     sched();
+    cp32_quantum_expired = 0;
     /* sched()/pick_proc() has now produced the authoritative selection.
      * Capture it immediately; later clock bookkeeping may change the global
      * selection pointer before the assembly return contract is finalized. */
