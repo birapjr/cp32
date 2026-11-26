@@ -5,4 +5,6 @@ struct cp32_update_entry {const char *path;const unsigned char *bytes;unsigned s
 /* Synchronous install; caller reports each entry and stops at the first error. */
 CP32_IRAM_EXT int cp32_update_one(cp32_disk_reader,cp32_disk_writer,unsigned,
                                const struct cp32_update_entry *);
+/* Create missing /readme only; existing regular files are preserved. */
+CP32_IRAM_EXT int cp32_update_readme(cp32_disk_reader,cp32_disk_writer,unsigned);
 #endif

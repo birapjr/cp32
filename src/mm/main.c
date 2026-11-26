@@ -1,6 +1,7 @@
 /* MINIX mm/main.c: receive, dispatch and reply.
  * Keep mm_task as the entry symbol while MM is linked into the kernel image. */
 #include "mm.h"
+#include "../kernel/app_process.h"
 
 /* Nonblocking request validation/allocator dispatch, separate from the
  * hardware-tested O0 receive/reply task loop below. */
@@ -18,13 +19,18 @@ CP32_IRAM_EXT PRIVATE int cp32_mm_source_valid(int source)
 
 CP32_IRAM_EXT PUBLIC int cp32_mm_handle_request(message *m)
 {
+    int saved;
     if (m == (message *)0 || !cp32_mm_source_valid(m->m_source))
         return EINVAL;
     if (m->m_type == CP32_MM_ALLOCATE) {
+        saved = lock_save();
         m->m1_i1 = cp32_mem_alloc((phys_clicks)m->m1_i1, m->m_source);
+        restore_lock(saved);
         m->m_type = m->m1_i1 != 0 ? OK : ENOMEM;
     } else if (m->m_type == CP32_MM_RELEASE) {
+        saved = lock_save();
         m->m_type = cp32_mem_free((phys_clicks)m->m1_i1, m->m_source);
+        restore_lock(saved);
     } else {
         m->m_type = E_BAD_FCN;
     }
@@ -72,6 +78,7 @@ CP32_IRAM_EXT PUBLIC void mm_task()
             panic("MM receive failed", NO_NUM);
         cp32_trace_mm_receive(&m);
         if (!cp32_mm_source_valid(m.m_source)) continue;
+        if (cp32_runtime_dispatch(&m)) continue;
         cp32_mm_handle_request(&m);
         if (send(m.m_source, &m) != OK)
             panic("MM reply failed", NO_NUM);

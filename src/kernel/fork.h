@@ -1,6 +1,8 @@
 #ifndef CP32_FORK_H
 #define CP32_FORK_H
-CP32_IRAM_EXT void cp32_fork_bind(struct proc *);
+CP32_IRAM_EXT int cp32_fork_bind(struct proc *);
+/* Scheduler lock held, kernel stack required; no FS/wait/queue side effects. */
+CP32_IRAM_EXT int cp32_image_activate(struct proc *);
 #define CP32_WAIT_LIVE (-1000)
 CP32_IRAM_EXT int cp32_fork_disposition(int,unsigned);
 CP32_IRAM_EXT int cp32_fork_sigmask(int,unsigned);

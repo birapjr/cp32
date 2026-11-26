@@ -50,3 +50,17 @@ done:
   if(r)return r;
   return cp32_minix_chmod(read,write,capacity,entry->path,0555);
 }
+
+/* MINIX create-only semantics: never truncate user-maintained documentation.
+ * The bounded creator verifies data before publishing the directory entry. */
+CP32_IRAM_EXT int cp32_update_readme(cp32_disk_reader read,cp32_disk_writer write,
+    unsigned capacity)
+{
+  static const char text[]="CP32 MINIX V2 filesystem.\nApplications are in /boot.\n";
+  struct cp32_minix_stat st;
+  int r=cp32_minix_stat(read,capacity,"/readme",&st);
+  if(!r)return (st.mode&0170000)==0100000 ? 1:-CP32_FILE_BUSY;
+  if(r!=-CP32_FILE_NOT_FOUND)return r;
+  r=cp32_minix_create(read,write,capacity,"/readme",text,sizeof(text)-1);
+  return r<0 ? r:0;
+}

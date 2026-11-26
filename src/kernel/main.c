@@ -12,6 +12,7 @@
 #include <minix/com.h>
 
 extern char _stack_bottom[];
+extern char _task_stack_start[];
 /* esp32s3.ld reserves runtime stacks through bottom + 0x13000. */
 #if LOW_USER > 2 || NR_TASKS > 12
 #error Update runtime stack reservation for the configured process count
@@ -41,6 +42,7 @@ extern volatile int cp32_blocked_handoff_gate;
 extern volatile int cp32_user_handoff_gate;
 extern volatile uint32_t cp32_timer_irq_ticks;
 extern int _sendrec(int dest, message *m);
+extern void cp32_init_task(void);
 extern unsigned cardputer_keyboard_stale_events;
 extern tty_t tty_table[];
 
@@ -51,7 +53,7 @@ CP32_IRAM_EXT static int cp32_boot_process_flags(int endpoint)
 {
   if (endpoint == TTY_PROC_NR || endpoint == CLOCK || endpoint == SYSTASK ||
       endpoint == MM_PROC_NR || endpoint == FS_PROC_NR || endpoint == MEM ||
-      endpoint == IDLE || endpoint == HARDWARE) return 0;
+      endpoint == LOW_USER || endpoint == IDLE || endpoint == HARDWARE) return 0;
   return P_STOP;
 }
 
@@ -96,12 +98,10 @@ CP32_IRAM_EXT void kernel_idle_loop(void)
     wdt_feed_all();
     cp32_console_poll();
     delay(100000);
-    /* Only the IRQ/syscall return boundary may restore another task. This
-     * loop also runs under LOW_USER: replaying a previous FS selection here
-     * would execute its stack while proc_ptr still names LOW_USER, causing
-     * the next IRQ to save FS registers into the wrong descriptor. */
-    /* Aggregate across idle descriptors: report every 400 iterations,
-     * 20 times less often than image 36 (roughly 30 seconds in that run). */
+    /* Only the IRQ/syscall return boundary may restore another task. IDLE
+     * must retain its own frame until that boundary selects a ready process;
+     * LOW_USER is INIT and blocks in its separate child-reaping loop. */
+    /* Rate-limit the idle heartbeat to one report per 400 iterations. */
     if (++executions % 400 == 0) {
       usbj_print("[CTX kernel-running ticks=");
       usbj_print_u32(cp32_timer_irq_ticks);
@@ -121,15 +121,16 @@ void main(void)
   status_line("\r\nmain() started", 2);
   struct proc *rp;
   int t;
-  reg_t kernel_stack = (reg_t)_stack_bottom + 0x4000;
+  reg_t kernel_stack = (reg_t)_task_stack_start;
 
   status_line("init process table", 0);
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS;
        rp < END_PROC_ADDR; ++rp, ++t) {
     rp->p_flags = P_SLOT_FREE;
     rp->p_nr = t;
-    /* Bootstrap shell owns foreground children; no user init process yet. */
-    rp->p_pid = t == FS_PROC_NR ? 1 : 0;
+    /* PID 1 INIT adopts orphans; the linked shell/FS service uses PID 2. */
+    rp->p_pid = t == LOW_USER ? 1 : t == FS_PROC_NR ? 2 : 0;
+    if (t == LOW_USER) strcpy(rp->p_name, "init");
     (pproc_addr + NR_TASKS)[t] = rp;
   }
 
@@ -150,6 +151,7 @@ void main(void)
         (t == TTY_PROC_NR) ? (reg_t)tty_task :
         (t == MM_PROC_NR) ? (reg_t)mm_task :
         (t == FS_PROC_NR) ? (reg_t)cp32_tty_read_client :
+        (t == LOW_USER) ? (reg_t)cp32_init_task :
         (reg_t)kernel_idle_loop;
     /* The level-1 epilogue writes PS and uses RFE to clear EXCM.  Keep
      * INTLEVEL zero in the initial call0 task/server status. */
@@ -185,10 +187,9 @@ void main(void)
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
       rp->p_map[D].mem_len = 0x100;
     }
-    if (t == FS_PROC_NR || t == MM_PROC_NR) {
-      /* Both bring-up servers use physical SRAM stack buffers. MM is a
-       * server (nonnegative endpoint), so numap's kernel-task fast path does
-       * not apply. Give it the same flat D map as the FS IPC client. */
+    if (t == FS_PROC_NR || t == MM_PROC_NR || t == LOW_USER) {
+      /* MM, FS and PID1 INIT use physical SRAM stack buffers. Their endpoints
+       * are nonnegative, so numap's kernel-task fast path does not apply. */
       rp->p_map[D].mem_vir = 0x3FC00000;
       rp->p_map[D].mem_phys = 0x3FC00000 >> CLICK_SHIFT;
       rp->p_map[D].mem_len = 0x1000;
@@ -215,7 +216,7 @@ void main(void)
   cp32_user_handoff_gate = 1;
 
   status_line("systemer irq start", 0);
-  usbj_print("[FEATURE PROC-ZOMBIE 198]");
+  usbj_print("[FEATURE APP-SLICE 207]");
   usbj_print_u32((uint32_t)cp32_boot_clock_descriptor_check());
   usbj_print("\r\n");
 
@@ -272,12 +273,12 @@ void main(void)
     int storage_result=cp32_root_init();
 #if !CP32_ROOT_RAM
 #ifdef CP32_SD_SOFT
-    usbj_print("[SD V198 transport=gpio]\r\n");
+    usbj_print("[SD V207 transport=gpio]\r\n");
 #else
-    usbj_print("[SD V198 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
+    usbj_print("[SD V207 transport=spi2 init-hz=400000 read-hz=4000000]\r\n");
 #endif
 #endif
-    usbj_print("[ROOT V198 backend=" CP32_ROOT_NAME " result=");
+    usbj_print("[ROOT V207 backend=" CP32_ROOT_NAME " result=");
     if(storage_result<0)usbj_print("-");
     usbj_print_u32((uint32_t)(storage_result<0 ? -storage_result:storage_result));
   }
@@ -348,17 +349,38 @@ void main(void)
     usbj_print("]\r\n");
   /* Keep image identity adjacent to the handoff into the idle workload. */
 #if CP32_UPDATE_APPS
-  usbj_print("[UPDATER 198 enabled]\r\n");
+  usbj_print("[UPDATER 207 enabled]\r\n");
 #endif
-  usbj_print("[TEST PROC-ZOMBIE 198]\r\n");
+  usbj_print("[TEST APP-SLICE 207]\r\n");
   kernel_idle_loop();
 }
 
-PUBLIC void panic(s, n)
-_CONST char *s;
-int n;
+/* MINIX main.c reports the kernel reason before termination. Emit it directly
+ * on USB even when FS, TTY or the scheduler is the component that failed. */
+PUBLIC void panic(const char *reason, int number)
 {
-  (void)s;
-  (void)n;
+  static int reported;
+  char text[49];
+  unsigned i;
+
+  /* Terminal on the scheduling core. Never restore interrupts or enter IPC. */
+  (void)lock_save();
+  if (!reported) {
+    reported = 1;
+    usbj_print("\r\n[PANIC V206");
+    if (reason && *reason) {
+      for (i = 0; i < sizeof(text) - 1 && reason[i]; ++i)
+        text[i] = reason[i];
+      text[i] = 0;
+      usbj_print(" reason=");
+      usbj_print(text);
+    }
+    if (number != NO_NUM) {
+      usbj_print(" n=");
+      if (number < 0) usbj_print("-");
+      usbj_print_u32(number < 0 ? 0U - (unsigned)number : (unsigned)number);
+    }
+    usbj_print("]\r\n");
+  }
   for (;;) __asm__ volatile("nop");
 }

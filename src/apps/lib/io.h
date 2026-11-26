@@ -12,8 +12,8 @@ int cp32_times(struct cp32_app_times *times);
 int cp32_getpgrp(void);
 int cp32_setsid(void);
 int cp32_yield(void);
-/* v34: positive PID, 0 caller group, -1 application family, -pgrp.
- * Saved ancestors receive pending delivery before resuming; services excluded. */
+/* Positive PID, 0 caller group, -1 all applications, -pgrp.
+ * Delivery is asynchronous at safe user returns; kernel services excluded. */
 int cp32_kill(int pid,int signal);
 typedef unsigned cp32_sigset_t;
 int cp32_sigemptyset(cp32_sigset_t *set);
@@ -23,8 +23,12 @@ int cp32_sigdelset(cp32_sigset_t *set, int signo);
 int cp32_sigismember(const cp32_sigset_t *set, int signo);
 int cp32_sigprocmask(int how,const unsigned *set,unsigned *old);
 int cp32_sigpending(unsigned *set);
-/* Returns previous DFL/IGN disposition, or -1; signals1..15 since ABI33 (SIGKILL cannot change disposition). */
+/* Returns previous disposition/address, or -1; signals1..15.
+ * SIGKILL cannot change disposition. */
 int cp32_signal(int signal,unsigned disposition);
+/* v37: return previous disposition/address, or -1 with errno. */
+typedef void (*cp32_sighandler_t)(int);
+int cp32_signal_handler(int signal,cp32_sighandler_t handler);
 int cp32_fork(void);
 int cp32_wait(int *status);
 int cp32_waitpid(int pid,int *status,unsigned options);
@@ -86,6 +90,10 @@ int cp32_fcntl(int fd,int command,unsigned argument);
 #define CP32_ESPIPE 29
 #define CP32_EPERM 1
 #define CP32_EIO 5
+#define CP32_EINTR 4
+#define CP32_ECHILD 10
+#define CP32_ESRCH 3
+#define CP32_EAGAIN 11
 #define CP32_EBADF 9
 #define CP32_EFAULT 14
 #define CP32_EINVAL 22
@@ -93,7 +101,7 @@ extern int cp32_errno;
 int cp32_io_init(const struct cp32_app_services *services);
 /* cp32_open retains read-only compatibility; cp32_open_flags/creat select
  * v9 access/create/exclusive/truncate/append behavior. dup shares offsets.
- * Paths resolve against the launching shell's cwd.
+ * Paths resolve against the calling process's cwd, inherited at fork.
  * Seek offsets/results use signed 32-bit bytes; whence 0=start,1=current,2=end.
  * Only application file descriptors can be closed; exit closes any leftovers. */
 /* v8: successful exec never returns; failure preserves image and handles.

@@ -15,7 +15,7 @@ pre=r'''
 #define DEV_WRITE 4
 #define NO_NUM 0
 static void panic(const char *s,int n){(void)s;(void)n;assert(0);}
-#define CP32_HELLO_TEST_REQUEST 198
+#define CP32_HELLO_TEST_REQUEST 203
 #define CP32_IRAM_EXT
 struct cp32_minix_stat {unsigned size,mode;};
 static char cp32_shell_cwd[256]="/";
@@ -55,10 +55,10 @@ static int cp32_application_run(int read,void *ctx,uint32_t size,unsigned argc,
  const char *const argv[],int out,int *status) {
  (void)read;(void)out;assert(*(int *)ctx==2 && size==100 && argc==(unsigned)expected);
  if(suite_mode) {
-  static const char *cases[]={"--zombie"};
+  static const char *cases[]={"--process","--signals","--orphan","--io-exec"};
   runs++;*status=0;
-  if(!suite_step++){assert(!strcmp(argv[1],"--t"));*status=suite_mode==2 ? 200:CP32_HELLO_TEST_REQUEST;return 0;}
-  assert(suite_step<=2 && !strcmp(argv[1],cases[suite_step-2]));
+  if(!suite_step++){assert(!strcmp(argv[1],"--t"));*status=suite_mode==2 ? 202:CP32_HELLO_TEST_REQUEST;return 0;}
+  assert(suite_step<=5 && !strcmp(argv[1],cases[suite_step-2]));
   if(suite_step-2==fail_step){if(suite_mode==3)return -8;if(suite_mode==4)*status=77;}
   return 0;
  }
@@ -149,10 +149,10 @@ int main(void){
  expected_path="/boot/hello";expected_name="hello";expected=2;exitcode=0;
  strcpy(cp32_shell_cwd,"/");suite_mode=1;fail_step=-1;suite_step=0;printed[0]=displayed[0]=0;
  cp32_shell_hello("--t");
- assert(!cp32_shell_usb_only && !strcmp(displayed,"\r\n..\r\n[TEST ALL PASS]\r\n"));
- assert(suite_step==2 && ps_calls==1 && mm_calls==1 && disk_calls==0 && opens==closes);
+ assert(!cp32_shell_usb_only && !strcmp(displayed,"\r\n.....\r\n[TEST ALL PASS]\r\n"));
+ assert(suite_step==5 && ps_calls==1 && mm_calls==1 && disk_calls==0 && opens==closes);
  assert(strstr(printed,"[TEST ALL PASS]") && strstr(printed,"Hello exit=0"));
- for(int step=0;step<1;step++) {
+ for(int step=0;step<4;step++) {
   fail_step=step;suite_mode=4;suite_step=0;printed[0]=displayed[0]=0;
   cp32_shell_hello("--t");
   assert(!cp32_shell_usb_only && !strncmp(displayed,"\r\n",2));
@@ -168,10 +168,10 @@ int main(void){
  suite_mode=1;fail_step=-1;
  for(int failure=1;failure<=1;failure++) {
   service_fail=failure;suite_step=0;printed[0]=displayed[0]=0;cp32_shell_hello("--t");
-  assert(suite_step==2 && opens==closes && strstr(printed,"[TEST FAIL]") && !strstr(printed,"ALL PASS"));
+  assert(suite_step==5 && opens==closes && strstr(printed,"[TEST FAIL]") && !strstr(printed,"ALL PASS"));
  }
  service_fail=0;suite_step=0;printed[0]=displayed[0]=0;cp32_shell_launch("/boot/hello --t",0);
- assert(suite_step==2 && opens==closes && strstr(printed,"ALL PASS"));
+ assert(suite_step==5 && opens==closes && strstr(printed,"ALL PASS"));
  suite_step=0;printed[0]=displayed[0]=0;cp32_shell_hello("--t < readme");
  assert(!suite_step && opens==closes && strstr(printed,"no redirection"));
 

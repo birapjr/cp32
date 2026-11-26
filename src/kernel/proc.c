@@ -23,6 +23,8 @@ extern struct proc *held_tail;
 #include <minix/com.h>
 #include "proc.h"
 #include "irq_frame.h"
+#include "app_process.h"
+#include "launch_trace.h"
 
 /* TODO(clean-production): these three guarded print blocks still share the
  * blocked-frame path. Remove the blocks first, then delete this compatibility
@@ -984,6 +986,7 @@ CP32_IRAM_EXT PUBLIC int cp32_blocked_owner_check(void)
 struct proc proc[NR_TASKS + NR_PROCS];
 struct proc *pproc_addr[NR_TASKS + NR_PROCS];
 struct proc *bill_ptr;
+struct proc *cp32_partial_slice;
 struct proc *current_proc = NIL_PROC;
 struct proc *rdy_head[NQ];
 struct proc *rdy_tail[NQ];
@@ -1007,7 +1010,7 @@ CP32_IRAM_EXT PUBLIC void interrupt(int task)
 {
   struct proc *rp;
   int saved_ps;
-  if (!isokprocn(task) || task >= 0 || isidlehardware(task)) return;
+  if (!isokprocn(task) || (task >= 0 && task != MM_PROC_NR) || isidlehardware(task)) return;
   rp = proc_addr(task);
   if (rp->p_flags & (P_SLOT_FREE|P_ZOMBIE)) return;
   /* CP32 uses 0 at task level and 1 in the outer IRQ (MINIX uses -1/0). */
@@ -1153,6 +1156,7 @@ CP32_IRAM_EXT PUBLIC int cp32_task_ipc_dispatch(struct proc *owner,
   if (cause != 1 || owner == NIL_PROC || owner != proc_ptr ||
       owner != current_proc || owner->p_flags != 0 || k_reenter != 0 ||
       !cp32_user_frame_contract_valid(frame)) return EINVAL;
+  cp32_trace_exception_stack(owner->p_nr > LOW_USER ? 8:2);
   memcpy(&owner->p_reg, frame, sizeof(*frame));
   owner->p_reg.pc += 3; /* SYSCALL is a three-byte instruction. */
   result = sys_call((int)frame->a[2], (int)frame->a[3],
@@ -1173,15 +1177,18 @@ CP32_IRAM_EXT PUBLIC int cp32_task_ipc_dispatch(struct proc *owner,
 PRIVATE int copy_message(struct proc *sender, message *src,
                          struct proc *receiver, message *dst)
 {
+  int saved_ps = lock_save();
   phys_bytes target = numap(receiver->p_nr, (vir_bytes)dst, MESS_SIZE);
   int source = sender->p_nr;
-  int result;
-  if (!target) return EFAULT;
-  result = mem_copy(source, (vir_bytes)src, receiver->p_nr,
-                    (vir_bytes)dst, MESS_SIZE);
-  if (result != OK) return result;
-  phys_copy((phys_bytes)&source, target, sizeof(source));
-  return OK;
+  int result = EFAULT;
+  /* Keep destination mapping stable through both payload and trusted header. */
+  if (target) {
+    result = mem_copy(source, (vir_bytes)src, receiver->p_nr,
+                      (vir_bytes)dst, MESS_SIZE);
+    if (result == OK) phys_copy((phys_bytes)&source, target, sizeof(source));
+  }
+  restore_lock(saved_ps);
+  return result;
 }
 
 PRIVATE int deliver_blocked_message(struct proc *sender, message *src,
@@ -1293,6 +1300,17 @@ CP32_IRAM_EXT PUBLIC int mini_rec(struct proc *caller_ptr, int src, message *m_p
     return ELOCKED;
   }
 
+  /* MM retries blocked I/O from its coalesced clock notification. Continuous
+   * application requests must not hide that work behind an always-nonempty
+   * sender queue. At most one notification per timer tick gets this priority;
+   * the next receive can drain callers before another tick arrives. */
+  if(caller_ptr->p_nr==MM_PROC_NR && !(caller_ptr->p_flags&SENDING) &&
+     caller_ptr->p_int_blocked && isrxhardware(src)) {
+    if(interrupt_message(caller_ptr,m_ptr)!=OK)return EFAULT;
+    caller_ptr->p_int_blocked=FALSE;
+    return OK;
+  }
+
   if (!(caller_ptr->p_flags & SENDING)) {
     hops = 0;
     for (sender_ptr = caller_ptr->p_callerq; sender_ptr != NIL_PROC;
@@ -1353,35 +1371,31 @@ PRIVATE void pick_proc()
   if (next_queue < 0 || next_queue >= NQ) next_queue = 0;
   for (offset = 0; offset < NQ; offset++) {
     q = (next_queue + offset) % NQ;
-    int skips = 0;
-    while (rdy_head[q] != NIL_PROC && rdy_head[q]->p_flags != 0 &&
-           skips++ <= NR_TASKS + NR_PROCS) {
-      rp = rdy_head[q]; rdy_head[q] = rp->p_nextready;
-      if (rdy_head[q] == NIL_PROC) rdy_tail[q] = NIL_PROC;
-      rp->p_nextready = NIL_PROC;
-      cp32_ready_blocked_skip_count++;
-    }
-    /* MINIX selects the queue head. A fixed rotation to prefer a sleeping
-     * TTY repeatedly selects the same tail when five tasks are runnable,
-     * starving CLOCK after HARD_INT wakes it. Preserve FIFO within a class. */
-    if (rdy_head[q] != NIL_PROC) {
-      rp = rdy_head[q];
-      if (q == USER_Q && (rp->p_reg.pc == 0 || rp->p_reg.sp == 0 ||
-          (rp->p_reg.sp & 0x0F) != 0 || rp->p_reg.a[1] != rp->p_reg.sp)) {
-        next_queue = (q + 1) % NQ;
-        continue;
+    int skips;
+    rp = NIL_PROC;
+    /* Pin-ineligible applications remain ready. Rotate them rather than
+     * consuming their queue entry or stalling kernel/server progress. A full
+     * table-sized scan bounds the IRQ even when every image is pinned out. */
+    for (skips=0; rdy_head[q] != NIL_PROC && skips<NR_TASKS+NR_PROCS; skips++) {
+      rp=rdy_head[q];rdy_head[q]=rp->p_nextready;
+      if(rdy_head[q]==NIL_PROC)rdy_tail[q]=NIL_PROC;
+      rp->p_nextready=NIL_PROC;
+      if(rp->p_flags!=0) {
+        cp32_ready_blocked_skip_count++;rp=NIL_PROC;continue;
       }
-      rdy_head[q] = rp->p_nextready;
-      if (rdy_head[q] == NIL_PROC) {
-        rdy_tail[q] = NIL_PROC;
+      if((q==USER_Q && (!rp->p_reg.pc || !rp->p_reg.sp ||
+          (rp->p_reg.sp&15) || rp->p_reg.a[1]!=rp->p_reg.sp)) ||
+          !cp32_runtime_can_run(rp)) {
+        if(rdy_tail[q])rdy_tail[q]->p_nextready=rp;
+        else rdy_head[q]=rp;
+        rdy_tail[q]=rp;rp=NIL_PROC;continue;
       }
-      rp->p_nextready = NIL_PROC;
-      /* Advance the starting class so a busy task class cannot starve
-       * servers/users whose frames are now initialized and runnable. */
-      next_queue = (q + 1) % NQ;
       break;
     }
-    rp = NIL_PROC;
+    if(rp!=NIL_PROC) {
+      next_queue=(q+1)%NQ;
+      break;
+    }
   }
 
     if (rp == NIL_PROC) {
@@ -1389,6 +1403,7 @@ PRIVATE void pick_proc()
       proc_ptr = proc_addr(IDLE);
       current_proc = proc_ptr;
       bill_ptr = proc_ptr;
+      if(cp32_irq_dispatch_active)cp32_irq_return_proc=proc_ptr;
       return;
     }
 
@@ -1423,6 +1438,20 @@ PRIVATE void pick_proc()
 }
 
  
+/* Final exception return owns the selected frame and executes on the kernel
+ * exception stack. MINIX restart installs the selected address space here;
+ * fixed-window CP32 restores that process's complete saved SRAM image. */
+CP32_IRAM_EXT PUBLIC void cp32_prepare_return(struct proc *rp)
+{
+  if(rp==NIL_PROC || rp->p_flags!=0)panic("return state",NO_NUM);
+  if(rp->p_nr>LOW_USER) {
+    int result = cp32_runtime_activate(rp);
+    if (result != OK) panic("return image", result);
+    cp32_runtime_signal_return(rp);
+    cp32_trace_launch(LAUNCH_RETURN,rp->p_reg.pc);
+  }
+}
+
 /*===========================================================================*
  *				ready					     * 
  *===========================================================================*/
@@ -1450,10 +1479,18 @@ CP32_IRAM_EXT PRIVATE void ready(struct proc *rp)
     if (tail->p_nextready != NIL_PROC) return;
     rdy_tail[q] = tail;
   }
-  rp->p_nextready = NIL_PROC;
-  if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
-  else rdy_tail[q]->p_nextready = rp;
-  rdy_tail[q] = rp;
+  /* A service may run on any tick. As in MINIX, rotate CPU-bound users
+   * after their quantum. Returning from a short service interruption can
+   * then resume the same resident image without another complete copy. */
+  if (cp32_irq_dispatch_active && cp32_partial_slice == rp && rdy_head[q]) {
+    rp->p_nextready = rdy_head[q];
+    rdy_head[q] = rp;
+  } else {
+    rp->p_nextready = NIL_PROC;
+    if (rdy_tail[q] == NIL_PROC) rdy_head[q] = rp;
+    else rdy_tail[q]->p_nextready = rp;
+    rdy_tail[q] = rp;
+  }
   /* TTY replies can wake FS from task context before pick_proc() runs.
    * Publish the runnable frame at the wakeup boundary for the next IRQ. */
   if (rp->p_nr == FS_PROC_NR && rp->p_flags == 0)

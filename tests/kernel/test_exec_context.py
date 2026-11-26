@@ -44,7 +44,7 @@ typedef struct {int PROC1,PROC2,m_source,PID;void *STACK_PTR,*IP_PTR,*NAME_PTR;}
 post=r'''
 struct proc {
  unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
- unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
+ unsigned short p_parent_pid,p_exitstatus;union {struct {uint32_t p_heap_floor,p_heap_break;};struct {uint32_t p_fault_pc,p_fault_cause;};};
  struct stackframe_s p_reg;
  int p_nr,p_pid,p_flags,p_alarm,p_pending,p_pendcount,p_getfrom;
  int p_blocked_frame_valid,p_blocked_frame_result;

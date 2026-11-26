@@ -24,32 +24,30 @@ MINIX or POSIX system.
 | Applications | Six ELF programs loaded from SD: `hello`, `echo`, `cat`, `wc`, `ls` and `exec`; arguments, initial environment, PID/parent queries, exit status and heap allocation. |
 | Process filesystem state | Application-owned cwd, umask, descriptor namespace and flags, inherited on launch and preserved across successful exec as appropriate. Exit releases owned references. |
 | Fork/wait | Private application images, shared inherited file offsets, distinct PIDs, resource-bounded fork nesting. Exited children retain real process slots until collected; there is no separate eight-result limit. Selective, any-child and process-group waits, including live-child WNOHANG. |
-| Persistent process records | Parent PID, heap bounds, process group, signal state and saved-image ownership remain attached to their process across cooperative switching. Exited records retain identity and status until collection. |
+| Process lifecycle | MM owns launch, fork, staged exec, exit and wait. Each live process retains private image storage, filesystem state, parent/group identity and signal state. PID 1 INIT adopts and collects orphans. |
 | Process accounting | `cp32_times()` reports caller and accumulated child user/system ticks plus uptime at 60 Hz; `ps` exposes task/process accounting. |
 | Process groups | `cp32_getpgrp()`, `cp32_setsid()` and group-selecting waits; group identity survives fork/exec. |
 | Application faults | Default termination for supported faults in active application text, with parent wait status and resource cleanup. |
-| Cooperative execution | `cp32_yield()` exchanges private images between the deepest live parent/child pair at any allocated fork depth. Blocking wait resumes a parked child. |
-| Signals | MINIX signals 1–15: default/ignore dispositions, independent masks and pending bits, PID/group probes, family broadcast and pending delivery to saved ancestors. SIGKILL cannot be blocked or ignored. |
+| Concurrent execution | The timer rotates runnable applications after six CPU ticks each. Image swaps run on the kernel exception stack. IPC translates saved buffers and FS pins borrowed buffers during I/O. |
+| Signals and blocking | Signals 1–15, PID/group selection with credential checks, handlers, pending masks and exact signal return. Terminal reads and live-child waits sleep independently and return `EINTR` when interrupted. SIGKILL cannot be blocked or ignored. |
 | Exec | Replace the foreground application's image while retaining PID and non-CLOEXEC files. Invalid paths/images and failed staging return an error without destroying the running program. |
 | Time and persistence | Explicit time APIs, automatic data/directory/permission-change timestamps, synchronous verified SD writes and `sync`/`fsync`. File contents and timestamps survive restart. |
 | Maintenance | Optional firmware updates applications directly on SD. Host tools generate configurable SD images and check offline filesystem consistency without modifying media. |
 
-Current firmware: **PROC-ZOMBIE 198**; application service ABI: **36**.
-The host suite contains **71 test scripts**. Normal SD, GPIO-SPI, RAM recovery
+Current firmware is **APP-SLICE 207**, with application service ABI **37**.
+The host suite contains **82 test scripts**. Normal SD, GPIO-SPI, RAM recovery
 and both SD updater variants build and pass image-layout checks.
 
-Image 198 passed the updater hardware suite: `Zombie wait OK`,
-`[TEST ALL PASS]` and `Hello exit=0` after installing the updated applications.
-[Image 198 USB log](docs/hardware/proc-zombie-v198-updater-pass.log).
-Normal-firmware and cold-restart acceptance remain pending; this USB capture
-does not verify LCD appearance.
+**Image 207 passed all five `hello --t` checks on the Cardputer updater.**
+The run covered concurrent processes, asynchronous signals, INIT orphan
+adoption, concurrent I/O and exec, and memory allocation and release. USB
+reported `[TEST ALL PASS]` and `Hello exit=0`. The suite's `ps` output showed
+PID 1 (INIT) waiting and no remaining application or zombie rows.
+[Image 207 USB capture](docs/hardware/app-slice-v207-updater-pass.log).
 
-Run **`hello --t`** for the current noninteractive checks. Detailed logs go to
-USB; the LCD starts a new row and adds one dot after each successful check,
-then prints `[TEST ALL PASS]` or `[TEST FAIL]` on the next line. There are currently
-**2 dots** on success: exited-child collection tests plus an MM check. The suite
-stops on the first failure and restores normal shell output. Interactive line
-input remains a separate check.
+One updater run is confirmed. Priority 1 hardware acceptance still needs a
+repeat on the updater, runs on normal firmware and a run after a full power
+cycle. [Hardware checklist](docs/hardware/pending-tests.md).
 
 The 100 MiB filesystem and data timestamps passed a
 [two-boot persistence check](docs/hardware/fs-data-time-v166-pass.log);
@@ -60,24 +58,22 @@ also survived restart. Detailed acceptance history and remaining work live in
 
 ### Current boundaries
 
-- The shell is kernel-linked. The deepest parent/child pair can cooperatively exchange
-  private images at any allocated fork depth. General
-  concurrent scheduling, arbitrary process trees, a user-space shell and full
-  libc remain unimplemented. Applications are trusted; memory protection is
-  outside the current port target.
-- Only one application image executes at a time: 16 KiB text, 12 KiB data/heap
-  and 4 KiB stack. Each saved fork image consumes about 33 KiB of MM storage.
-  Parent exit drains a live child before completing; a nonterminating child can
-  delay exit, including signal termination. There is no INIT orphan adoption.
-  Uncollected exits are discarded when their parent exits until adoption is
-  implemented. The application lifecycle remains in the foreground
-  filesystem/shell broker; MM/service orchestration, filesystem/fault ownership
-  and general live-child wakeups remain unfinished.
-- Signals do not yet provide function handlers, sigreturn,
-  asynchronous interruption of blocked I/O, stop/continue or job control.
-  Supported hardware faults force termination even if the corresponding software
-  signal is ignored or masked. Kernel/callback faults, unsupported causes and
-  nested exceptions remain terminal. Arbitrary application writes can corrupt RAM.
+- The shell, FS and MM are kernel-linked services. The shell starts one foreground
+  job at a time; its independently scheduled children can fork and exec other
+  programs. The shell resumes when the root and its adopted descendants finish.
+  A separate user-space shell, background jobs and full libc remain later work.
+- Each process has a private 32 KiB image plus about 1 KiB of lifecycle/filesystem
+  metadata. A single physical execution window holds the selected image:
+  16 KiB text, 12 KiB data/heap and 4 KiB stack. Timer switches copy images in
+  internal SRAM; this is single-core preemption, without memory protection.
+  Available heap and process slots bound concurrency; failed fork/exec returns
+  an error while preserving the caller.
+- Handler contexts are held by MM. Caught signals defer while another handler
+  runs; SIGKILL and default termination can still take effect. Terminal reads
+  and waits are interruptible; bounded synchronous disk transfers finish before
+  delivery. Job control, alternate signal stacks and POSIX `sigaction` flags
+  are not provided. Supported hardware faults terminate the affected process;
+  kernel/callback faults and nested exceptions remain terminal.
 - Each application has **four file slots (3–6)**; the shared backend has eight.
   Standard streams 0–2 use callbacks. Shell input redirection is supported;
   general descriptor-based standard-stream redirection, output redirection and
@@ -192,6 +188,9 @@ if it fails, retain the log and inspect the error. After an I/O failure, reboot
 before retrying; after a space error, free space first. `df` reports available
 filesystem space. Do not reformat the card merely to update applications.
 
+The optional `apps` updater also recreates a missing `/readme`. It preserves an
+existing regular file, including custom contents, and reports it as unchanged.
+
 Then restore normal firmware:
 
 ```sh
@@ -253,7 +252,7 @@ used directly. Builtins take priority.
 | `wc [-lwc] file` | Count lines, words and bytes; flags select columns in that order. |
 | `cmp file1 file2` | Report whether two files are identical. |
 | `df` | Show free/total filesystem data space in KiB and free/total inodes. |
-| `apps` | Updater firmware only: install or update the six applications on SD. |
+| `apps` | Updater firmware only: install/update six applications and restore a missing `/readme` on SD. |
 | `stat path` | Show inode, size, links, owner IDs and access/modification/change times. |
 | `rmdir path` | SD only: remove an empty directory and reclaim its inode/zones. Root, dot entries, the current directory and open handles are protected. |
 | `mkdir path` | SD only: create a mode-0755 directory with `.`/`..`; parent must exist. No `-p`; remove empty directories with `rmdir`. |
@@ -268,8 +267,8 @@ used directly. Builtins take priority.
 | `rm path` or `unlink path` | SD only: remove one regular-file name; the last link releases its inode and supported data/indirect zones. Open regular files survive until their last descriptor closes; directories are rejected. |
 | `run path [arguments]` | Load an executable by absolute or current-directory-relative path; no PATH search. |
 | `echo [arguments]` | Run `/boot/echo` through external-command lookup. Bare external names use `/boot`; names containing `/` use their explicit path. Builtins take priority. |
-| `hello --t` | Run current exited-child collection tests and MM check; detailed logs are USB-only, two progress dots appear on the display. |
-| `hello --zombie` | Retain >8 exited children, exhaust the process table, check invalid-pointer recovery and collect/reuse slots. Included in `--t`. |
+| `hello --t` | Run concurrent process, signal, orphan, I/O/exec and MM checks; USB details, five LCD progress dots and a final result. |
+| `hello --fs-owner` | Check private cwd/umask, inherited descriptor offsets, child close and slot reuse. Included in `--t`. |
 | `hello --line` | Read and echo a console line. |
 | `hello --pid`, `hello --ppid`, `hello --env`, `hello --exit N` | Display identity/environment or exit with a supplied status. |
 | `hello [arguments]` | Load `/boot/hello`, pass arguments and report its exit status. |
@@ -344,10 +343,10 @@ The application runtime in [src/apps/lib/io.h](src/apps/lib/io.h) exposes:
 | `sync`, `fsync` | Check root-device completion/status; fsync accepts owned file/directory handles, including open-unlinked files. |
 | `time`, `stime`, `utime` | Read/set wall time and set explicit or current inode times; clock changes require root, and explicit inode times require owner/root. |
 | `getpgrp`, `setsid` | Read the inherited process group or create a group led by the caller; an existing group leader gets EPERM. Bootstrap launches inherit shell group1. No controlling-terminal management is provided. |
-| `fork`, `wait`, `waitpid`, `yield` | Private-image fork, cooperative parent/child exchange and encoded exit/signal status collection; resource-bounded nesting and real zombie slots retained until wait. |
+| `fork`, `wait`, `waitpid`, `yield` | MM-owned private-image fork, independently scheduled children, selective/group waits, WNOHANG and encoded exit/signal status. Exits retain zombie slots until wait; INIT adopts orphans. |
 | `times` | Caller and child user/system CPU ticks and uptime at 60 Hz. |
-| `kill` | PID, caller-group, negative-group and foreground-family selectors. Signal 0 probes live applications and retained exits; saved ancestors receive pending signals before resuming. Kernel/services are excluded. |
-| `signal`, `sigprocmask`, `sigpending` | Default/ignore dispositions and independent blocked/pending sets for signals 1–15. Pending repeats coalesce; fork inherits masks/dispositions with an empty child pending set, while exec preserves state. |
+| `kill` | PID, caller-group, negative-group and all-application selectors, with real/effective UID permission checks. Signal 0 probes live applications and retained exits. Kernel/services are excluded. |
+| `signal`, `signal_handler`, `sigprocmask`, `sigpending` | Default/ignore/function dispositions and blocked/pending sets for signals 1–15. Fork inherits handlers and masks, with no pending signals. Exec resets caught handlers and preserves ignored dispositions, masks and pending signals. |
 | `execv` | Stage and replace the current application; preserve PID, cwd, umask and non-CLOEXEC handles. A failed exec leaves the original application intact. |
 
 Applications can use `cp32_sigemptyset`, `cp32_sigfillset`, `cp32_sigaddset`,
@@ -357,7 +356,7 @@ excludes when applying a process mask. These helpers remain covered by host regr
 
 `cp32_wait(&status)` blocks until any direct child can be collected and returns its PID. Pass a null pointer to discard the status. With no children it returns -1 and sets `cp32_errno` to ECHILD.
 
-The current service ABI is **36**. Rebuild/update applications when the required ABI changes. Runtime names use the `cp32_` prefix;
+The current service ABI is **37**. Rebuild/update applications when the required ABI changes. Runtime names use the `cp32_` prefix;
 failures are reported through application-local `cp32_errno`.
 
 The runtime also provides console I/O, line reads, PID/parent queries, initial
@@ -447,43 +446,24 @@ no firmware flash is needed. See [checker usage and limits](docs/fsck.md).
 
 ### Current hardware acceptance
 
-Update applications for **ABI36** using the updater procedure above: build/flash
-the updater, run `apps` and `sync`, then build/flash normal firmware. No SD reformat
-is needed. Confirm **`[TEST PROC-ZOMBIE 198]`** in the USB log.
+On the passing updater run, the first complete save and restore of two 32 KiB
+process images took 49,270 SYSTIMER counts (`0xC076`), or **3.08 ms** at
+16 MHz. The same trace recorded signal delivery and return before
+`Concurrent process OK`. [USB capture](docs/hardware/app-slice-v207-updater-pass.log).
 
-On the Cardputer, run:
+Use the same SD card for the remaining checks.
 
-```text
-hello --t
-```
+1. Run `hello --t` again on the updater.
+2. From `src/`, run `make flash` to install normal firmware. Confirm
+   `[TEST APP-SLICE 207]` on USB and run `hello --t` twice.
+3. Power the Cardputer fully off, restart it and run `hello --t` once more.
+   Save the USB logs. Each successful run should end with `[TEST ALL PASS]`
+   and `Hello exit=0`. On the LCD, look for five dots followed by the result
+   on a new line.
 
-Expect 2 dots on the LCD, followed on a new line by `[TEST ALL PASS]`. USB
-output should include `Zombie wait OK`, `[TEST ALL PASS]` and `Hello exit=0`. Repeat once, then repeat after a full power-off
-and restart. Preserve the USB logs and confirm the keyboard, prompt and cursor
-remain responsive. A serial log alone cannot validate the LCD appearance.
-
-The current suite retains more than eight exited children, exhausts process
-slots, checks failed-copyout retention, selectively collects/reuses a slot and
-drains the remaining exits. Process inspection and MM follow; `ps` adds no dot.
-Exited children occupy real process records marked ZOM until collected, while
-their image and file resources are already released. Lifecycle orchestration
-and MM requests still use the FS broker; independent scheduling remains pending.
-
-The small device application keeps only the current feature test. Previous
-process tests remain in [host-only fixtures](tests/mm/); filesystem
-regressions remain in their existing host fixture. Runtime functionality is
-unchanged. The current `hello.elf` is 2,376 bytes; it contains the focused test
-and basic demonstration options.
-The suite handshake rejects the old on-card test application; run `apps` from
-the new updater even though the service ABI remains 36.
-
-Separately, `hello --line` can check interactive editing and cursor behavior.
-Unknown hello options print arguments, so `Hello exit=0` alone is not proof
-that a retired test ran.
-
-See the [cumulative hardware checklist](docs/hardware/pending-tests.md) for
-additional acceptance and the recorded coverage boundaries. `df` reports
-filesystem space, not RAM or the physical card's total capacity.
+To check interactive input, run `hello --line`, edit a short line and confirm
+the cursor blinks. Use `ps`, `mm` and `disk` at the shell prompt to check that
+the services still respond. [Full hardware checklist](docs/hardware/pending-tests.md).
 
 ### Timestamp and restart check
 

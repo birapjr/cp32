@@ -78,6 +78,6 @@ int main(int argc,char **argv){
 '''
 with tempfile.TemporaryDirectory() as d:
  p=Path(d);(p/'app.c').write_text(app)
- subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=undefined','-I'+str(f.root/'src/apps/lib'),str(p/'app.c'),str(f.root/'src/apps/hello/hello.c'),str(f.root/'src/apps/lib/io.c'),'-o',str(p/'app')],check=True)
+ subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-fsanitize=undefined','-I'+str(f.root/'src/apps/lib'),str(p/'app.c'),str(f.root/'tests/mm/zombie_hello.c'),str(f.root/'src/apps/lib/io.c'),'-o',str(p/'app')],check=True)
  for mode in range(6):subprocess.run([str(p/'app'),str(mode)],check=True)
 print('hello zombie: capacity, selective waits, reuse, child exit and failure reporting PASS')

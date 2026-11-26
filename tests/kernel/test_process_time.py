@@ -12,9 +12,11 @@ pre=r'''
 #define CP32_IRAM_EXT
 #define HARDWARE 0
 #define IDLE 1
+#define LOW_USER 2
+#define SCHED_RATE 6
 #define NIL_PROC ((struct proc *)0)
-struct proc {unsigned user_time,sys_time;};
-static struct proc table[5],*proc_ptr,*bill_ptr;
+struct proc {int p_nr;unsigned user_time,sys_time;};
+static struct proc table[5],*proc_ptr,*bill_ptr,*cp32_partial_slice;
 static volatile struct proc *cp32_irq_saved_owner;
 static int k_reenter;
 static unsigned cp32_clock_accounted_ticks;
@@ -23,11 +25,15 @@ static unsigned cp32_clock_accounted_ticks;
 test=r'''
 int main(void){
  k_reenter=1;cp32_irq_saved_owner=&table[2];proc_ptr=&table[3];bill_ptr=&table[2];
+ table[2].p_nr=3;
  cp32_clock_charge(1);
+ assert(cp32_partial_slice==&table[2]);
  assert(table[2].user_time==1 && !table[3].user_time && !table[0].user_time && !table[2].sys_time);
  bill_ptr=&table[4];cp32_clock_charge(4);
+ assert(cp32_partial_slice==&table[2]);
  assert(table[2].user_time==5 && table[4].sys_time==4);
  cp32_irq_saved_owner=&table[IDLE];cp32_clock_charge(3);
+ assert(cp32_partial_slice==NIL_PROC);
  assert(table[IDLE].user_time==3 && table[4].sys_time==4);
  k_reenter=2;cp32_clock_charge(2);
  assert(table[HARDWARE].user_time==2 && table[4].sys_time==6);
@@ -35,6 +41,11 @@ int main(void){
  assert(table[3].user_time==1 && table[4].sys_time==7);
  k_reenter=1;cp32_irq_saved_owner=0;bill_ptr=0;cp32_clock_charge(1);
  assert(table[HARDWARE].user_time==3 && cp32_clock_accounted_ticks==12);
+ cp32_irq_saved_owner=&table[2];cp32_clock_charge(1);
+ assert(table[2].user_time==6 && !cp32_partial_slice);
+ cp32_clock_charge(2);assert(cp32_partial_slice==&table[2]);
+ cp32_clock_charge(6);assert(!cp32_partial_slice && table[2].user_time==14);
+ k_reenter=2;cp32_clock_charge(1);assert(!cp32_partial_slice);
  puts("process accounting: saved owner, outer/nested IRQs, idle, billing and batched ticks pass");
 }
 '''

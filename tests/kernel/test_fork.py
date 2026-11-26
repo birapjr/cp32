@@ -34,17 +34,17 @@ pre=r'''
 #define CP32_SUPER_INVALID 22
 #define IMAGE_BYTES 32768U
 #define CP32_WAIT_LIVE (-1000)
-struct cp32_fproc {struct cp32_fproc *suspended;unsigned pid;unsigned short root_inode,uid,euid,gid,egid,mask;char cwd[256];int fds[4];unsigned cloexec;int input;};
+struct cp32_fproc {struct cp32_fork_state *lifecycle;struct cp32_fproc *suspended;unsigned pid;unsigned short root_inode,uid,euid,gid,egid,mask;char cwd[256];int fds[4];unsigned cloexec;int input;};
 typedef struct {int m_type,m_source,m1_i1;} message;
 struct proc {
  unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
- unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
+ unsigned short p_parent_pid,p_exitstatus;union {struct {uint32_t p_heap_floor,p_heap_break;};struct {uint32_t p_fault_pc,p_fault_cause;};};
  int p_nr,p_pid,p_flags,p_getfrom,p_alarm,p_pending,p_pendcount;
  unsigned user_time,sys_time,child_utime,child_stime,p_shadow;
  struct {unsigned a[16],pc,sp;} p_reg;
  int p_int_held,p_int_blocked,p_blocked_frame_result;
  struct proc *p_nextready,*p_nextheld,*p_callerq,*p_sendlink;
- void *p_stguard;message *p_messbuf;
+ union {void *p_stguard;struct cp32_fproc *p_files;};message *p_messbuf;
 };
 static struct proc procs[NR_PROCS],*current_proc=procs+1,*proc_ptr=procs+1,*bill_ptr;
 static struct proc *held_head,*rdy_head[NQ];
@@ -52,24 +52,33 @@ static volatile struct proc *cp32_irq_return_proc,*cp32_blocked_return_proc,*cp3
 #define proc_addr(n) (procs+(n))
 static unsigned char live[32768],original[32768];
 static union {uint64_t align;unsigned char bytes[33536];} staging[2];
-static int inuse[2];
-static unsigned char *stage(unsigned base){assert(base>=123 && base<=124);return staging[base-123].bytes;}
-static struct cp32_fproc cp32_app_state;
+static int inuse[2],root_inuse;
+static unsigned char root_image[32768];
+static unsigned char *stage(unsigned base){if(base==122){assert(root_inuse);return root_image;}assert(base>=123 && base<=124);return staging[base-123].bytes;}
+static struct cp32_fproc cp32_root_files;
+static struct cp32_fproc *cp32_active_files=&cp32_root_files;
+#define cp32_app_state (*cp32_active_files)
 static struct cp32_fproc *cp32_fproc_suspended;
 static int handles[8],refs,position,fail_dup;
 static int cp32_fd_dup(int fd){assert(handles[fd]);if(fail_dup)return -24;for(int n=0;n<8;n++)if(!handles[n]){handles[n]=1;refs++;return n;}return -24;}
 static int cp32_fs_errno(int r){return r;}
 static int cp32_fd_close(int fd){assert(handles[fd]);handles[fd]=0;refs--;return 0;}
 static int locked,alloc_fail,allocated,allocs,frees,syncs;
+static unsigned window_busy;
+static int cp32_application_window_busy(void){return window_busy;}
 static int lock_save(void){assert(!locked);locked=1;return 0;}
 static void restore_lock(int s){assert(locked && !s);locked=0;}
 static void panic(const char *s,int n){(void)n;fprintf(stderr,"%s\n",s);assert(0);}
 static int _sendrec(int nr,message *m){
  assert(nr==MM_PROC_NR && !locked);m->m_source=nr;
+ if(m->m_type==CP32_MM_ALLOCATE && m->m1_i1==IMAGE_BYTES>>CLICK_SHIFT) {
+  assert(!root_inuse);m->m1_i1=alloc_fail ? 0:122;m->m_type=alloc_fail ? -12:0;root_inuse=!alloc_fail;return 0;
+ }
+ if(m->m_type==CP32_MM_RELEASE && m->m1_i1==122) {assert(root_inuse);root_inuse=0;m->m_type=0;return 0;}
  if(m->m_type==CP32_MM_ALLOCATE){if(allocated==2){m->m_type=-12;m->m1_i1=0;return 0;}assert((unsigned)m->m1_i1*256<=sizeof(staging[0]));
   int i=inuse[0] ? 1:0;
   m->m_type=alloc_fail ? -12:0;m->m1_i1=alloc_fail ? 0:123+i;
-  if(!alloc_fail){inuse[i]=1;allocated++;allocs++;}
+  if(!alloc_fail){memset(staging[i].bytes,0xa5,sizeof(staging[i]));inuse[i]=1;allocated++;allocs++;}
  }else{int i=m->m1_i1-123;assert(i>=0 && i<2 && inuse[i] && m->m_type==CP32_MM_RELEASE);
   inuse[i]=0;allocated--;frees++;m->m_type=0;}
 
@@ -78,10 +87,12 @@ static int _sendrec(int nr,message *m){
 '''
 proc='\n'.join(extract_function(root/'src/kernel/process.c',n) for n in ('process_detached','process_pid_free','cp32_proc_clone','cp32_proc_release'))
 fs='\n'.join(extract_function(root/'src/fs/fproc.c',n) for n in ('cp32_fproc_exit','cp32_fproc_clone'))
-bridge='\n'.join(extract_function(root/'src/kernel/cp32-shell.c',n) for n in ('cp32_shell_app_files_fork','cp32_shell_app_files_exchange','cp32_shell_app_files_restore'))
+bridge='\n'.join(extract_function(root/'src/kernel/cp32-shell.c',n) for n in ('cp32_shell_app_files_current','cp32_shell_app_files_fork','cp32_shell_app_files_exchange','cp32_shell_app_files_restore'))
 source=(root/'src/kernel/fork.c').read_text();source=source[source.index('struct cp32_fork_state {'):]
 source=source.replace('extern int _sendrec(int,message *);','')
 source=source.replace('(unsigned char *)(uintptr_t)(base<<CLICK_SHIFT)','stage(base)')
+source=source.replace('(void *)(uintptr_t)(from_base<<CLICK_SHIFT)','stage(from_base)').replace('(void *)(uintptr_t)(to_base<<CLICK_SHIFT)','stage(to_base)')
+source=source.replace('(void *)(uintptr_t)(forked.backing<<CLICK_SHIFT)','stage(forked.backing)').replace('(void *)(uintptr_t)(old->backing<<CLICK_SHIFT)','stage(old->backing)')
 source=source.replace('(void *)IMAGE_BASE','live').replace('(unsigned *)IMAGE_BASE','(unsigned *)live').replace('(unsigned *)(uintptr_t)(base<<CLICK_SHIFT)','(unsigned *)stage(base)')
 source=source.replace('((base<<CLICK_SHIFT)+IMAGE_BYTES+sizeof(struct cp32_fproc))','(stage(base)+IMAGE_BYTES+sizeof(struct cp32_fproc))')
 source=source.replace('__asm__ volatile("memw\\n\\tisync" ::: "memory");','syncs++;')
@@ -91,7 +102,7 @@ source=source.replace('memcpy(status,&value,sizeof(value))','memcpy(live+16384+p
 compat=r'''
 static void state_in(struct proc *p,int pp,unsigned f,unsigned b){p->p_parent_pid=pp;p->p_heap_floor=f;p->p_heap_break=b;}
 static void state_out(struct proc *p,int *pp,unsigned *f,unsigned *b){*pp=p->p_parent_pid;*f=p->p_heap_floor;*b=p->p_heap_break;}
-static int old_start(struct proc **p,int pid,int *pp,unsigned *f,unsigned *b){state_in(*p,*pp,*f,*b);int r=cp32_fork_start(p,pid);state_out(*p,pp,f,b);return r;}
+static int old_start(struct proc **p,int pid,int *pp,unsigned *f,unsigned *b){if(!forked.backing)assert(!cp32_fork_bind(*p));state_in(*p,*pp,*f,*b);int r=cp32_fork_start(p,pid);state_out(*p,pp,f,b);return r;}
 static int old_finish(struct proc **p,int status,int *pp,unsigned *f,unsigned *b,unsigned sig){state_in(*p,*pp,*f,*b);int r=cp32_fork_finish(p,status,sig);state_out(*p,pp,f,b);return r;}
 static int old_handoff(struct proc **p,int *pp,unsigned *f,unsigned *b,const message *m){state_in(*p,*pp,*f,*b);int r=cp32_fork_handoff(p,m);state_out(*p,pp,f,b);return r;}
 '''
@@ -100,6 +111,7 @@ def historic(code):
  return code
 test=r'''
 static void setup(void){
+ if(root_inuse)cp32_fork_reset();
  memset(procs,0,sizeof(procs));for(int n=3;n<NR_PROCS;n++){procs[n].p_nr=n;procs[n].p_flags=P_SLOT_FREE;}
  struct proc *p=procs+3;p->p_pid=100;p->p_flags=RECEIVING;p->p_getfrom=FS_PROC_NR;
  p->p_messbuf=(message *)42;p->p_reg.pc=0x403d8100;p->p_reg.sp=CP32_APP_TOP-32;
@@ -107,7 +119,7 @@ static void setup(void){
  memset(&cp32_app_state,0,sizeof(cp32_app_state));cp32_app_state.pid=100;cp32_app_state.mask=0022;
  strcpy(cp32_app_state.cwd,"/boot");cp32_app_state.fds[0]=1;handles[0]=1;refs=1;position=0;
  for(unsigned n=0;n<sizeof(live);n++)live[n]=(unsigned char)(n*7);
- memcpy(original,live,sizeof(live));cp32_fork_bind(procs+3);
+ memcpy(original,live,sizeof(live));assert(!cp32_fork_bind(procs+3));
 }
 int main(void){
  setup();struct proc *active=procs+3;int pp=1;uint32_t floor=10,brk=20;

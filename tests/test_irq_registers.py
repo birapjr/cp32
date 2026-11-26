@@ -53,11 +53,13 @@ class Machine:
                    "exccause": 4, "interrupt": 4, "intenable": 4}
         self.sr.update(zip(SPECIAL, ORIGINAL_SPECIAL))
         self.mem = {}
-        self.symbols = {"_stack_top": 0x3FCFF000}
+        self.symbols = {"_stack_top": 0x3FCFF000,
+                        "_exception_stack_top": 0x3FCB4000}
         self.pc = 0
         self.return_pc = None
         self.dispatch = None
         self.calls = []
+        self.return_prepare = None
         self.stores = []
 
     def value(self, token):
@@ -141,8 +143,19 @@ class Machine:
             elif op == "call0":
                 self.calls.append(args[0])
                 assert self.reg[1] % 16 == 0, "unaligned C stack"
-                assert self.dispatch is not None, "unexpected C call"
-                self.dispatch(self, args[0])
+                if args[0] != "exception_dump":
+                    assert self.value("_exception_stack_top")-0x4000 <= self.reg[1] < self.value("_exception_stack_top"), "C handler on application stack"
+                if args[0] == "cp32_prepare_return":
+                    assert self.reg[2] == self.reg[15], "restore owner changed"
+                    assert self.sr["ps"] & 0x10, "image activation without EXCM"
+                    if self.return_prepare is not None:
+                        self.return_prepare(self)
+                    for reg in range(12):
+                        if reg != 1:
+                            self.reg[reg] = 0xCCCCCCCC
+                else:
+                    assert self.dispatch is not None, "unexpected C call"
+                    self.dispatch(self, args[0])
             elif op == "rsync":
                 pass
             elif op == "rfe":
@@ -163,6 +176,26 @@ class IRQRegisters(unittest.TestCase):
         machine.global_set("cp32_user_dispatch_blocked", 0)
         machine.global_set("cp32_user_rfe_count", 0)
         return machine
+
+    def test_final_restore_prepares_image_then_reads_updated_frame(self):
+        m=self.prepare()
+        m.global_set("cp32_context_handoff_gate",0)
+        owner=m.global_get("proc_ptr")
+        m.dispatch=lambda cpu,name: self.assertEqual(name,"cp32_irq_dispatch")
+        def prepare_return(cpu):
+            self.assertEqual(cpu.reg[2],owner)
+            self.assertEqual(cpu.reg[1],cpu.value("_exception_stack_top")-16)
+            # Model image activation and signal-frame preparation: overwrite
+            # application SRAM and change the authoritative saved frame.
+            for addr in range(0x3fcec000,0x3fcf0000,4):cpu.mem[addr]=0xBAD00BAD
+            cpu.mem[owner+CONSTANTS["CP32_REG_PC_OFFSET"]]=0x403d8100
+            cpu.mem[owner+8]=15
+        m.return_prepare=prepare_return
+        m.run("irq_kernel")
+        self.assertEqual(m.return_pc,0x403d8100)
+        self.assertEqual(m.reg[2],15)
+        self.assertEqual(m.reg[1],m.original[1])
+        self.assertIn("cp32_prepare_return",m.calls)
 
     def test_pending_mask_preserves_enabled_unregistered_sources(self):
         for entry in ("irq_kernel", "irq_user"):
@@ -291,7 +324,7 @@ class IRQRegisters(unittest.TestCase):
                     def dispatch(cpu, name):
                         self.assertEqual(name, "cp32_task_ipc_dispatch")
                         self.assertEqual(cpu.reg[2], owner)
-                        self.assertEqual(cpu.reg[3], cpu.original[1] - 128)
+                        self.assertEqual(cpu.reg[3], cpu.value("_exception_stack_top") - 128)
                         self.assertEqual(cpu.reg[4], 1)
                         self.assertEqual(cpu.frame_read(cpu.reg[3]),
                                          [*cpu.original, original_pc, original_ps,
@@ -310,6 +343,72 @@ class IRQRegisters(unittest.TestCase):
                     self.assertEqual(m.sr["ps"], original_ps & ~0x10)
                     self.assertEqual(tuple(m.sr[r] for r in SPECIAL), special)
                     self.assertFalse(any(0x3FCBFF80 <= a < 0x3FCC0000 for a in m.stores))
+
+    def test_dispatch_survives_application_stack_replacement(self):
+        # Executable source model: overwrite every application data/stack byte
+        # in C dispatch, as an image activation would. Entry/epilogue must not
+        # read their temporary frame from that old address space afterward.
+        for entry in ("irq_kernel", "irq_user"):
+            for cause in (0, 1, 4):
+                with self.subTest(entry=entry, cause=cause):
+                    m = self.prepare()
+                    m.reg[1] = CONSTANTS["CP32_APP_TOP"]-32
+                    m.original = m.reg.copy()
+                    m.sr["exccause"] = cause
+                    m.global_set("cp32_context_handoff_gate", 1)
+                    selected = 0x3FC82000
+                    expected = [0xD0000000+i for i in range(16)]
+                    expected[1] = 0x3FCDA000
+                    def dispatch(cpu, name):
+                        frame = cpu.reg[2] if cause == 4 else cpu.reg[3]
+                        self.assertGreaterEqual(frame, cpu.value("_exception_stack_top")-0x4000)
+                        self.assertLess(frame, cpu.value("_exception_stack_top"))
+                        for address in range(CONSTANTS["CP32_APP_DATA"], CONSTANTS["CP32_APP_TOP"], 4):
+                            cpu.mem[address] = 0xEEEEEEEE
+                        cpu.frame_write(selected, expected, 0x403D8120, 0x100)
+                        cpu.global_set("cp32_irq_return_proc", selected)
+                        cpu.reg[2] = 0
+                    m.dispatch = dispatch
+                    m.run(entry)
+                    self.assertEqual(m.reg, expected)
+                    self.assertEqual(m.return_pc, 0x403D8120)
+                    self.assertFalse(any(CONSTANTS["CP32_APP_DATA"] <= a < CONSTANTS["CP32_APP_TOP"] for a in m.stores))
+
+    def test_invalid_application_sp_does_not_receive_entry_stores(self):
+        class Halt(Exception):
+            pass
+        for entry in ("irq_kernel", "irq_user"):
+            m = self.prepare()
+            m.reg[1] = 0
+            m.original = m.reg.copy()
+            m.sr.update(exccause=1, excvaddr=0)
+            def dispatch(cpu, name):
+                if name == "cp32_task_ipc_dispatch":
+                    self.assertEqual(cpu.frame_read(cpu.reg[3])[1], 0)
+                    self.assertTrue(all(cpu.value("_exception_stack_top")-128 <= a < cpu.value("_exception_stack_top") for a in cpu.stores))
+                    # Production rejects the invalid frame; assembly must halt,
+                    # without first corrupting memory through the bad user SP.
+                    cpu.reg[2] = 22
+                    return
+                self.assertEqual(name, "exception_dump")
+                raise Halt
+            m.dispatch = dispatch
+            with self.assertRaises(Halt):
+                m.run(entry)
+
+    def test_nested_level1_rejected_before_stack_reuse(self):
+        class Halt(Exception):
+            pass
+        m = self.prepare()
+        m.global_set("k_reenter", 1)
+        m.sr["excvaddr"] = 0
+        def dispatch(cpu, name):
+            self.assertEqual(name, "exception_dump")
+            self.assertFalse(cpu.stores)
+            raise Halt
+        m.dispatch = dispatch
+        with self.assertRaises(Halt):
+            m.run("irq_kernel")
 
     def test_initial_entry_restores_every_general_register(self):
         m = self.prepare()

@@ -8,6 +8,7 @@
  * A zero PID is an inactive record. Slots are bound by the process lifecycle,
  * never selected by an application-provided PID. */
 struct cp32_fproc {
+  struct cp32_fork_state *lifecycle; /* kernel continuation, bound after clone */
   struct cp32_fproc *suspended; /* next saved ancestor; active records use NULL */
   unsigned pid;
   unsigned short root_inode,uid,euid,gid,egid,mask; /* MINIX V2 widths */

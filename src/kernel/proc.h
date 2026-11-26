@@ -47,7 +47,10 @@ typedef char cp32_stackframe_special_offsets[
 struct proc {
   struct stackframe_s p_reg;	/* process' registers saved in stack frame */
 
-  reg_t *p_stguard;		/* stack guard word */
+  union {
+    reg_t *p_stguard; /* task stack guard; applications use their FS record */
+    struct cp32_fproc *p_files;
+  };
   reg_t p_shadow;		/* CP32: MM backing base in clicks; zero for resident image */
 
   int p_nr;			/* number of this process (for fast access) */
@@ -87,7 +90,13 @@ struct proc {
    * Appended to preserve existing assembly-visible field offsets. */
   /* Application PIDs <=30000; encoded wait status uses at most16 bits. */
   unsigned short p_parent_pid, p_exitstatus;
-  reg_t p_heap_floor, p_heap_break;
+  /* A terminal fault replaces heap state only after the exit frame commits.
+   * p_exitstatus is then its pending signal; the application cannot resume. */
+  union {
+    struct { reg_t p_heap_floor, p_heap_break; };
+    struct { reg_t p_fault_pc, p_fault_cause; };
+    struct { reg_t p_zombie_uid, p_zombie_euid; };
+  };
   /* Application PIDs <=30000, signals 1..15: bounded 16-bit storage. */
   unsigned short p_app_group, p_app_sigmask, p_app_pending, p_app_ignore;
 };
@@ -147,6 +156,8 @@ EXTERN struct proc *pproc_addr[NR_TASKS + NR_PROCS];
    by indexing the pproc_addr array, while accessing an element i requires
    a multiplication with sizeof(struct proc) to determine the address */
 EXTERN struct proc *bill_ptr;	/* ptr to process to bill for clock ticks */
+/* Interrupted application with time left in its quantum, for IRQ requeue only. */
+EXTERN struct proc *cp32_partial_slice;
 EXTERN struct proc *rdy_head[NQ];	/* pointers to ready list headers */
 EXTERN struct proc *rdy_tail[NQ];	/* pointers to ready list tails */
 EXTERN int cp32_ready_queue_check(void);

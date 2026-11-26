@@ -9,7 +9,7 @@ sys.path.insert(0,str(root/'tools'))
 from make_minix_demo import build_image
 shell=root/'src/kernel/cp32-shell.c'
 code='\n'.join(extract_function(shell,n).replace('_sendrec(', 'clock_sendrec(') if n=='cp32_shell_clock' else extract_function(shell,n) for n in ('cp32_shell_clock','cp32_shell_app_files_reset','cp32_shell_app_files_exec','cp32_shell_exec_open','cp32_shell_exec_close','cp32_shell_app_file','cp32_shell_app_read'))
-replace=extract_function(root/'src/kernel/application.c','application_replace')
+replace=extract_function(root/'tests/mm/application_legacy.c','application_replace')
 # Only physical-address accesses and instruction synchronization are modeled.
 replace=replace.replace('memcpy(&copy,request->m1_p1,sizeof(copy));','memcpy(&copy,live_data+(p-CP32_APP_DATA),sizeof(copy));')
 replace=replace.replace('stage=(unsigned char *)(uintptr_t)(base<<CLICK_SHIFT);','stage=staging;')
@@ -38,7 +38,7 @@ typedef uintptr_t reg_t;
 typedef struct {unsigned NEW_TIME;int m_type,m_source,m1_i1,m1_i3;char *m1_p1;} message;
 struct proc {
  unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
- unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
+ unsigned short p_parent_pid,p_exitstatus;union {struct {uint32_t p_heap_floor,p_heap_break;};struct {uint32_t p_fault_pc,p_fault_cause;};};
  struct {reg_t a[16],pc,psw,sp,sar,lbeg,lend,lcount;} p_reg;
  int p_pid,p_flags,p_getfrom,p_sendto;
  struct proc *p_callerq,*p_sendlink;

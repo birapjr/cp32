@@ -24,10 +24,10 @@ int main(void){
  assert(!cp32_shell_output_len && writes==1 && !strcmp(lcd,"before\n"));
  assert(strstr(usb,"app\r\n") && strstr(usb,"Hello exit=0"));
  cp32_shell_test_progress("\r\n",2);
- for(int i=0;i<3;i++)cp32_shell_test_progress(".",1);
- assert(cp32_shell_usb_only && writes==5 && !strstr(usb,"..."));
+ for(int i=0;i<5;i++)cp32_shell_test_progress(".",1);
+ assert(cp32_shell_usb_only && writes==7 && !strstr(usb,"....."));
  cp32_shell_usb_only=0;cp32_shell_display("\r\n");cp32_shell_display("[TEST ALL PASS]\r\n");cp32_shell_flush();
- assert(!strcmp(lcd,"before\n\r\n...\r\n[TEST ALL PASS]\r\n") && writes==6);
+ assert(!strcmp(lcd,"before\n\r\n.....\r\n[TEST ALL PASS]\r\n") && writes==8);
  cp32_shell_print("normal");cp32_shell_flush();assert(strstr(lcd,"normal") && strstr(usb,"normal"));
 }
 '''

@@ -23,6 +23,8 @@ NAMES = ['cp32_save_blocked_frame', 'cp32_complete_blocked_frame',
 BODIES = '\n'.join(extract_function(ROOT/'src/kernel/proc.c', n) for n in NAMES)
 BODIES += '\n' + extract_function(ROOT/'src/kernel/main.c', 'cp32_boot_process_flags')
 PRELUDE = r'''
+static void cp32_trace_exception_stack(unsigned kind){(void)kind;}
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -47,12 +49,16 @@ typedef struct { int m_source, m_type, payload; } message;
 typedef struct { reg_t a[16], pc, psw, sp, sar, lbeg, lend, lcount; } cp32_user_frame_t;
 struct proc {
   cp32_user_frame_t p_reg;
+  unsigned user_time, sys_time;
   int p_nr, p_flags, p_getfrom, p_sendto, p_int_blocked, p_int_held;
   int p_blocked_frame_valid, p_blocked_frame_result;
   reg_t p_blocked_frame_pc, p_blocked_frame_psw, p_blocked_frame_sp;
   struct proc *p_callerq, *p_sendlink, *p_nextready, *p_nextheld;
   message *p_messbuf;
 };
+static struct proc *runtime_pin;
+static struct proc *cp32_partial_slice;
+static int cp32_runtime_can_run(struct proc *p) { return !runtime_pin || p->p_nr<=LOW_USER || p==runtime_pin; }
 static struct proc proc[NR_TASKS+NR_PROCS], *pproc_addr[NR_TASKS+NR_PROCS];
 #define BEG_PROC_ADDR proc
 #define END_PROC_ADDR (proc+NR_TASKS+NR_PROCS)
@@ -89,6 +95,7 @@ start=PRELUDE.index('static int cp32_user_frame_contract_valid')
 PRELUDE=PRELUDE[:start]+extract_function(ROOT/'src/kernel/irq_frame.h', 'cp32_user_frame_contract_valid')+'\n'
 TESTS = r'''
 static void reset(void) {
+  cp32_partial_slice=NIL_PROC;
   memset(proc,0,sizeof(proc)); memset(rdy_head,0,sizeof(rdy_head)); memset(rdy_tail,0,sizeof(rdy_tail));
   for (int i=0;i<NR_TASKS+NR_PROCS;i++) {
     pproc_addr[i]=&proc[i]; proc[i].p_nr=i-NR_TASKS; proc[i].p_flags=P_SLOT_FREE;
@@ -225,15 +232,16 @@ static unsigned console_cpu_share(int parked) {
   reset();
   unsigned tty_runs=0;
   /* A long TTY render with CLOCK runnable and FS/MM/SYS waiting for IPC.
-   * Image 46 also has four dummy tasks and LOW_USER spinning in idle code. */
+   * INIT now owns LOW_USER and waits for adopted children. The historical
+   * unparked comparison also runs the four dummy tasks and idle user slot. */
   for (int n=-NR_TASKS;n<=LOW_USER;n++) {
     struct proc *p=proc_addr(n);
     p->p_reg=proc_addr(CLOCK)->p_reg;
     p->p_flags=parked ? cp32_boot_process_flags(n) : 0;
-    if(n==TTY_PROC_NR || n==CLOCK || n==SYSTASK || n==MM_PROC_NR || n==FS_PROC_NR || n==MEM)
+    if(n==TTY_PROC_NR || n==CLOCK || n==SYSTASK || n==MM_PROC_NR || n==FS_PROC_NR || n==MEM || n==LOW_USER)
       assert(cp32_boot_process_flags(n)==0);
     else if(n!=IDLE && n!=HARDWARE) assert(cp32_boot_process_flags(n)==P_STOP);
-    if(n==FS_PROC_NR || n==MM_PROC_NR || n==SYSTASK || (parked && n==MEM)) continue;
+    if(n==FS_PROC_NR || n==MM_PROC_NR || n==SYSTASK || (parked && (n==MEM || n==LOW_USER))) continue;
     if(!isidlehardware(n) && !p->p_flags) ready(p);
   }
   proc_ptr=current_proc=proc_addr(IDLE);
@@ -317,7 +325,8 @@ counters=set(re.findall(r'\bcp32_\w+', BODIES))-known
 prototypes='\n'.join(body[:body.index('{')].rstrip()+';' for body in
                       [extract_function(ROOT/'src/kernel/proc.c', n) for n in NAMES])
 source=PRELUDE+'\n'+''.join('static unsigned '+n+';\n' for n in sorted(counters))+prototypes+'\n'+BODIES+TESTS
-with tempfile.TemporaryDirectory(prefix='cp32-task-ipc-') as folder:
-    p=Path(folder); (p/'test.c').write_text(source)
-    subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror',str(p/'test.c'),'-o',str(p/'test')],check=True)
-    subprocess.run([str(p/'test')],check=True)
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory(prefix='cp32-task-ipc-') as folder:
+        p=Path(folder); (p/'test.c').write_text(source)
+        subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror',str(p/'test.c'),'-o',str(p/'test')],check=True)
+        subprocess.run([str(p/'test')],check=True)

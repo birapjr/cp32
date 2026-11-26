@@ -6,13 +6,13 @@ sys.dont_write_bytecode=True
 root=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(root/'tests'))
 from test_idle_handoff import extract_function
-source=extract_function(root/'src/kernel/application.c','cp32_application_run')
+source=extract_function(root/'tests/mm/application_legacy.c','cp32_application_run')
 source=source.replace('__asm__ volatile("memw\\n\\tisync" ::: "memory");','syncs++;')
 source=source.replace('memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);','memset(stack,0,sizeof(stack));')
 source=source.replace('memset((void *)old,0,child->p_heap_break-old);','memset(heap+old-CP32_APP_DATA,0,child->p_heap_break-old);')
 pre=r'''
-static struct {unsigned signal,cause,pc;} app_fault;
-static unsigned application_fault_take(int pid){(void)pid;return 0;}
+struct proc;
+static unsigned application_fault_take(struct proc *p){(void)p;return 0;}
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
@@ -63,11 +63,11 @@ typedef void (*cp32_app_output)(const char *,unsigned);
 typedef struct {int m_type,m1_i1,m1_i2,m1_i3; char *m1_p1;} message;
 struct proc {
  unsigned short p_app_group,p_app_sigmask,p_app_pending,p_app_ignore;
- unsigned short p_parent_pid,p_exitstatus;uint32_t p_heap_floor,p_heap_break;
+ unsigned short p_parent_pid,p_exitstatus;union {struct {uint32_t p_heap_floor,p_heap_break;};struct {uint32_t p_fault_pc,p_fault_cause;};};
  int p_nr,p_pid,p_flags,p_getfrom;
  unsigned user_time,sys_time,child_utime,child_stime;
  int p_alarm,p_pending,p_pendcount,p_blocked_frame_result;
- void *p_stguard;unsigned p_shadow;message *p_messbuf;
+ union {void *p_stguard;struct cp32_fproc *p_files;};unsigned p_shadow;message *p_messbuf;
  struct {reg_t pc,psw,sp,a[16];} p_reg;
  struct {uint32_t mem_vir,mem_phys,mem_len;} p_map[3];
  struct proc *p_callerq,*p_sendlink,*p_nextready,*p_nextheld;
@@ -122,7 +122,7 @@ static int cp32_fork_disposition(int sig,unsigned action){(void)sig;(void)action
 static int cp32_fork_live(void){return 0;}
 static void cp32_fork_request(message *m){memset(m,0,sizeof(*m));}
 static int cp32_fork_handoff(struct proc **p,const message *m){(void)p;(void)m;return 0;}
-static void cp32_fork_bind(struct proc *p){p->p_app_group=1;}
+static int cp32_fork_bind(struct proc *p){p->p_app_group=1;return 0;}
 static int cp32_fork_active(void){return 0;}
 static void cp32_fork_reset(void){}
 static int cp32_fork_start(struct proc **p,int pid){(void)p;(void)pid;return -11;}
@@ -130,6 +130,7 @@ static int cp32_fork_finish(struct proc **p,int st,unsigned sig){(void)sig;(void
 static int cp32_fork_wait(int pid,void *p,unsigned opts){(void)pid;(void)p;(void)opts;return -10;}
 static int application_times(struct proc *p,message *m){(void)p;(void)m;return -22;}
 static int application_replace(struct proc *p,message *m,uint32_t *f,uint32_t *b) {(void)p;(void)m;(void)f;(void)b;return -8;}
+static volatile unsigned application_io_pins;
 static int application_file_request(message *m) {(void)m;return -22;}
 static int receive(int nr,message *m) {
  assert(nr==app_endpoint); struct proc *p=procs+nr; p->p_flags=RECEIVING;p->p_getfrom=1;
@@ -211,6 +212,7 @@ int main(void) {
    p->p_map[n].mem_phys=CP32_APP_DATA>>CLICK_SHIFT;
    p->p_map[n].mem_len=(CP32_APP_TOP-CP32_APP_DATA)>>CLICK_SHIFT;
  }
+ p->p_exitstatus=4;assert(cp32_proc_publish(p)==EINVAL);p->p_exitstatus=0;
  p->p_shadow=123;assert(cp32_proc_publish(p)==EINVAL && p->p_flags==NO_MAP);p->p_shadow=0;
  p->p_map[S].mem_phys++;assert(cp32_proc_publish(p)==EINVAL);p->p_map[S].mem_phys--;
  p->p_reg.a[15]--;assert(cp32_proc_publish(p)==EINVAL);p->p_reg.a[15]++;
@@ -259,7 +261,10 @@ int main(void) {
  assert(cp32_proc_clone(3,3,701,MM_PROC_NR)==EINVAL);
  assert(cp32_proc_clone(3,4,700,MM_PROC_NR)==EINVAL);
  rdy_head[0]=child;assert(cp32_proc_clone(3,4,701,MM_PROC_NR)==EINVAL);rdy_head[0]=0;
- assert(cp32_proc_clone(3,4,701,MM_PROC_NR)==EINVAL);parent->p_shadow=0;
+ parent->p_getfrom=FS_PROC_NR;
+ assert(cp32_proc_clone(3,4,701,FS_PROC_NR)==EINVAL && !memcmp(child,&before,sizeof(before)));
+ parent->p_getfrom=MM_PROC_NR;
+ parent->p_exitstatus=4;assert(cp32_proc_clone(3,4,701,MM_PROC_NR)==EINVAL);parent->p_exitstatus=0;
  struct proc parent_before=*parent;
  assert(!cp32_proc_clone(3,4,701,MM_PROC_NR));
  assert(!memcmp(parent,&parent_before,sizeof(*parent)));
@@ -276,6 +281,6 @@ int main(void) {
 }
 '''
 with tempfile.TemporaryDirectory() as d:
- p=Path(d);(p/'test.c').write_text(pre+''.join(extract_function(root/'src/kernel/process.c',n) for n in ('process_detached','process_pid_free','cp32_proc_reserve','cp32_proc_clone','cp32_proc_publish','cp32_proc_release'))+extract_function(root/'src/kernel/context.c','cp32_exec_frame')+extract_function(root/'src/kernel/application.c','application_pid')+extract_function(root/'src/kernel/application.c','application_break')+source+test)
+ p=Path(d);(p/'test.c').write_text(pre+''.join(extract_function(root/'src/kernel/process.c',n) for n in ('process_detached','process_pid_free','cp32_proc_reserve','cp32_proc_clone','cp32_proc_publish','cp32_proc_release'))+extract_function(root/'src/kernel/context.c','cp32_exec_frame')+extract_function(root/'tests/mm/application_legacy.c','application_pid')+extract_function(root/'tests/mm/application_legacy.c','application_break')+source+test)
  subprocess.run(['cc','-std=c99','-Wall','-Wextra','-Werror','-Wno-pointer-to-int-cast','-I'+str(root/'src/mm'),str(p/'test.c'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

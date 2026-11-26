@@ -1,27 +1,51 @@
-# Pending hardware acceptance — image198 PROC-ZOMBIE
+# Pending hardware acceptance — image 207 APP-SLICE
 
-## Current quick procedure (supersedes the older per-image lists below)
+The image 207 updater passed one full `hello --t` run on the Cardputer.
+USB recorded all five checks, `[TEST ALL PASS]` and `Hello exit=0`. The first
+image swap took 3.08 ms. [USB capture](app-slice-v207-updater-pass.log).
 
-From `src/`, run `make updater` and `make flash-updater`. On the Cardputer run
-`apps`, then `sync`. Run `hello --t` on the updater, then install normal firmware
-with `make && make flash`. Confirm `[TEST PROC-ZOMBIE 198]` over USB.
+1. Repeat `hello --t` on the updater with the same SD card.
+2. From `src/`, run `make flash` to install normal firmware. Capture USB
+   from boot, confirm `[TEST APP-SLICE 207]` and run `hello --t` twice.
+3. Power off fully, restart normal firmware and run `hello --t` as the first
+   application. Save the USB logs from each run.
 
-Run `hello --t` twice, then once after a full power-off/restart. Expect:
+USB reports `fork-slot`, `swap-counts`, `signal` and `sigreturn` once per traced
+launch when those events occur. `swap-counts` measures the first full
+save/restore pair once per boot using the 16 MHz SYSTIMER. A 60 Hz timer period
+is about 266,667 counts. After 600 timer interrupts without a new stage the
+kernel can print `[CTX V207 stall=...]` and a `[CTX V207 slot=...]` line for
+the parent and first child. Keep those lines and any panic in the USB capture.
 
-- LCD: a new row with `..`, followed by `[TEST ALL PASS]` on the next line.
-- USB: `[TEST --zombie]`, `Zombie wait OK`, the MM check, `[TEST ALL PASS]`,
-  and `Hello exit=0`.
-- Normal prompt, keyboard and blinking cursor remain responsive.
+Expected LCD: a fresh row with `.....`, then `[TEST ALL PASS]`. Detailed logs
+remain USB-only. Expected USB cases:
 
-The test retains more than eight exited children, fills the process table,
-checks EAGAIN and invalid-pointer recovery, selectively collects/reuses a slot,
-drains remaining results and creates another child. No SD reformat is needed;
-update hello even though service ABI36 is unchanged. Save updater, normal and
-cold-boot logs and verify the two dots directly.
+1. `Concurrent process OK`: both parent/child make CPU progress without yield;
+   stack state stays private, independently live siblings run, repeated capacity
+   exhaustion is recoverable, selective waits and cleanup permit reuse.
+2. `Async signals OK`: masks/coalescing/ignore, handler return with live stack
+   state, SIGKILL restrictions, interrupted terminal read and live-child wait.
+3. `INIT adoption OK`: a child exits with a live grandchild; it observes PPID1
+   and completes independently, while INIT collects orphan status.
+4. `Concurrent I/O exec OK`: simultaneous private buffers/cwd, shared inherited
+   file offset, failed exec recovery and successful child exec preserving PID,
+   parent and file descriptor while resetting caught handlers.
+5. MM allocation/release check, then `[TEST ALL PASS]` and `Hello exit=0`.
 
-Image197 updater acceptance passed: [USB log](proc-image-v197-updater-pass.log).
-Image198 updater acceptance also passed: [USB log](proc-zombie-v198-updater-pass.log).
-Normal-firmware/cold-boot and LCD checks remain unconfirmed.
+The suite also prints `ps` without a dot. After completion run `ps`, `mm` and
+`disk`: INIT should be waiting, and no application/zombie should remain. Run
+`hello --line`, enter a short line and check editing/cursor blink. Preserve the
+complete logs and report the first failing test/exit code if any. Each test
+normally completes without typing input; do not type while `hello --t` runs.
+
+Normal firmware retains a192KiB heap; updater160KiB. Concurrency is deliberately
+bounded by available image memory and process slots. Tests adapt to exhaustion
+but require at least two simultaneous children. Firmware/software tests do not
+establish hardware timing, LCD appearance or SD behavior for image 207.
+
+Image203 updater foundation checks passed:
+[USB log](app-boundary-v203-updater-pass.log). This confirms exception-stack and
+filesystem-ownership checks, not the newly enabled image204 concurrency.
 
 ## Earlier acceptance records and detailed regression commands
 
@@ -429,3 +453,6 @@ reformat is needed. General signal handlers/asynchronous delivery remain absent.
 Image188 preserves ABI33 and the image187 hello binary. From an updated187 card,
 only make and make flash are needed, then hello --t. Verify dots appear during
 the run, not only at completion. Detailed USB output must still show each case.
+
+Image202 updater focused suite passed: [USB log](proc-context-v202-updater-pass.log).
+This does not establish the remaining priority1 features.

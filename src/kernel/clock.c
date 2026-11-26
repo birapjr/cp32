@@ -56,6 +56,8 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
+#include "app_process.h"
+#include "launch_trace.h"
 
 extern struct proc *current_proc;
 extern volatile struct proc *cp32_irq_saved_owner;
@@ -94,7 +96,6 @@ PRIVATE int syn_table[NR_TASKS+NR_PROCS];      /* which tasks get CLOCK_INT     
 PRIVATE clock_t pending_ticks;                  /* ticks seen by low level only     */
 PRIVATE int sched_ticks = SCHED_RATE;           /* counter: when 0, call scheduler  */
 PRIVATE struct proc *prev_ptr;                  /* last user process run by clock task */
-PRIVATE volatile int cp32_quantum_expired = 0;  /* flag to trigger preemption in IRQ return */
 
 /* Count only interrupts dispatched to the registered TARGET0 handler. */
 volatile uint32_t cp32_timer_irq_ticks;
@@ -136,11 +137,33 @@ CP32_IRAM_EXT PUBLIC int cp32_irq_register(unsigned line, cp32_irq_handler_t han
   return 0;
 }
 
+/* Removable production trace: one report per exception entry kind. Read the
+ * actual C stack, not the saved application's SP. EXCM keeps updates atomic. */
+CP32_IRAM_EXT PUBLIC void cp32_trace_exception_stack(unsigned kind)
+{
+#if defined(__XTENSA__)
+  static unsigned seen;
+  unsigned sp;
+  extern char _exception_stack_bottom[],_exception_stack_top[];
+  if(seen&kind)return;
+  seen|=kind;
+  __asm__ volatile("mov %0, a1" : "=r"(sp));
+  usbj_print("[CTX V203 stack=");usbj_print_u32(kind);
+  usbj_print(" ok=");
+  usbj_print_u32(sp>=(unsigned)_exception_stack_bottom && sp<(unsigned)_exception_stack_top);
+  usbj_print("]\r\n");
+#else
+  (void)kind;
+#endif
+}
+
 /* IRQ entry supplies INTERRUPT & INTENABLE. Dispatch each enabled pending
  * CPU line; keep enabled unregistered sources visible in unknown_count. */
 CP32_IRAM_EXT PUBLIC void cp32_irq_dispatch(cp32_irq_frame_t *frame, uint32_t pending)
 {
   unsigned line;
+  cp32_trace_exception_stack(cp32_irq_saved_owner != NIL_PROC &&
+      cp32_irq_saved_owner->p_nr > LOW_USER ? 4:1);
   for (line = 0; line < 32; line++) {
     uint32_t bit = 1u << line;
     if ((pending & bit) == 0) continue;
@@ -588,6 +611,12 @@ CP32_IRAM_EXT static void cp32_clock_charge(unsigned ticks)
     k_reenter==1 ? (struct proc *)cp32_irq_saved_owner:proc_ptr;
   struct proc *billed=bill_ptr;
   if(owner==NIL_PROC)owner=proc_addr(HARDWARE);
+  /* Charge only the interrupted application's ticks against its slice.
+   * Kernel work between two user returns must not rotate the next sibling
+   * into the physical window. Account a batched tick crossing a boundary. */
+  cp32_partial_slice = k_reenter == 1 && owner->p_nr > LOW_USER &&
+      ticks < SCHED_RATE - ((unsigned)owner->user_time % SCHED_RATE)
+      ? owner : NIL_PROC;
   cp32_clock_accounted_ticks+=ticks;
   owner->user_time+=ticks;
   if(billed!=NIL_PROC && owner!=billed && owner!=proc_addr(IDLE))
@@ -636,6 +665,9 @@ int irq;
 
   /* Wakeups can select another process; account the interrupted owner first. */
   cp32_tty_poll_tick();
+  /* MM polls FS when a terminal read is parked. Accounting and scheduler
+   * handoff remain active on every tick, including CPU-only workloads. */
+  if(cp32_runtime_needs_tick())interrupt(MM_PROC_NR);
 
   /* Step 4: Accumulate ticks; compute virtual 'now' for alarm/TTY checks. */
   pending_ticks += ticks;
@@ -663,7 +695,6 @@ int irq;
   if (--sched_ticks == 0) {
     sched_ticks = SCHED_RATE;   /* reset quantum        */
     prev_ptr    = bill_ptr;     /* new previous process */
-    cp32_quantum_expired = 1;   /* trigger preemption */
   }
 
   return 1;   /* re-enable clock interrupt */
@@ -677,6 +708,7 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
   if (frame == 0)
     return;
   cp32_timer_irq_ticks++;
+  cp32_trace_launch_tick();
   if ((((uintptr_t) frame) & 0x0Fu) == 0)
     cp32_clock_irq_frame_aligned_calls++;
   if ((uintptr_t) frame >= (uintptr_t) _stack_bottom &&
@@ -697,7 +729,6 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
        rdy_head[USER_Q] != NIL_PROC)) {
     cp32_irq_dispatch_active = 1;
     sched();
-    cp32_quantum_expired = 0;
     /* sched()/pick_proc() has now produced the authoritative selection.
      * Capture it immediately; later clock bookkeeping may change the global
      * selection pointer before the assembly return contract is finalized. */
@@ -771,6 +802,7 @@ CP32_IRAM_EXT PUBLIC void cp32_timer_irq_dispatch(cp32_irq_frame_t *frame)
     usbj_print("]\r\n");
   }
   cp32_irq_dispatch_active = 0;
+  cp32_partial_slice = NIL_PROC;
   /* The low-level IRQ return address for IDLE is an internal assembly loop.
    * Returning there bypasses kernel_idle_loop(), so future FS wakeups can
    * never be observed. Restore the C idle entry whenever IDLE is returned. */
