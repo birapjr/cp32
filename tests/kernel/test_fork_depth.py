@@ -11,11 +11,15 @@ pre+=r'''
 static int budget;
 static int _sendrec(int nr,message *m){
  assert(nr==MM_PROC_NR && !locked);m->m_source=nr;
+ if(m->m_type==CP32_MM_ALLOCATE && m->m1_i1==IMAGE_BYTES>>CLICK_SHIFT) {
+  assert(!root_inuse);m->m1_i1=alloc_fail ? 0:122;m->m_type=alloc_fail ? -12:0;root_inuse=!alloc_fail;return 0;
+ }
+ if(m->m_type==CP32_MM_RELEASE && m->m1_i1==122) {assert(root_inuse);root_inuse=0;m->m_type=0;return 0;}
  if(m->m_type==CP32_MM_ALLOCATE){
   assert((unsigned)m->m1_i1*256<=sizeof(staging[0]));
   if(allocated==budget || alloc_fail){m->m_type=-12;m->m1_i1=0;return 0;}
   int i;for(i=0;i<5 && inuse[i];i++) {}assert(i<5);
-  m->m_type=0;m->m1_i1=123+i;inuse[i]=1;allocated++;allocs++;
+  m->m_type=0;m->m1_i1=123+i;memset(staging[i].bytes,0xa5,sizeof(staging[i]));inuse[i]=1;allocated++;allocs++;
  }else{
   int i=m->m1_i1-123;assert(i>=0 && i<5 && inuse[i] && m->m_type==CP32_MM_RELEASE);
   inuse[i]=0;allocated--;frees++;m->m_type=0;
@@ -26,7 +30,7 @@ setup=f.test[:f.test.index('int main(void)')]
 test=r'''
 int main(void){
  for(budget=1;budget<=5;budget++)for(int repeat=0;repeat<3;repeat++) {
-  setup();cp32_fork_bind(procs+3);
+  setup();
   struct proc *active=procs+3;int pp=1,depth=0;uint32_t floor=16,brk=32;
   message request={2007,0,45};memset(live,0x40,sizeof(live));
   assert(!cp32_fork_sigmask(0,1U<<14));

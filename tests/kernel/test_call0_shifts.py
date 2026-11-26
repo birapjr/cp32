@@ -62,4 +62,43 @@ with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(['xtensa-esp32s3-elf-gcc', '-c', str(asm), '-o', str(obj)], check=True)
         result = subprocess.run(['python3', str(root / 'tools/check_call0.py'), str(obj)], capture_output=True)
         assert result.returncode == expected, result.stderr
-print('call0 shifts: all counts, boundary/random values and ELF ABI guard PASS')
+
+    # Same byte sequence as LOOP in two data locations: an inline literal
+    # between functions, and an app payload in non-executable rodata.
+    asm = Path(tmp) / 'loop.S'
+    elf = Path(tmp) / 'loop.elf'
+    fixture = """
+.text
+.literal_position
+.literal .Lword, 0x00038276
+.global helper
+.type helper,@function
+helper:
+    l32r a3,.Lword
+    {instruction}
+    nop
+    nop
+.Ldone:
+    ret
+.size helper,.-helper
+.section .rodata
+.word 0x00038276
+"""
+    for mnemonic in ('nop', 'loop', 'loopnez', 'loopgtz'):
+        instruction = 'nop' if mnemonic == 'nop' else mnemonic + ' a2,.Ldone'
+        asm.write_text(fixture.format(instruction=instruction))
+        subprocess.run(['xtensa-esp32s3-elf-gcc', '-nostdlib', '-mtext-section-literals',
+                        '-Wl,-e,helper', str(asm), '-o', str(elf)], check=True)
+        checker = ['python3', str(root / 'tools/check_call0.py')]
+        result = subprocess.run(checker + ['--kernel', str(elf)], capture_output=True, text=True)
+        if mnemonic == 'nop':
+            assert result.returncode == 0, result.stderr
+        else:
+            assert result.returncode == 1 and mnemonic + ' at ' in result.stderr, result.stderr
+            # Applications execute with EXCM clear and may use hardware loops.
+            subprocess.run(checker + [str(elf)], check=True, capture_output=True)
+    subprocess.run(['xtensa-esp32s3-elf-objcopy', '--remove-section=.xt.prop',
+                    str(elf)], check=True)
+    result = subprocess.run(checker + ['--kernel', str(elf)], capture_output=True, text=True)
+    assert result.returncode == 1 and '.xt.prop' in result.stderr, result.stderr
+print('call0 shifts, ELF ABI guard and kernel exception-mode loop checks PASS')

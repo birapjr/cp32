@@ -104,6 +104,8 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
+#include <esp32s3/app_layout.h>
+#include "../mm/proto.h"
 
 /* PSW masks. */
 #define IF_MASK 0x00000200
@@ -1023,14 +1025,18 @@ CP32_IRAM_EXT PUBLIC void inform()
 /*===========================================================================*
  *				umap					     *
  *===========================================================================*/
-CP32_IRAM_EXT PUBLIC phys_bytes umap(rp, seg, vir_addr, bytes)
-register struct proc *rp;	/* pointer to proc table entry for process */
-int seg;			/* T, D, or S segment */
-vir_bytes vir_addr;		/* virtual address in bytes within the seg */
-vir_bytes bytes;		/* # of bytes to be copied */
+CP32_IRAM_EXT PUBLIC phys_bytes umap(struct proc *rp, int seg,
+                                      vir_bytes vir_addr, vir_bytes bytes)
 {
 /* Calculate the physical memory address for a given virtual address. */
-
+#if (CHIP == ESP32_S3)
+  /* CP32 maps contain byte virtual origins. The historical MINIX segmented
+   * formula below uses click origins; use the common checked flat mapping,
+   * including nonresident application backing, for every system service. */
+  if (rp == NIL_PROC || seg < 0 || seg >= NR_SEGS ||
+      !isokprocn(rp->p_nr) || proc_addr(rp->p_nr) != rp) return 0;
+  return numap(rp->p_nr, vir_addr, bytes);
+#else
   vir_clicks vc;		/* the virtual address in clicks */
   phys_bytes pa;		/* intermediate variables as phys_bytes */
 #if (CHIP == INTEL) || (CHIP == ESP32_S3)
@@ -1082,6 +1088,7 @@ vir_bytes bytes;		/* # of bytes to be copied */
 #endif
   return(pa);
 #endif
+#endif /* ESP32_S3 flat maps */
 }
 
 
@@ -1104,7 +1111,7 @@ CP32_IRAM_EXT PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
         return 0;
     rp = proc_addr(proc_nr);
     if (rp == NIL_PROC || (rp < BEG_PROC_ADDR || rp >= END_PROC_ADDR) ||
-        rp->p_nr != proc_nr || (rp->p_flags & P_SLOT_FREE)) {
+        rp->p_nr != proc_nr || (rp->p_flags & (P_SLOT_FREE|P_ZOMBIE))) {
         return 0;
     }
 
@@ -1124,6 +1131,22 @@ CP32_IRAM_EXT PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
         offset = (uint64_t)vir - base;
         if (offset > size || (uint64_t)len > size - offset) continue;
         phys = ((uint64_t)rp->p_map[i].mem_phys << CLICK_SHIFT) + offset;
+        /* MINIX shadow mappings redirect copies into saved process memory.
+         * Xtensa saves the complete 32KiB text/data/stack image: data starts
+         * 16KiB into the backing. Never send an IPC reply into the resident
+         * sibling's stack merely because virtual addresses are identical.
+         * A returned physical span is borrowed only while image ownership
+         * is stable; mem_copy holds the scheduler lock through the copy. */
+        if (rp->p_shadow) {
+            if (rp->p_nr <= LOW_USER || vir < CP32_APP_DATA ||
+                vir >= CP32_APP_TOP || len > CP32_APP_TOP-vir ||
+                phys != (uint64_t)vir ||
+                (!cp32_mem_owned(rp->p_shadow,32768U>>CLICK_SHIFT,FS_PROC_NR) &&
+                 !cp32_mem_owned(rp->p_shadow,32768U>>CLICK_SHIFT,MM_PROC_NR)))
+                return 0;
+            phys = ((uint64_t)rp->p_shadow << CLICK_SHIFT) + 16384U +
+                   (vir-CP32_APP_DATA);
+        }
         if (phys > (phys_bytes)-1 || len - 1 > (phys_bytes)-1 - phys)
             continue;
         return (phys_bytes)phys;
@@ -1137,10 +1160,12 @@ CP32_IRAM_EXT PUBLIC phys_bytes numap(int proc_nr, vir_bytes vir, vir_bytes len)
  */
 CP32_IRAM_EXT PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc, vir_bytes dst_vir, vir_bytes len)
 {
+    int saved_ps = lock_save();
     phys_bytes src_phys = numap(src_proc, src_vir, len);
     phys_bytes dst_phys = numap(dst_proc, dst_vir, len);
 
     if (src_phys == 0 || dst_phys == 0) {
+        restore_lock(saved_ps);
         usbj_print("[MM E src="); usbj_print_u32((uint32_t)src_proc);
         usbj_print(" dst="); usbj_print_u32((uint32_t)dst_proc);
         usbj_print(" sp="); usbj_print_u32(src_phys);
@@ -1150,6 +1175,7 @@ CP32_IRAM_EXT PUBLIC int mem_copy(int src_proc, vir_bytes src_vir, int dst_proc,
     }
 
     phys_copy(src_phys, dst_phys, len);
+    restore_lock(saved_ps);
     return OK;
 }
 

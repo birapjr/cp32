@@ -145,6 +145,12 @@ SECTIONS {
     -------------------------------------------------- */
     .stack : ALIGN(16) {
         _stack_bottom = .;
+        /* Runtime exception stack occupies the unused lower boot-stack area.
+           Bootstrap uses the upper end before scheduling starts. main.c starts
+           the first task stack at _task_stack_start, above this window. */
+        _exception_stack_bottom = .;
+        _exception_stack_top = . + 16K;
+        _task_stack_start = _exception_stack_top;
         . = . + 32K;
         _stack_top = .;
     } > dram
@@ -155,6 +161,10 @@ SECTIONS {
         . = _stack_bottom + 0x13000;
         _runtime_stack_end = .;
     } > dram
+
+    /* GNU objdump uses these non-loadable Xtensa properties to distinguish
+       executable instructions from literal pools interleaved with code. */
+    .xt.prop 0 : { KEEP(*(.xt.prop)) }
 
     /* --------------------------------------------------
        Discard C++ / ARM unwind tables
@@ -177,6 +187,12 @@ SECTIONS {
        Reserve 16K code, 12K data and 4K stack above the kernel. */
     ASSERT(_runtime_stack_end <= 0x3FCE8000,
         "ERROR: kernel DRAM overlaps fixed application slot")
+    ASSERT(_exception_stack_top <= _task_stack_start &&
+           _exception_stack_bottom >= _stack_bottom &&
+           _exception_stack_top - _exception_stack_bottom == 16K,
+        "ERROR: exception stack overlaps task stacks")
+    ASSERT((_exception_stack_top & 15) == 0,
+        "ERROR: exception stack violates call0 alignment")
     ASSERT(_heap_end <= _stack_bottom,
         "ERROR: heap and stack overlap")
 }

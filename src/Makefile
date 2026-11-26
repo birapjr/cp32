@@ -10,6 +10,10 @@ OBJCOPY = xtensa-esp32s3-elf-objcopy
 
 # Flags
 CFLAGS  = -fstack-usage -ffreestanding -nostdlib -nostartfiles -g -O0 -ffunction-sections -fdata-sections -mlongcalls -mtext-section-literals -mabi=call0 -Iinclude -Ikernel
+# Exception and restart paths run with PS.EXCM set, which disables Xtensa
+# hardware loopback. Use branch loops in all kernel-linked C, including
+# shared library routines. Applications execute after RFE with loops enabled.
+KERNEL_CFLAGS = $(CFLAGS) -fno-branch-count-reg
 ASFLAGS = -ffreestanding -nostdlib -nostartfiles -mabi=call0
 LDFLAGS = -T $(SRC_DIR)/esp32s3.ld -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--gc-sections -nostdlib -nostartfiles -ffreestanding -e CP32 -lgcc
 
@@ -43,9 +47,11 @@ $(error STORAGE must be sd or ram)
 endif
 
 # Files
-C_SRCS = fork.c process.c context.c application.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
-MM_SRCS = main.c alloc.c exec.c image.c
-MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h
+# kernel/fork.c is the retired cooperative broker, retained for host regressions.
+# Production fork/exec/wait/exit policy now lives in mm/process.c.
+C_SRCS = process.c context.c application.c launch_trace.c start.c hardware_init.c main.c cp32-shell.c misc.c proc.c serial.c wdt.c klib.c port.c clock.c system.c tty.c memory.c cardputer.c display.c $(STORAGE_SRCS)
+MM_SRCS = main.c alloc.c exec.c image.c process.c signal.c
+MM_HEADERS = $(wildcard mm/*.h) include/minix/cp32_mm.h kernel/app_process.h
 FS_SRCS = timestamp.c time.c rename.c appfile.c fproc.c misc.c filedes.c cache.c stadir.c super.c inode.c path.c open.c read.c write.c create.c utility.c
 # The recovery image exposes no SD mutation commands.
 ifeq ($(STORAGE),ram)
@@ -101,13 +107,14 @@ tests:
 # Compile all .c files
 $(BUILD_DIR)/drivers/%.o: drivers/%.c drivers/sd_spi.h drivers/spi_fifo.h include/esp32s3/sd_spi2.h | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
-$(C_OBJS): include/esp32s3/app_layout.h kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h include/esp32s3/sd_spi2.h drivers/spi_fifo.h
+$(C_OBJS) $(LIB_OBJS): Makefile
+$(C_OBJS): kernel/app_process.h kernel/proc.h include/esp32s3/app_layout.h kernel/rootdisk.h kernel/sdcard.h include/esp32s3/sd_gpio.h include/esp32s3/sd_spi2.h drivers/spi_fifo.h
 
 $(BUILD_DIR)/lib/posix/%.o: lib/posix/%.c lib/posix/dirent.h $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -Os -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -Os -c $< -o $@
 
 $(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o $(BUILD_DIR)/cp32-shell.o: lib/posix/dirent.h
 $(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o: $(FS_HEADERS)
@@ -115,7 +122,7 @@ $(BUILD_DIR)/seekdir.o $(BUILD_DIR)/telldir.o: CFLAGS += -Os
 
 $(BUILD_DIR)/lib/ansi/%.o: lib/ansi/%.c | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 # Keep the blocking MM task at its previously hardware-tested -O0 setting.
 # Image160 halted at PC0 on its first exec/MM request after optimizing this
@@ -123,13 +130,13 @@ $(BUILD_DIR)/lib/ansi/%.o: lib/ansi/%.c | $(BUILD_DIR)
 # Optimized task resumption needs separate hardware validation.
 $(BUILD_DIR)/mm/%.o: mm/%.c $(MM_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(if $(filter main.c,$(<F)),-O0,-Os) -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) $(if $(filter main.c,$(<F)),-O0,-Os) -c $< -o $@
 
 # Filesystem C has no interrupt-entry/register-frame responsibilities.
 # Optimize this bounded service for SRAM size; kernel/assembly remain -O0.
 $(BUILD_DIR)/fs/%.o: fs/%.c $(FS_HEADERS) | $(BUILD_DIR)
 	mkdir -p $(@D)
-	$(CC) $(CFLAGS) -Os -mno-target-align -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -Os -mno-target-align -c $< -o $@
 
 # Shell/FS services are ordinary call0 C, with no IRQ frame construction.
 # Use the same size policy as FS to retain heap/stacks as the service grows.
@@ -137,17 +144,21 @@ $(BUILD_DIR)/lib/ansi/strtol.o: CFLAGS += -Os
 $(BUILD_DIR)/sdcard.o: CFLAGS += -Os
 $(BUILD_DIR)/memory.o: CFLAGS += -Os
 $(BUILD_DIR)/clock.o: CFLAGS += -Os
-$(BUILD_DIR)/system.o: CFLAGS += -Os
+$(BUILD_DIR)/launch_trace.o: CFLAGS += -Os
+$(BUILD_DIR)/launch_trace.o: include/esp32s3/systimer.h
+$(BUILD_DIR)/launch_trace.o $(BUILD_DIR)/mm/process.o $(BUILD_DIR)/mm/signal.o $(BUILD_DIR)/application.o $(BUILD_DIR)/proc.o $(BUILD_DIR)/clock.o: kernel/launch_trace.h
+$(BUILD_DIR)/system.o: CFLAGS += -Os -mno-target-align -mno-longcalls
 $(BUILD_DIR)/drivers/sd_spi.o: CFLAGS += -Os
 # Lifecycle helpers call only linked internal-IRAM code, within call0 range.
 # Direct calls avoid literal trampolines; the linker checks displacement bounds.
 $(BUILD_DIR)/fork.o: CFLAGS += -Os -mno-target-align -mno-longcalls
 $(BUILD_DIR)/process.o: CFLAGS += -Os -mno-target-align -mno-longcalls
-$(BUILD_DIR)/application.o: CFLAGS += -Os -mno-target-align
+$(BUILD_DIR)/mm/process.o $(BUILD_DIR)/mm/signal.o: CFLAGS += -Os -mno-target-align -mno-longcalls
+$(BUILD_DIR)/application.o: CFLAGS += -Os -mno-target-align -mno-longcalls
 $(BUILD_DIR)/context.o: CFLAGS += -Os
 $(BUILD_DIR)/misc.o: CFLAGS += -Os
 $(BUILD_DIR)/rootdisk.o: CFLAGS += -Os
-$(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os -mno-target-align
+$(BUILD_DIR)/cp32-shell.o: CFLAGS += -Os -mno-target-align -mno-longcalls
 $(BUILD_DIR)/cp32-shell.o: $(FS_HEADERS)
 
 $(BUILD_DIR)/minix-demo.h: ../tools/make_minix_demo.py $(BUILD_DIR)/hello.elf $(BUILD_DIR)/echo.elf $(BUILD_DIR)/cat.elf $(BUILD_DIR)/wc.elf $(BUILD_DIR)/ls.elf $(BUILD_DIR)/exec.elf | $(BUILD_DIR)
@@ -157,7 +168,7 @@ $(BUILD_DIR)/minix-demo.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/minix-demo.o: $(BUILD_DIR)/minix-demo.h
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 # Compile mpx32.S
 $(BUILD_MPX32_O): $(SRC_DIR)/mpx32.S | $(BUILD_DIR)
@@ -181,14 +192,14 @@ $(BUILD_DIR):
 
 # Link
 $(BUILD_DIR)/%.o: lib/other/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(KERNEL_CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/$(TARGET).elf: $(SRC_DIR)/esp32s3.ld $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O)
 	$(LD) $(LDFLAGS) $(C_OBJS) $(LIB_OBJS) $(BUILD_MPX32_O) $(BUILD_VECTORS_O) $(BUILD_IRQ_O) $(BUILD_KLIB32_O) -lgcc -o $@
 
 # Convert to raw binary for flashing
 $(BUILD_DIR)/$(TARGET).bin: $(BUILD_DIR)/$(TARGET).elf ../tools/check_call0.py
-	python3 ../tools/check_call0.py $(BUILD_DIR)/$(TARGET).elf
+	python3 ../tools/check_call0.py --kernel $(BUILD_DIR)/$(TARGET).elf
 	esptool --chip esp32s3 elf2image \
 	  --flash-mode dio \
 	  --flash-freq 40m \

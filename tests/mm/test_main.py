@@ -32,6 +32,10 @@ PRELUDE=r'''
 #define NR_TASKS 9
 #define NR_PROCS 32
 #define NR_SEGS 3
+#define LOW_USER 2
+#define P_ZOMBIE 0200
+#define CP32_APP_DATA 0x3fcec000U
+#define CP32_APP_TOP 0x3fcf0000U
 #define CLICK_SHIFT 8
 #define CP32_MAX_MEM_BLOCKS 64
 #define NIL_PROC ((struct proc*)0)
@@ -42,7 +46,7 @@ typedef uintptr_t phys_bytes;
 typedef uintptr_t vir_bytes;
 typedef struct { int m_source,m_type,m1_i1; } message;
 struct map { uintptr_t mem_vir,mem_phys,mem_len; };
-struct proc { int p_nr,p_flags; struct map p_map[NR_SEGS]; };
+struct proc { unsigned p_shadow; int p_nr,p_flags; struct map p_map[NR_SEGS]; };
 static struct proc proc[NR_TASKS+NR_PROCS];
 #define proc_addr(n) (&proc[(n)+NR_TASKS])
 #define BEG_PROC_ADDR proc
@@ -53,11 +57,20 @@ static struct { phys_clicks base,size; } mem[3];
 struct cp32_mem_block { phys_clicks base,size; int owner,used; };
 static struct cp32_mem_block cp32_mem_blocks[CP32_MAX_MEM_BLOCKS];
 static int cp32_mem_allocator_ready;
-static int receives,sends,traces,base;
+static int receives,sends,traces,base,runtime_dispatches;
+static int lock_depth;
+static int lock_save(void) { return lock_depth++; }
+static void restore_lock(int n) { assert(lock_depth==n+1);lock_depth=n; }
 static jmp_buf stopped;
 static void usbj_print(const char *s) { (void)s; }
 static void panic(const char *s,int n) { (void)s; (void)n; assert(!"unexpected panic"); }
 static void cp32_trace_mm_receive(const message *m) { (void)m; traces++; }
+/* Lifecycle dispatch has its own production-policy suite. Allocator requests
+ * must pass through that dispatcher before reaching MM's original service. */
+static int cp32_runtime_dispatch(message *m) {
+  assert(m->m_type==CP32_MM_ALLOCATE || m->m_type==CP32_MM_RELEASE);
+  runtime_dispatches++;return 0;
+}
 static int receive(int source,message *m) {
   assert(source==ANY);
   if (receives==400) longjmp(stopped,1);
@@ -84,7 +97,7 @@ int main(void) {
   assert(numap(MM_PROC_NR,0x3FCFFFF0,32)==0);
   mem[1].base=0x3FCA00; mem[1].size=512;
   if (!setjmp(stopped)) mm_task();
-  assert(receives==400 && sends==400 && traces==400);
+  assert(receives==400 && sends==400 && traces==400 && runtime_dispatches==400 && !lock_depth);
   assert(!cp32_mem_owned(mem[1].base,1,FS_PROC_NR));
   /* Repeated service requests coalesce back into the full free region. */
   assert(cp32_mem_alloc(512,FS_PROC_NR)==mem[1].base);

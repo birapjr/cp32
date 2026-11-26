@@ -7,9 +7,9 @@ sys.path.insert(0,str(root/'tests'))
 from test_idle_handoff import extract_function
 from test_irq_registers import Machine,CONSTANTS
 source=extract_function(root/'src/kernel/context.c','cp32_exec_frame')
-source+=extract_function(root/'src/kernel/application.c','cp32_application_fault')
-source+=extract_function(root/'src/kernel/application.c','cp32_trace_app_fault')
-source+=extract_function(root/'src/kernel/application.c','application_fault_take')
+source+=extract_function(root/'tests/mm/application_legacy.c','cp32_application_fault')
+source+=extract_function(root/'tests/mm/application_legacy.c','cp32_trace_app_fault')
+source+=extract_function(root/'tests/mm/application_legacy.c','application_fault_take')
 pre=r'''
 #include <assert.h>
 #include <stdint.h>
@@ -24,33 +24,32 @@ pre=r'''
 #define LOW_USER 2
 #define NR_PROCS 7
 typedef uintptr_t reg_t;
-struct proc {struct {reg_t a[16],pc,psw,sp,sar,lbeg,lend,lcount;} p_reg;int p_flags;};
+struct proc {struct {reg_t a[16],pc,psw,sp,sar,lbeg,lend,lcount;} p_reg;int p_flags,p_pid;unsigned short p_exitstatus;union {struct {reg_t p_heap_floor,p_heap_break;};struct {reg_t p_fault_pc,p_fault_cause;};};};
 static struct proc procs[NR_PROCS],*current_proc,*proc_ptr;
 static volatile struct proc *cp32_irq_return_proc;
 #define proc_addr(n) (procs+(n))
 static int app_busy,app_endpoint,k_reenter,printed;
-static struct {unsigned signal,cause,pc;} app_fault;
 static void application_exit(int n){(void)n;assert(0);}
-static void usbj_print(const char *s){if(!strcmp(s,"[CTX V180 fault pid="))printed++;}
+static void usbj_print(const char *s){if(!strcmp(s,"[CTX V199 fault pid="))printed++;}
 static void usbj_print_u32(unsigned v){(void)v;}
 static void usbj_print_hex32(unsigned v){(void)v;}
 '''
 test=r'''
 static void setup(void){
  memset(procs,0xa5,sizeof(procs));procs[3].p_flags=0;
- app_busy=1;app_endpoint=3;k_reenter=0;app_fault.signal=0;
+ app_busy=1;app_endpoint=3;k_reenter=0;procs[3].p_exitstatus=0;
  current_proc=proc_ptr=procs+3;cp32_irq_return_proc=procs+1;
 }
 static void denied(unsigned cause,unsigned pc,unsigned ps){
- struct proc before=procs[3];unsigned sig=app_fault.signal;
+ struct proc before=procs[3];unsigned sig=procs[3].p_exitstatus;
  assert(!cp32_application_fault(cause,pc,ps));
- assert(!memcmp(&before,&procs[3],sizeof(before)) && app_fault.signal==sig && cp32_irq_return_proc==procs+1);
+ assert(!memcmp(&before,&procs[3],sizeof(before)) && procs[3].p_exitstatus==sig && cp32_irq_return_proc==procs+1);
 }
 int main(void){
  unsigned causes[]={0,6,9,28,29},signals[]={4,8,10,11,11};
  for(unsigned n=0;n<5;n++){
   setup();assert(cp32_application_fault(causes[n],CP32_APP_TEXT+123,0x110)==procs+3);
-  assert(app_fault.signal==signals[n] && app_fault.cause==causes[n] && app_fault.pc==CP32_APP_TEXT+123);
+  assert(procs[3].p_exitstatus==signals[n] && procs[3].p_fault_cause==causes[n] && procs[3].p_fault_pc==CP32_APP_TEXT+123);
   struct proc *p=procs+3;
   assert(p->p_reg.pc==(reg_t)application_exit && p->p_reg.sp==CP32_APP_TOP-16 && p->p_reg.psw==0x100);
   assert(p->p_reg.a[1]==p->p_reg.sp && p->p_reg.a[15]==p->p_reg.sp && !p->p_reg.a[2]);
@@ -67,12 +66,24 @@ int main(void){
  app_endpoint=3;current_proc=procs+4;denied(0,CP32_APP_TEXT,0x110);current_proc=procs+3;
  proc_ptr=procs+4;denied(0,CP32_APP_TEXT,0x110);proc_ptr=procs+3;
  procs[3].p_flags=2;denied(0,CP32_APP_TEXT,0x110);procs[3].p_flags=0;
- app_fault.signal=4;denied(0,CP32_APP_TEXT,0x110);
- for(int n=1;n<=65;n++){app_fault.signal=11;assert(application_fault_take(123)==11 && !app_fault.signal);}
- assert(printed==5 && !application_fault_take(123));
+ procs[3].p_exitstatus=4;denied(0,CP32_APP_TEXT,0x110);
+ for(int n=1;n<=65;n++){procs[3].p_exitstatus=11;assert(application_fault_take(procs+3)==11 && !procs[3].p_exitstatus);}
+ assert(printed==5 && !application_fault_take(procs+3));
  assert(CP32_WIFEXITED(7<<8) && CP32_WEXITSTATUS(7<<8)==7 && !CP32_WIFSIGNALED(7<<8));
  assert(CP32_WIFSIGNALED(11) && CP32_WTERMSIG(11)==11 && !CP32_WIFEXITED(11));
  assert(!CP32_WIFSIGNALED(0x7f));
+ /* Two distinct outstanding fault records; consuming one cannot clear another. */
+ setup();procs[3].p_pid=123;
+ assert(cp32_application_fault(0,CP32_APP_TEXT+8,0x110)==procs+3);
+ procs[4].p_flags=0;procs[4].p_exitstatus=0;procs[4].p_pid=124;
+ app_endpoint=4;current_proc=proc_ptr=procs+4;
+ assert(cp32_application_fault(28,CP32_APP_TEXT+16,0x110)==procs+4);
+ assert(procs[3].p_exitstatus==4 && procs[3].p_fault_pc==CP32_APP_TEXT+8);
+ assert(application_fault_take(procs+3)==4 && !procs[3].p_exitstatus && !procs[3].p_fault_pc);
+ assert(procs[4].p_exitstatus==11 && procs[4].p_fault_pc==CP32_APP_TEXT+16);
+ assert(application_fault_take(procs+4)==11 && !procs[4].p_exitstatus && !procs[4].p_fault_cause);
+ procs[3].p_heap_floor=123;procs[3].p_heap_break=456;
+ assert(!application_fault_take(procs+3) && procs[3].p_heap_floor==123 && procs[3].p_heap_break==456);
 }
 '''
 with tempfile.TemporaryDirectory() as d:
@@ -90,7 +101,7 @@ for entry in ['irq_kernel','irq_user']:
    def dispatch(cpu,name):
     assert name=='cp32_application_fault'
     assert cpu.reg[2:5]==[cause,CONSTANTS['CP32_APP_TEXT']+32,0x110]
-    assert cpu.reg[1]==CONSTANTS['CP32_APP_TOP']-16 and not cpu.stores
+    assert cpu.reg[1]==cpu.value('_exception_stack_top')-16 and not cpu.stores
     cpu.frame_write(target,expected,0x40388000,0x100,(0,0,0,0))
     cpu.reg=[0xdeadbeef]*16;cpu.reg[2]=target
    m.dispatch=dispatch;m.run(entry)
@@ -149,7 +160,7 @@ with tempfile.TemporaryDirectory() as d:
  for mode in range(6):subprocess.run([str(p/'app'),str(mode)],check=True)
 print('fault commands: real runtime, four child branches, shared offset and foreground crash PASS')
 
-# The fault classifier runs on the dying application's fixed4KiB stack. Its
+# Fault classification now runs on the16KiB kernel exception stack. Its
 # C frame and reset helper must stay small; the exit IPC path has a separate
 # conservative budget including the128-byte trap frame.
 for folder in ['build','build-updater','build-ram','build-sd-soft','build-sd-soft-updater']:

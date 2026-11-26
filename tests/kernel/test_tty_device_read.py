@@ -53,7 +53,8 @@ struct winsize {unsigned short ws_row,ws_col,ws_xpixel,ws_ypixel;};
 enum {OK=0,EFAULT=-14,EINVAL=-22,EIO=-5,EAGAIN=-11,SUSPEND=-998,TASK_REPLY=100,REVIVE=101,TTY=-9};
 typedef struct {int m_source,PROC_NR,COUNT,TTY_FLAGS; char *ADDRESS;} message;
 static volatile int cp32_console_ready;
-static int cursor_calls,cursor_enabled;
+static int cursor_calls,cursor_enabled,runtime_read_pending;
+static int cp32_runtime_read_pending(void){return runtime_read_pending;}
 static unsigned get_uptime(void) {return 123;}
 static void cardputer_display_cursor(int active,unsigned ticks) {assert(ticks==123);cursor_calls++;cursor_enabled=!!active;}
 static int notifications,depth,used,replies,types[8],statuses[8],mask;
@@ -136,6 +137,8 @@ int main(void) {
  assert(replies==2 && statuses[1]==3 && !memcmp(destination+1,"mm\n",3));
  t=reset(64);read_request(t,64,O_NONBLOCK);
  assert(replies==1 && statuses[0]==EAGAIN && !t->tty_inleft);
+ runtime_read_pending=1;handle_events(t);assert(cursor_enabled);
+ runtime_read_pending=0;handle_events(t);assert(!cursor_enabled);
  t=reset(64);read_request(t,64,0);input(t,"bad\025ok\n");
  assert(statuses[1]==3 && !memcmp(destination+1,"ok\n",3));
  t=reset(64);read_request(t,64,0);input(t,"\004");

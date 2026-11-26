@@ -5724,3 +5724,352 @@ update followed by Zombie wait OK, [TEST ALL PASS] and Hello exit=0. Archived at
 docs/hardware/proc-zombie-v198-updater-pass.log. Normal-firmware/cold-restart
 acceptance and LCD appearance remain unconfirmed. This validates the focused
 exited-child test, not completion of priority1 or the broader lifecycle milestone.
+
+### Image199 PROC-FAULT
+
+MINIX2 kernel/exception.c associates user exceptions with the affected process
+through cause_sig. CP32 retains its terminal-fault policy for supported Xtensa
+application exceptions, but replaces global fault metadata with process-owned
+signal/cause/PC. After committing the exit frame, the terminal process no longer
+needs heap bounds; a union reuses that storage without changing struct size or
+assembly offsets. p_exitstatus holds the pending fault signal until broker
+consumption, then later the encoded zombie status. Normal exits preserve heap
+state; fault consumption is scoped to the exiting process. Clone/publication
+reject terminal records. No allocation or diagnostic output occurs in the
+exception classifier; the normal broker emits bounded CTX V199 diagnostics.
+
+hello --t now runs --fault-owner plus MM (two dots): illegal/null-load child
+faults, parent heap preservation and normal child reuse. Historical zombie tests
+remain host fixtures. Handshake199 requires updating hello; service ABI36 is
+unchanged. FEATURE/TEST PROC-FAULT199, SD/ROOT V199 and UPDATER199 identify it.
+Hardware acceptance remains pending; no firmware was flashed.
+
+Remaining to close the broader lifecycle milestone: persistent per-process
+filesystem ownership and live-wait/wakeup continuations; moving creation,
+execution and termination orchestration from the foreground FS broker into
+MM/process services; independent child lifetime and INIT orphan adoption.
+Broader priority1 also still needs independent images, timer-driven application
+preemption and general asynchronous signal handlers/return/I/O interruption.
+
+Image199 validation: all72 host scripts and five clean builds pass (SD,
+updater, RAM, GPIO-SPI, GPIO-SPI updater). Tests cover independent fault records,
+rejected transitions, parent heap preservation, slot reuse and existing nested
+fault/exec/signal regressions. Fault classification uses128/512 stack bytes;
+exit IPC uses528/3072 in every variant. ELF sections/segments inspected;
+normal _iram_end=0x403743e4, _iram_ext_end=0x4038c354,
+_runtime_stack_end=0x3fce77e0 (2080-byte margin). Updater/RAM/GPIO/GPIO-updater
+margins:23552/7392/3024/24496 bytes. Heap/stack reservations are unchanged.
+hello.elf is2160 bytes. Host fsck reports MINIX V2 clean. Hardware199 pending.
+
+[x] Image199 updater hardware acceptance: apps and sync succeeded, both expected
+SIGILL/SIGSEGV children terminated, Fault ownership OK, [TEST ALL PASS] and
+Hello exit=0. Capture: docs/hardware/proc-fault-v199-updater-pass.log.
+Normal/cold/LCD acceptance is not established by this USB capture.
+
+### Image200 PROC-CONTEXT — persistent filesystem and wait records
+
+MINIX2 FS misc.c do_fork gives each process a distinct fproc and shares open
+file descriptions by reference; MM mproc retains wait/lifecycle state. CP32
+now binds each application to a stable FS record and lifecycle continuation.
+Fork clones descriptors once; image handoff selects those records rather than
+copying descriptor arrays, namespace state or wait messages into global slots.
+Ancestor signal traversal uses the process-owned continuation. Nested cleanup
+releases child resources once and keeps the parent's record at its original
+address. Failed clones roll back descriptor references without changing the
+parent. Successful root startup binds after FS cloning, so cloning cannot
+clear the continuation pointer.
+
+ESP32-S3 still uses the fixed execution window and cooperative image exchange.
+The existing task-stack-guard pointer slot is a union: tasks retain the guard
+field; application entries use p_files. No assembly offsets or process-table
+size change. A lifecycle pointer in the FS record identifies the stable
+continuation in the fork allocation; the root has permanent static storage.
+Backing allocations still have foreground-family lifetimes. This is persistent
+state ownership, NOT independent process scheduling or MM-owned orchestration.
+
+hello --t runs --fs-owner plus MM (two dots). The child changes cwd/umask,
+reads an inherited descriptor, yields, and closes it; the parent verifies its
+own namespace and shared offset, waits, then reads and closes its own handle.
+Two rounds check slot reuse. Expect FS ownership OK, [TEST ALL PASS], exit0.
+Handshake200 requires updating hello; ABI36 is unchanged. Image199 fault and
+image198 zombie tests remain host fixtures. Hardware200 is pending.
+
+Priority1 remains incomplete. Remaining implementation: independently runnable
+images and timer-driven application preemption; MM/process-service dispatch for
+fork/exec/exit; independent siblings, parent exit and INIT orphan adoption;
+general blocking/wakeup and interruption of I/O; user signal handlers and
+sigreturn/asynchronous delivery; concurrent fairness/exhaustion/leak validation.
+Persistent continuations alone do not establish general live-child wakeups.
+
+Image200 validation: all74 host scripts and five clean builds pass (SD,
+updater, RAM, GPIO-SPI, GPIO-SPI updater). The new context regression verifies
+stable per-process FS/continuation addresses through nested handoffs, rollback
+and slot reuse using production helpers with undefined-behavior sanitization.
+The actual hello test covers parent/child branches and error reporting; prior
+fault, zombie, signal, exec and five-level fork regressions remain passing.
+ELF sections/segments inspected; normal _iram_end=0x403743e4,
+_iram_ext_end=0x4038c338, _runtime_stack_end=0x3fce77e0:2080-byte margin.
+Updater/RAM/GPIO/GPIO-updater margins:23280/7136/3024/24224 bytes.
+Heap/stack reservations are unchanged. hello.elf is2452 bytes. Host fsck reports
+MINIX V2 clean. No firmware flashed; image200 hardware acceptance is pending.
+
+### Image201 — FS ownership test prerequisite and diagnostic
+
+Image200 updater hardware reached the shell, installed apps and synced, then
+hello --t returned232 while opening /readme. No fork occurred and no kernel
+exception was reported. The capture does not contain errno, so missing media
+content versus other open failures cannot be distinguished. Image200's new
+ownership behavior has not yet passed hardware acceptance.
+
+The focused test now reads /boot/hello, the executable the shell just loaded,
+instead of relying on optional /readme content. No disk mutation is added.
+If opening still fails, the removable application diagnostic prints
+[FS V201 open errno] followed by the numeric errno over USB during --t, before
+returning232. The LCD retains the existing dots/final-result behavior.
+The actual application host regression verifies the selected path and errno2
+output. Firmware/handshake201 requires updating hello through apps; ABI36 is
+unchanged. Hardware201 remains pending.
+
+### Image202 — apps restores missing /readme
+
+The user confirmed /readme was deliberately deleted, explaining image200's
+exit232. The optional apps command now creates a missing /readme with short
+CP32 filesystem documentation and mode0644 after updating executables. Existing
+regular files are preserved without writes, including custom contents and hard
+links; a non-regular /readme or disk failure stops the updater with its existing
+FS error report. The bounded create path verifies writes before publication.
+Normal firmware still excludes updater payloads and this maintenance helper.
+
+The FS ownership test continues to read /boot/hello, so deleting documentation
+does not invalidate a process test. Open failure diagnostics now identify V202.
+Install updater202, run apps (expect /readme installed), sync, cat /readme, and
+hello --t. A second apps run must report /readme unchanged. No reformat is needed.
+Hardware202 acceptance remains pending.
+
+Image202 validation: all74 host scripts and five clean builds pass. Updater
+regressions cover create-only restoration, verified contents/mode, unchanged
+custom files and hard links, non-regular-path rejection and write failure.
+ELF sections/segments inspected; normal static headroom remains2080 bytes.
+Host fsck is clean; diff checks pass. Hardware202 remains pending.
+
+[x] Image202 updater hardware acceptance: apps recreated /readme, cat printed
+its expected contents, and hello --t reported FS ownership OK, [TEST ALL PASS]
+and Hello exit=0. Capture: docs/hardware/proc-context-v202-updater-pass.log.
+This verifies the focused filesystem/continuation test on updater firmware;
+normal/cold-start and LCD appearance are not established by the serial capture.
+It does not validate independent scheduling or the other remaining priority1
+features. Those items remain pending.
+
+### Image203 APP-BOUNDARY — exception stack and image ownership boundaries
+
+MINIX kernel save/restart switches to a kernel stack; the CP32 level1 IRQ,
+syscall and terminal-application-fault C paths now use a linker-named16KiB
+exception window in the existing lower boot-stack reservation. Entry never
+stores through the interrupted application SP. Task stacks start at the named
+upper boundary, preserving all reservations and process offsets. EXCM excludes
+normal level1 nesting; illegal nested entry is terminal. Bounded production
+CTX V203 diagnostics report actual C SP: kinds1/2 task IRQ/IPC and4/8 app IRQ/IPC.
+
+MINIX shadow-aware copies are adapted to CP32's full32KiB saved images. numap
+and ESP32 umap resolve saved application data/stack into validated MM backing;
+IPC payload plus trusted source-header copying holds the scheduler lock.
+Invalid spans, zombie slots, nonidentity saved maps and unowned backings fail.
+Raw FS/TTY pointers pin the resident window across validation and synchronous
+I/O, including failure paths; image activation rejects a pinned window. Times
+copyout and heap zeroing hold the lock; exec keeps the window pinned while
+staging/committing. This protects today's serialized broker; a future ANY-source
+broker must atomically select its caller before acquiring the window pin.
+
+Each process now owns its backing allocation for its full lifetime. Root bind
+allocates32KiB and can fail cleanly; each child allocation owns that child's
+image, FS record and continuation. Handoff never transfers allocation ownership;
+exit frees the child's allocation and root exit frees root backing. The new
+cp32_image_activate boundary is used by production handoff/exit, and changes
+image residency only: no allocation, FS selection, wait-state or ready-queue
+changes. It requires the scheduler lock and a kernel stack. Initial root/child
+images are snapshotted, and fresh FS metadata is explicitly cleared.
+
+This adds32KiB root backing compared with image202, lowering the RAM-bounded
+maximum fork depth. Synthetic deep-fork tests do not establish device capacity.
+Heap and stack reservations are unchanged. Direct internal call0 calls for
+application/system helpers keep static headroom above2KiB; linker placement
+and call ranges were checked by the clean builds.
+
+hello --t now runs --irq-stack, --fs-owner and MM (three dots). The first test
+holds stack canaries during CPU work for at least12 ticks and checks a
+repeatable integer sequence. Expect IRQ stack OK, FS ownership OK, ALL PASS,
+exit0, plus app stack kinds4/8 ok=1 over USB. Install apps for handshake203;
+service ABI36 is unchanged. Image203 hardware acceptance is pending.
+
+Validation: all77 host scripts and five clean variants pass. Assembly modeling
+covers register/special-state preservation, invalid SP, no application-stack
+stores and destructive replacement of app memory during dispatch. Image tests
+cover independent saved sender/receiver buffers at identical virtual addresses,
+owned allocation identity, rollback, pin rejection and repeated cleanup.
+ELF sections/segments and host fsck pass. Normal static margin2144 bytes;
+updater/RAM/GPIO/GPIO-updater22448/6560/3088/23392. hello.elf3072 bytes.
+
+Priority1 is not complete: independent runnable scheduling/preemption, MM-owned
+lifecycle orchestration, independent children and INIT adoption, general wait/
+wakeup and interruptible I/O, user signal handlers/sigreturn/asynchronous delivery,
+and concurrent fairness/cleanup validation remain pending. These prerequisites
+are integrated into current cooperative paths; no new preemptive policy is
+silently enabled or claimed tested.
+
+[x] Image203 updater hardware acceptance: application update and sync followed
+by IRQ stack OK, FS ownership OK, application exception-stack kinds4/8 ok=1,
+[TEST ALL PASS] and Hello exit=0. Capture:
+docs/hardware/app-boundary-v203-updater-pass.log. Normal/cold boot and LCD
+appearance are not established by this USB capture.
+
+### Image204 APP-PROCESS — integrated priority-1 process runtime
+
+MINIX2 mm/forkexit.c, mm/exec.c, mm/signal.c and kernel save/restart establish
+MM lifecycle policy, independently runnable process contexts, orphan adoption,
+interruptible waits and signal return. CP32 adapts those contracts to single-core
+Xtensa call0 without hardware memory protection: a private32KiB backing plus
+stable FS/lifecycle metadata belongs to every live process, and final exception
+return selects the resident SRAM image from the kernel exception stack.
+The assembly frame layout and heap/stack reservations are unchanged.
+
+The timer schedules competing applications without yield. FS accepts requests
+from any live application, atomically selects/pins its image and releases the
+pin after copying/servicing borrowed buffers. Other application images cannot
+replace that window during FS/device IPC. Saved-image IPC translates both
+sender and receiver buffers under the scheduler lock. Invalid resident ownership
+fails closed. Generic allocator changes are also locked against return-time
+ownership validation. The obsolete cooperative fork broker is excluded from
+production, while its historical regressions remain explicit host fixtures.
+
+MM now owns launch, fork, exec, exit, zombie collection, heap and accounting
+requests. Clone/close/exec-staging requests are serialized by FS. Exec uses a
+separate temporary image; errors preserve the caller and successful staging
+closes CLOEXEC files immediately before the guaranteed commit. Parent/child
+returns no longer imply child-first execution. Live and zombie orphans move to
+PID1 INIT; it waits and reaps them independently. The shell uses PID2 and resumes
+after the foreground root and adopted descendants finish and INIT collects every
+adopted zombie. The final reap completes the job even when no live process
+remains to generate MM ticks. PID allocation also
+reserves the root job identity until all descendants drain.
+
+Blocked reads and child waits retain MM-owned continuations. Clock notifications
+retry nonblocking terminal reads without retaining application pointers or
+blocking FS for keyboard input. A coalesced MM notification cannot be hidden by
+an always-nonempty application queue. Signal delivery and transition to a wait
+are checked atomically, avoiding lost interrupts; interrupted operations return
+EINTR through ABI37. TTY cursor blink follows MM read waits between polls.
+
+Signal handlers, exact full-register signal return, pending masks, asynchronous
+safe-boundary injection, fork/exec inheritance, PID/group selectors and MINIX
+real/effective UID checks are implemented. Zombie probes retain credentials
+without extending the process layout. MM owns the authoritative handler frame;
+fork inside a handler inherits it. Caught signals defer during a handler;
+SIGKILL/default termination can proceed. Exec resets caught handlers while
+preserving ignores, masks and pending state. Hardware faults retain terminal
+process cleanup; unsupported kernel/nested faults remain terminal.
+
+hello --t runs --process, --signals, --orphan, --io-exec and the MM check. Five
+LCD dots precede [TEST ALL PASS]; detailed logs stay on USB. Tests cover CPU
+progress/private state, independent siblings, repeated capacity exhaustion and
+reuse, interruptible reads/waits, handlers, adoption, concurrent buffers/cwd,
+shared file offsets and failed/successful exec. hello.elf is5656 bytes. Update
+apps for ABI37/handshake204. Markers: FEATURE/TEST APP-PROCESS204, SD/ROOT V204,
+UPDATER204. No hardware flashed; image204 hardware acceptance is pending.
+
+Validation: all82 host scripts pass, including production MM lifecycle/rollback,
+image ownership, real timer ready-queue fairness/pinning, MM wakeup priority,
+signal context/credentials and FS registry/staging tests. Legacy cooperative
+fixtures are retained as historical regressions, not proof of the new runtime.
+Five clean variants pass: SD, updater, RAM, GPIO-SPI and GPIO-SPI updater. ELF
+sections, segments, frame offsets and targeted FS/MM/IRQ/INIT stack budgets are
+checked; fsck reports MINIX V2: clean. Normal _iram_end=0x40374440,
+_iram_ext_end=0x4038c0e0 and _runtime_stack_end=0x3fce7630 leave2512 bytes.
+Updater/RAM/GPIO/GPIO-updater margins are20208/3888/3456/21152 bytes.
+Targeted peak FS/MM/IRQ/INIT call-chain budgets are3952/912/480/112 bytes,
+within their reserved stacks. git diff --check passes.
+
+Priority1 implementation is integrated; closure remains hardware acceptance:
+updater apps/sync, two hello --t runs, normal firmware repetition, cold restart,
+and responsive ps/mm/disk plus hello --line/cursor. Do not mark priority1 [x]
+from build/host results. Background shell jobs, separate user-space services,
+full POSIX sigaction/job control and memory protection are outside this scoped
+process milestone and are not claimed implemented.
+
+### Image 204 stops during the first `hello --t` launch
+
+The updater reported `Apps update OK` and `Sync OK`. The last message,
+`[MM V44 received=2 op=2100 source=1 resumed=1]`, records FS asking MM to
+launch the suite request. The capture ends before the first test case or an
+exception report. [Hardware log](docs/hardware/app-process-v204-launch-stall.log).
+
+MM marked the initial image resident, skipping the instruction synchronization
+normally performed on image exchange. Image 205 executes `memw` and `isync`
+before publication. It also sends clock notifications to MM only for outstanding
+terminal input, with one poll in flight at a time. USB now records the first two
+launches through MM publication, user return, exit and FS job completion. A
+timer sample identifies the interrupted PC during a prolonged handoff, and a
+kernel panic prints its reason and optional signed code. The image 204 log
+does not identify which stage froze. Image 205 hardware reproduction is pending.
+[Hardware checklist](docs/hardware/pending-tests.md).
+
+Image 205 passed all 82 host scripts and clean SD, updater, RAM, software SPI
+and software SPI updater builds. Trace regressions check the selected return
+PC, the timer sample, bounded USB output and diagnostic suppression after
+completion. The hardware milestone remains open.
+
+### Image 205 panics at the first return to PID 100
+
+Updater hardware reported this sequence before any test case ran.
+
+```text
+[CTX V205 launch=1 alloc=0x0003FCAB]
+[CTX V205 launch=1 slot=0x00000003]
+[CTX V205 launch=1 files=0x00000000]
+[CTX V205 launch=1 publish=0x00000064]
+
+[PANIC V205 reason=return image]
+```
+
+The updater ELF used `loop` at `0x40389bf7` to search the allocator table in
+`cp32_mem_owned`. The exception return holds `PS.EXCM` set. The CPU checks the
+first allocation (the FS stack), skips the loopback and returns false before
+checking MM's allocation. The same instruction selection occurred in signal
+return. Image 206 compiles kernel-linked C with branch loops and checks the
+linked ELF. An activation error now includes its numeric result in the panic.
+[Exception-stack contract and ISA reference](docs/exception-stack.md).
+
+The Cardputer retest is pending. Look for `[TEST EXCM-LOOPS 206]`, followed by
+`rfe=0x403D8000`, `done=0x000000CC` and the individual USB test cases.
+
+A generic Xtensa QEMU run using the ESP32-S3 compiler reproduced the lookup
+with the production allocator. With EXCM clear, both builds found both owners.
+With EXCM set, the image 205 build missed the MM allocation and the image 206
+build found it. Both rejected wrong ownership and a range beyond the block.
+All 82 host scripts and five clean builds pass, including the kernel ELF check.
+
+## Image 206 first-fork stall — image 207 APP-SLICE
+
+The updater completed `hello --t` launch 1 and returned its suite-request code
+204. The last timer sample during `--process` showed child slot 4 at
+`0x4037447F` with MM and FS in RECEIVE. The matching updater ELF identifies
+that PC as the `ret.n` immediately following `syscall` in `cp32_ipc_trap`.
+One sample does not determine how long the board took to exchange images.
+[Hardware capture](docs/hardware/excm-loops-v206-process-stall.log).
+
+The old scheduler could switch users on each timer interrupt. If two full image
+copies consumed a tick, the selected process could take another interrupt
+before executing its first instruction. Image 207 rotates users after six
+charged ticks and copies images in aligned word groups. A host regression
+simulates an immediate interrupt after every swap and checks both users make
+progress while ready-queue invariants hold. USB now measures the first swap
+with SYSTIMER and records both sides of the fork if the suite stalls again.
+The first Cardputer retest passed on the image 207 updater. USB recorded the
+first full image swap at 49,270 timer counts (3.08 ms), followed by signal
+delivery, signal return and `Concurrent process OK`. The suite finished with
+`[TEST ALL PASS]` and `Hello exit=0`. Repeat updater, normal firmware and
+cold-restart runs remain pending. [USB capture](docs/hardware/app-slice-v207-updater-pass.log).
+
+All 82 host scripts and five clean firmware variants passed. With a full
+timer period per swap in the scheduler regression, both siblings executed in
+250 intervals apiece across 600 timer periods. The old scheduling policy failed
+the same regression. The matching SD applications can be reused for the retest.

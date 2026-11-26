@@ -1,16 +1,17 @@
 #ifndef CP32_APP_ABI_H
 #define CP32_APP_ABI_H
-/* Bootstrap ABI v22 (earlier prefixes preserved): trusted call0 callbacks, no privilege boundary.
+/* Application ABI v37 (earlier prefixes preserved): trusted call0 callbacks,
+ * no hardware privilege boundary.
  * Loader supplies this table in a2; stack is built by cp32_exec_stack.
  * write returns bytes written or a negative error; exit must not return.
- * The kernel bridge supports one foreground process with write/exit/getpid/getppid IPC.
+ * MM owns independently scheduled process images and lifecycle IPC.
  * v2 appends getpid; v3 appends getppid after the v2 fields. */
 struct cp32_app_services {
   unsigned version;
   int (*write)(const char *,unsigned);
   void (*exit)(int);
   int (*getpid)(void);
-  int (*getppid)(void); /* v3: launching shell PID */
+  int (*getppid)(void); /* parent PID; INIT is PID1 after orphan adoption */
   void *(*sbrk)(int); /* v4: old break, or (void *)-1; zero-filled growth */
   int (*read)(char *,unsigned); /* v5: canonical console input, at most 64 bytes */
   /* v6: file operations return a value or negative MINIX errno. */
@@ -116,7 +117,7 @@ struct cp32_app_times {unsigned user,system,children_user,children_system,uptime
 #define CP32_SIG_DFL 0U
 #define CP32_SIG_IGN 1U
 /* Image-specific suite handshake: reject stale on-card hello test lists. */
-#define CP32_HELLO_TEST_REQUEST 198
+#define CP32_HELLO_TEST_REQUEST 204
 /* v33: MINIX2 signals1..15, default/ignore and independent masks. */
 #define CP32_SIGHUP 1
 #define CP32_SIGINT 2
@@ -132,4 +133,6 @@ struct cp32_app_times {unsigned user,system,children_user,children_system,uptime
 #define CP32_SIGNAL_MASK 0x7fffU
 /* v35 removes the two-level fork cap; slots and MM allocation bound depth. */
 /* v34 extends KILL selectors to application groups and saved ancestors. */
+/* v37: independently scheduled processes and validated signal return. */
+#define CP32_APP_SIGRETURN 50
 #endif

@@ -43,6 +43,23 @@ int main(int argc,char **argv) {
   calls=0;assert(cp32_update_one(read_disk,write_disk,sizeof(disk),&entry)==1 && !calls);
  }
  reset();entry.path="/absent/new";assert(cp32_update_one(read_disk,write_disk,sizeof(disk),&entry)<0 && !calls);
+ /* Missing readme is recreated; existing content, hard links and modes survive. */
+ reset();assert(cp32_update_readme(read_disk,write_disk,sizeof(disk))==1 && !calls);
+ assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),"/readme"));
+ assert(!cp32_update_readme(read_disk,write_disk,sizeof(disk)));
+ assert(!cp32_minix_stat(read_disk,sizeof(disk),"/readme",&st) && st.size>2 && (st.mode&0777)==0644);
+ int rd=cp32_fd_open(read_disk,sizeof(disk),"/readme");char text[64];assert(rd>=0);
+ int bytes=cp32_fd_read(rd,text,sizeof(text));assert(bytes==(int)strlen("CP32 MINIX V2 filesystem.\nApplications are in /boot.\n") && !memcmp(text,"CP32 MINIX V2 filesystem.\nApplications are in /boot.\n",bytes));
+ assert(!cp32_fd_close(rd));calls=0;
+ assert(cp32_update_readme(read_disk,write_disk,sizeof(disk))==1 && !calls);
+ assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),"/readme"));
+ assert(cp32_minix_create(read_disk,write_disk,sizeof(disk),"/readme","custom",6)>=0);
+ calls=0;assert(cp32_update_readme(read_disk,write_disk,sizeof(disk))==1 && !calls);
+ assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),"/readme"));
+ assert(!cp32_minix_mkdir(read_disk,write_disk,sizeof(disk),"/readme"));calls=0;
+ assert(cp32_update_readme(read_disk,write_disk,sizeof(disk))==-CP32_FILE_BUSY && !calls);
+ reset();assert(!cp32_minix_unlink(read_disk,write_disk,sizeof(disk),"/readme"));
+ fail=calls+1;assert(cp32_update_readme(read_disk,write_disk,sizeof(disk))<0);
 #ifdef TEST_PAYLOAD
  reset();
  for(unsigned i=0;i<sizeof(cp32_update_entries)/sizeof(cp32_update_entries[0]);i++)

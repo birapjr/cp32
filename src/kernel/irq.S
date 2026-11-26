@@ -161,8 +161,8 @@ irq_kernel:
     bnez    a0, .Luser_saved_a0
 .Lapp_fault:
     /* Only application text may abandon its context. Check EPC before any
-     * stack write. The dying app's stack is disposable; use its known top,
-     * even if its original SP is invalid. No kernel/boot stack is borrowed. */
+     * stack write. Classification runs on the reserved exception stack even
+     * if the application's original SP is invalid. */
     rsr     a0, epc1
     movi    a2, CP32_APP_TEXT
     bltu    a0, a2, .Lkernel_fatal
@@ -171,7 +171,7 @@ irq_kernel:
     mov     a3, a0
     rsr     a2, exccause
     rsr     a4, ps
-    movi    a1, CP32_APP_TOP
+    movi    a1, _exception_stack_top
     addi    a1, a1, -16
     mov     a15, a1
     call0   cp32_application_fault
@@ -195,28 +195,34 @@ irq_kernel:
 .global irq_level1
 .type   irq_level1, @function
 irq_level1:
-    /* a0 is the only scratch used by either exception classifier, and its
-     * interrupted value is in EXCSAVE1. Save a2-a15 before using any of them.
-     * The existing 80-byte temporary frame keeps the C call aligned. */
-    addi    a1, a1, -CP32_IRQ_FRAME_BYTES
-    s32i    a2, a1, 8
-    s32i    a3, a1, 12
-    s32i    a4, a1, 16
-    s32i    a5, a1, 20
-    s32i    a6, a1, 24
-    s32i    a7, a1, 28
-    s32i    a8, a1, 32
-    s32i    a9, a1, 36
-    s32i    a10, a1, 40
-    s32i    a11, a1, 44
-    s32i    a12, a1, 48
-    s32i    a13, a1, 52
-    s32i    a14, a1, 56
-    s32i    a15, a1, 60
-    addi    a0, a1, CP32_IRQ_FRAME_BYTES
-    s32i    a0, a1, 4
-    rsr     a0, excsave1
-    s32i    a0, a1, 0
+    /* Like MINIX save/restart, C handlers own a kernel stack. EXCM prevents
+     * level-1 reentry; higher-level fallbacks do not call C. Refuse an illegal
+     * nested level-1 entry before reusing this single-core scratch window.
+     * a0 alone is scratch until every other register is saved. No byte is
+     * written to the interrupted application/task stack. */
+    movi    a0, k_reenter
+    l32i    a0, a0, 0
+    bnez    a0, .Lkernel_fatal
+    movi    a0, _exception_stack_top
+    addi    a0, a0, -96
+    s32i    a1, a0, 4
+    s32i    a2, a0, 8
+    s32i    a3, a0, 12
+    s32i    a4, a0, 16
+    s32i    a5, a0, 20
+    s32i    a6, a0, 24
+    s32i    a7, a0, 28
+    s32i    a8, a0, 32
+    s32i    a9, a0, 36
+    s32i    a10, a0, 40
+    s32i    a11, a0, 44
+    s32i    a12, a0, 48
+    s32i    a13, a0, 52
+    s32i    a14, a0, 56
+    s32i    a15, a0, 60
+    rsr     a1, excsave1
+    s32i    a1, a0, 0
+    mov     a1, a0
 
     /* Capture integer special state before the C handler can clobber it. */
     rsr     a0, sar
@@ -357,8 +363,10 @@ irq_user:
      * recovered from EXCSAVE1 after original a1 has been saved.  Save every
      * general register before using one as the exception-cause scratch; this
      * preserves the interrupted user a5 as well as the other call0 state. */
-    /* Each task owns its exception stack; never overwrite the boot stack. */
-    addi    a0, a1, -128
+    /* EXCM excludes level-1 IRQs throughout this dispatch. Save the original
+     * SP before touching a1; the frame and all C calls stay off app memory. */
+    movi    a0, _exception_stack_top
+    addi    a0, a0, -128
     s32i    a1, a0, 4
     s32i    a2, a0, 8
     s32i    a3, a0, 12
@@ -500,6 +508,18 @@ cp32_enter_initial_user:
  */
 .align 4
 .Lrestore_process_frame:
+    /* No application memory may be active as a C stack while image residency
+     * changes. Preserve EXCM from this point even for initial task entry. a15
+     * is call0 callee-saved and retains the authoritative proc/frame pointer. */
+    rsr     a3, ps
+    movi    a4, 0x10
+    or      a3, a3, a4
+    wsr     a3, ps
+    rsync
+    movi    a1, _exception_stack_top
+    addi    a1, a1, -16
+    mov     a2, a15
+    call0   cp32_prepare_return
     l32i    a2, a15, CP32_REG_PC_OFFSET
     wsr     a2, epc1
     l32i    a2, a15, CP32_REG_PSW_OFFSET

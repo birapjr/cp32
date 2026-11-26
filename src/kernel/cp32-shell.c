@@ -1,6 +1,7 @@
 #include "kernel.h"
 #include "proc.h"
 #include <termios.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include "rootdisk.h"
 #include "../fs/fs.h"
@@ -17,8 +18,10 @@
 extern int _sendrec(int dest, message *m);
 static int cp32_shell_input_fd=-1;
 static char cp32_tty_line[64];
-static struct cp32_fproc cp32_shell_state={.pid=1,.root_inode=1,.mask=0022,.cwd="/"};
-static struct cp32_fproc cp32_app_state;
+static struct cp32_fproc cp32_shell_state={.pid=2,.root_inode=1,.mask=0022,.cwd="/"};
+static struct cp32_fproc cp32_root_files;
+static struct cp32_fproc *cp32_active_files=&cp32_root_files;
+#define cp32_app_state (*cp32_active_files)
 #define cp32_shell_cwd cp32_shell_state.cwd
 static char cp32_shell_previous[CP32_MINIX_PATH_MAX+1];
 static unsigned cp32_tty_line_len;
@@ -120,11 +123,12 @@ CP32_IRAM_EXT static int cp32_shell_disk_write(unsigned offset,const char *p,int
 #include "app-payload.h"
 CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_update_apps(void)
 {
-  unsigned i;int r;
+  unsigned i,count=sizeof(cp32_update_entries)/sizeof(cp32_update_entries[0]);int r;
   cp32_shell_print("Updating /boot applications; keep power on.\r\n");
-  for(i=0;i<sizeof(cp32_update_entries)/sizeof(cp32_update_entries[0]);i++) {
-    cp32_shell_print(cp32_update_entries[i].path);cp32_shell_flush();
-    r=cp32_update_one(cp32_shell_disk_read,cp32_shell_disk_write,
+  for(i=0;i<=count;i++) {
+    cp32_shell_print(i==count ? "/readme":cp32_update_entries[i].path);cp32_shell_flush();
+    r=i==count ? cp32_update_readme(cp32_shell_disk_read,cp32_shell_disk_write,cp32_root_capacity()):
+      cp32_update_one(cp32_shell_disk_read,cp32_shell_disk_write,
                       cp32_root_capacity(),&cp32_update_entries[i]);
     if(r<0) {
       char number[4];unsigned error=-r;
@@ -705,6 +709,29 @@ CP32_IRAM_EXT int cp32_shell_app_read(void *context,uint32_t offset,
   }
   return 0;
 }
+/* Nonblocking TTY poll for MM-owned interruptible reads. FS never waits for
+ * a line on behalf of an application; the shell's own read remains blocking. */
+CP32_IRAM_EXT int cp32_shell_app_poll(char *buffer,unsigned count)
+{
+  char input[64];message request;int result;
+  if(count>sizeof(input))return -22;
+  if(!count)return 0;
+  cp32_shell_flush();
+  if(cp32_app_state.input)result=cp32_fd_read(cp32_app_state.input-1,input,count);
+  else {
+    memset(&request,0,sizeof(request));request.m_type=DEV_READ;
+    request.TTY_LINE=0;request.PROC_NR=FS_PROC_NR;request.COUNT=count;
+    request.ADDRESS=input;request.TTY_FLAGS=O_NONBLOCK;
+    result=_sendrec(TTY_PROC_NR,&request);
+    if(result!=OK || request.m_source!=TTY_PROC_NR || request.m_type!=TASK_REPLY ||
+       request.REP_PROC_NR!=FS_PROC_NR)return -5;
+    result=request.REP_STATUS;
+    if(result==SUSPEND)return -5;
+  }
+  if(result>0 && (unsigned)result<=count)memcpy(buffer,input,result);
+  return result>(int)count ? -5:result;
+}
+
 CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count)
 {
   char input[64];
@@ -721,6 +748,10 @@ CP32_IRAM_EXT int cp32_shell_app_input(char *buffer,unsigned count)
 
 /* Child fd 3..6 never exposes the shell's executable or redirected input fd.
  * Store backing fd+1 so zero-initialized state is empty. */
+#if defined(__XTENSA__)
+#pragma GCC push_options
+#pragma GCC optimize ("Os")
+#endif
 CP32_IRAM_EXT void cp32_shell_app_files_reset(void)
 { cp32_fproc_exit(&cp32_app_state); }
 CP32_IRAM_EXT int cp32_shell_app_files_start(unsigned pid)
@@ -731,27 +762,78 @@ CP32_IRAM_EXT int cp32_shell_app_files_start(unsigned pid)
   cp32_shell_state.input=0; /* shell launch owns the original redirect handle */
   return r;
 }
-CP32_IRAM_EXT int cp32_shell_app_files_fork(struct cp32_fproc *parent,unsigned pid)
+/* FS serializes registry changes with its file/cache operations. MM invokes
+ * clone_launch only while FS is blocked in the initial launch handshake. */
+CP32_IRAM_EXT int cp32_shell_clone_launch(struct cp32_fproc *dst,unsigned pid)
 {
   int r;
-  *parent=cp32_app_state;parent->suspended=cp32_fproc_suspended;
-  memset(&cp32_app_state,0,sizeof(cp32_app_state));
-  r=cp32_fproc_clone(&cp32_app_state,parent,pid);
-  if(r){cp32_app_state=*parent;cp32_app_state.suspended=0;}
-  else cp32_fproc_suspended=parent;
+  cp32_shell_state.input=cp32_shell_input_fd+1;
+  r=cp32_fproc_clone(dst,&cp32_shell_state,pid);
+  cp32_shell_state.input=0;
+  if(!r){dst->suspended=cp32_fproc_suspended;cp32_fproc_suspended=dst;}
   return r ? cp32_fs_errno(r):0;
 }
-CP32_IRAM_EXT void cp32_shell_app_files_exchange(struct cp32_fproc *other)
+CP32_IRAM_EXT int cp32_shell_clone_process(struct proc *parent,struct proc *child)
 {
-  struct cp32_fproc temp=cp32_app_state;
-  cp32_app_state=*other;temp.suspended=other->suspended;*other=temp;
-  cp32_app_state.suspended=0;cp32_fproc_suspended=other;
+  struct cp32_fork_state *lifecycle=child->p_files->lifecycle;
+  int r=cp32_fproc_clone(child->p_files,parent->p_files,(unsigned)child->p_pid);
+  child->p_files->lifecycle=lifecycle;
+  if(!r){child->p_files->suspended=cp32_fproc_suspended;cp32_fproc_suspended=child->p_files;}
+  return r ? cp32_fs_errno(r):0;
 }
-CP32_IRAM_EXT void cp32_shell_app_files_restore(struct cp32_fproc *parent)
+CP32_IRAM_EXT void cp32_runtime_select_fs(struct proc *p)
 {
-  cp32_fproc_exit(&cp32_app_state);
-  cp32_app_state=*parent;cp32_fproc_suspended=parent->suspended;
-  cp32_app_state.suspended=0;
+  struct cp32_fproc *next=p->p_files,**link=&cp32_fproc_suspended;
+  if(next==cp32_active_files)return;
+  while(*link && *link!=next)link=&(*link)->suspended;
+  if(!*link)panic("FS owner",NO_NUM);
+  *link=next->suspended;
+  if(cp32_active_files->pid) {
+    cp32_active_files->suspended=cp32_fproc_suspended;
+    cp32_fproc_suspended=cp32_active_files;
+  }
+  cp32_active_files=next;next->suspended=0;
+}
+CP32_IRAM_EXT void cp32_shell_drop_process(struct proc *p)
+{
+  struct cp32_fproc *files=p->p_files,**link=&cp32_fproc_suspended;
+  if(files==cp32_active_files)cp32_active_files=&cp32_root_files;
+  else {
+    while(*link && *link!=files)link=&(*link)->suspended;
+    if(!*link)panic("FS exit owner",NO_NUM);
+    *link=files->suspended;
+  }
+  cp32_fproc_exit(files);files->suspended=0;
+}
+CP32_IRAM_EXT struct cp32_fproc *cp32_shell_app_files_current(void)
+{ return cp32_active_files; }
+/* MINIX FS do_fork clones once. Each process retains this address across
+ * image switches; the suspended list indexes inactive namespace records. */
+int cp32_shell_app_files_fork(struct cp32_fproc *child,unsigned pid)
+{
+  int r=cp32_fproc_clone(child,cp32_active_files,pid);
+  if(r)return cp32_fs_errno(r);
+  cp32_active_files->suspended=cp32_fproc_suspended;
+  cp32_fproc_suspended=cp32_active_files;
+  cp32_active_files=child;
+  return 0;
+}
+void cp32_shell_app_files_exchange(struct cp32_fproc *other)
+{
+  struct cp32_fproc **link=&cp32_fproc_suspended;
+  while(*link && *link!=other)link=&(*link)->suspended;
+  if(!*link || !other->pid)panic("FS process owner",NO_NUM);
+  *link=other->suspended;
+  cp32_active_files->suspended=cp32_fproc_suspended;
+  cp32_fproc_suspended=cp32_active_files;
+  cp32_active_files=other;other->suspended=0;
+}
+void cp32_shell_app_files_restore(struct cp32_fproc *parent)
+{
+  struct cp32_fproc *child=cp32_active_files;
+  cp32_shell_app_files_exchange(parent);
+  cp32_fproc_suspended=child->suspended;
+  cp32_fproc_exit(child);
 }
 CP32_IRAM_EXT void cp32_shell_app_files_exec(void)
 { cp32_fproc_exec(&cp32_app_state); }
@@ -760,6 +842,10 @@ CP32_IRAM_EXT int cp32_shell_app_files_owner(unsigned pid)
 CP32_IRAM_EXT int cp32_shell_exec_open(const char *name,unsigned *size)
 { return cp32_fproc_exec_open(&cp32_app_state,cp32_shell_disk_read,cp32_root_capacity(),name,size); }
 CP32_IRAM_EXT void cp32_shell_exec_close(int fd) {cp32_fd_close(fd);}
+
+#if defined(__XTENSA__)
+#pragma GCC pop_options
+#endif
 
 /* Both records are nine 32-bit unsigned fields in the same declared order. */
 typedef char cp32_stat_layout_check[(sizeof(struct cp32_app_stat)==
@@ -873,12 +959,11 @@ CP32_IRAM_EXT __attribute__((noinline)) static void cp32_shell_test_progress(cha
 {
   if(cp32_shell_tty_io(DEV_WRITE,text,count)!=count)panic("test display",NO_NUM);
 }
-/* Removable acceptance runner. Each case starts at fork depth zero; do not
- * wrap tests in an application fork or nested tree tests lose a fork level.
- * Edit this list when the current feature's hardware checklist changes. */
+/* Removable acceptance runner. Start each case as a fresh foreground job
+ * and drain its adopted descendants before checking the next case. */
 CP32_IRAM_EXT static int cp32_shell_app_tests(int *fd,unsigned size)
 {
-  static const char *const cases[]={"--zombie"};
+  static const char *const cases[]={"--process","--signals","--orphan","--io-exec"};
   const char *argv[]={"hello",0};unsigned i;int result,status;
   cp32_shell_test_progress("\r\n",2);
   for(i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {

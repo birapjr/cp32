@@ -1,6 +1,7 @@
 /* MINIX read/write expose byte counts, including short transfers. Adapt the
  * bootstrap's bounded callbacks to standard streams and owned file handles. */
 #include "io.h"
+#include <stdint.h>
 int cp32_errno;
 static int io_error(int code) {cp32_errno=code;return -1;}
 static const struct cp32_app_services *api;
@@ -25,7 +26,8 @@ int cp32_read(int fd,void *buffer,unsigned count)
     return n<0 ? io_error(-n) : (unsigned)n>count ? io_error(CP32_EIO) : n;
   }
   n=api->read(buffer,count);
-  return n<0 || (unsigned)n>count ? io_error(CP32_EIO) : n;
+  if(n<0)return io_error(api->version>=37 ? -n:CP32_EIO);
+  return (unsigned)n>count ? io_error(CP32_EIO) : n;
 }
 int cp32_write(int fd,const void *buffer,unsigned count)
 {
@@ -43,7 +45,7 @@ int cp32_write(int fd,const void *buffer,unsigned count)
     if(chunk>(fd>=3 ? 64U:256U))chunk=fd>=3 ? 64:256;
     n=fd>=3 ? api->file(CP32_APP_WRITE,fd,(char *)buffer+done,chunk):api->write((const char *)buffer+done,chunk);
     if(n<0 || (unsigned)n>chunk) {
-      io_error(n<0 && fd>=3 ? -n:CP32_EIO);return done ? (int)done : -1;
+      io_error(n<0 && (fd>=3 || api->version>=37) ? -n:CP32_EIO);return done ? (int)done : -1;
     }
     if(!n) break;
     done+=(unsigned)n;
@@ -480,4 +482,10 @@ int cp32_signal(int signal,unsigned disposition)
 {
   if(!api || api->version<32 || !api->file)return io_error(CP32_ENOSYS);
   return file_call(CP32_APP_SIGNAL,signal,0,disposition);
+}
+
+int cp32_signal_handler(int signal,cp32_sighandler_t handler)
+{
+  if(!api || api->version<37 || !api->file)return io_error(CP32_ENOSYS);
+  return file_call(CP32_APP_SIGNAL,signal,0,(unsigned)(uintptr_t)handler);
 }

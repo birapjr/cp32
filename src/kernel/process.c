@@ -56,11 +56,12 @@ CP32_IRAM_EXT int cp32_proc_clone(int parent,int child,int pid,int broker)
   if(parent<=LOW_USER || parent>=NR_PROCS || child<=LOW_USER ||
      child>=NR_PROCS || parent==child || pid<=0)return EINVAL;
   p=proc_addr(parent);c=proc_addr(child);
-  if(p->p_shadow || p->p_pid<=0 || p->p_pid>30000 || p->p_flags!=RECEIVING || p->p_getfrom!=broker ||
+  if(p->p_exitstatus || (p->p_shadow && broker!=MM_PROC_NR) || p->p_pid<=0 || p->p_pid>30000 || p->p_flags!=RECEIVING || p->p_getfrom!=broker ||
      !p->p_messbuf || !p->p_reg.pc || !p->p_reg.sp ||
      c->p_flags!=P_SLOT_FREE || !process_detached(c))return EINVAL;
   if(!process_pid_free(pid))return EINVAL;
   *c=*p;c->p_nr=child;c->p_pid=pid;c->p_flags=NO_MAP|RECEIVING;
+  c->p_files=0; /* FS clone must commit a distinct record before publication. */
   c->p_exitstatus=0;
   c->p_app_pending=0; /* MINIX fork inherits masks/dispositions, not pending signals. */
   c->p_parent_pid=p->p_pid; /* Heap bounds inherit with the copied record. */
@@ -77,7 +78,7 @@ CP32_IRAM_EXT int cp32_proc_publish(struct proc *p)
 {
   unsigned base,bytes,sp;int segment;
   if(!p || p->p_nr<=LOW_USER || p->p_nr>=NR_PROCS || proc_addr(p->p_nr)!=p ||
-     p->p_shadow || p->p_flags!=NO_MAP || p->p_pid<=0 || !process_detached(p))return EINVAL;
+     p->p_exitstatus || p->p_shadow || p->p_flags!=NO_MAP || p->p_pid<=0 || !process_detached(p))return EINVAL;
   sp=p->p_reg.sp;
   /* Flat internal SRAM: D and S must describe identity-mapped storage. */
   for(segment=D;segment<=S;segment++) {
@@ -99,12 +100,12 @@ CP32_IRAM_EXT int cp32_proc_release(struct proc *p)
   if(!p || p->p_nr<=LOW_USER || p->p_nr>=NR_PROCS || proc_addr(p->p_nr)!=p ||
      p->p_shadow || !process_detached(p))return EINVAL;
   if(p->p_flags!=NO_MAP && p->p_flags!=P_ZOMBIE &&
-     !(p->p_flags==RECEIVING && p->p_getfrom==FS_PROC_NR))return EINVAL;
+     !(p->p_flags==RECEIVING && (p->p_getfrom==FS_PROC_NR || p->p_getfrom==MM_PROC_NR)))return EINVAL;
   nr=p->p_nr;
   /* This foreground broker is the parent. Cancellation of NO_MAP is not
    * an exit and must not contribute usage. MINIX system.c do_xit includes
    * descendants' accumulated times before clearing the child descriptor. */
-  if(p->p_flags==RECEIVING) {
+  if(p->p_flags==RECEIVING && p->p_getfrom==FS_PROC_NR) {
     struct proc *parent=proc_addr(FS_PROC_NR);
     parent->child_utime+=p->user_time+p->child_utime;
     parent->child_stime+=p->sys_time+p->child_stime;

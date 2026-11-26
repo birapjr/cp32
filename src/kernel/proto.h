@@ -66,6 +66,8 @@ _PROTOTYPE( void clock_stop, (void)					);
 _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( void systimer_irq_start, (void)			);
 _PROTOTYPE( void cp32_timer_irq_dispatch, (cp32_irq_frame_t *frame) );
+_PROTOTYPE( void cp32_trace_exception_stack, (unsigned kind) );
+_PROTOTYPE( void cp32_prepare_return, (struct proc *rp) );
 _PROTOTYPE( void cp32_irq_dispatch, (cp32_irq_frame_t *frame, uint32_t pending) );
 _PROTOTYPE( void syn_alrm_task, (void)					);
 

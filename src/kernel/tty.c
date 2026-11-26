@@ -62,6 +62,9 @@
 
 
 
+/* MM owns blocked application reads; nonblocking TTY polls must keep the
+ * visible cursor active between polls until completion or interruption. */
+extern int cp32_runtime_read_pending(void);
 static unsigned cp32_tty_read_reports;
 static volatile int cp32_console_ready;
 FORWARD _PROTOTYPE( void in_transfer, (tty_t *tp) );
@@ -791,7 +794,7 @@ tty_t *tp;			/* TTY to check for events. */
 	tp->tty_inleft = tp->tty_incum = 0;
   }
   if(tp==tty_addr(0))
-    cardputer_display_cursor(tp->tty_inleft>0 &&
+    cardputer_display_cursor((tp->tty_inleft>0 || cp32_runtime_read_pending()) &&
       (tp->tty_termios.c_lflag & ECHO), (unsigned)get_uptime());
 }
 

@@ -7,10 +7,9 @@ import test_fork as f
 from test_idle_handoff import extract_function
 pre=f.pre.replace('refs,position,fail_dup','refs,fail_dup').replace('int m_type,m_source,m1_i1;', 'int m_type,m_source,m1_i1,m1_i2,m1_i3;char *m1_p1;')
 pre=pre.replace('unsigned a[16],pc,sp;', 'unsigned a[16],pc,sp,psw;')
-pre=pre.replace(' void *p_stguard;', ' struct {unsigned mem_vir,mem_phys,mem_len;} p_map[3];char p_name[16];\n void *p_stguard;')
+pre=pre.replace('message *p_messbuf;', ' struct {unsigned mem_vir,mem_phys,mem_len;} p_map[3];char p_name[16]; message *p_messbuf;')
 extra=r'''
-static struct {unsigned signal,cause,pc;} app_fault;
-static unsigned application_fault_take(int);
+static unsigned application_fault_take(struct proc *);
 static int faults,yielding;
 static void usbj_print(const char *s){(void)s;}
 static void usbj_print_u32(unsigned n){(void)n;}
@@ -61,6 +60,7 @@ struct cp32_app_times {unsigned user,system,children_user,children_system,uptime
 static int application_times(struct proc *,message *);
 static unsigned get_uptime(void){assert(locked);return 1234;}
 static int application_replace(struct proc *p,message *m,uint32_t *fl,uint32_t *br){(void)p;(void)m;(void)fl;(void)br;return -8;}
+static volatile unsigned application_io_pins;
 static int application_file_request(message *m){(void)m;return -22;}
 static int application_break(uint32_t f,uint32_t *b,int n){(void)f;(void)b;(void)n;return -1;}
 static void output(const char *p,unsigned n){(void)p;(void)n;assert(0);}
@@ -207,7 +207,7 @@ static int receive(int endpoint,message *m){
    case 5:assert(endpoint==5 && live[0]==0x33);m->m1_i1=CP32_APP_YIELD;break;
    case 6:assert(endpoint==4 && live[0]==0x22);m->m1_i1=CP32_APP_WAITPID;m->m1_i2=102;m->m1_p1=(char *)CP32_APP_DATA;break;
    case 7:assert(endpoint==5);m->m1_i1=CP32_APP_YIELD;break;
-   case 8:assert(endpoint==5);p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=7;if(yielding==5)app_fault.signal=11;break;
+   case 8:assert(endpoint==5);p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=7;if(yielding==5)p->p_exitstatus=11;break;
    case 9:assert(endpoint==4 && live[0]==0x22);m->m1_i1=CP32_APP_YIELD;break;
    case 10:assert(endpoint==3 && live[0]==0xa5);m->m1_i1=CP32_APP_WAITPID;m->m1_i2=101;break;
    case 11:assert(endpoint==4 && live[0]==0x22);p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;break;
@@ -222,7 +222,7 @@ static int receive(int endpoint,message *m){
    case 3:assert(endpoint==3 && live[16384]==0xa5);memset(live,0x33,sizeof(live));m->m_type=APP_FILE;m->m1_i1=CP32_APP_YIELD;break;
    case 4:assert(endpoint==4 && live[0]==0x22);memset(live,0x44,sizeof(live));m->m_type=APP_FILE;m->m1_i1=CP32_APP_YIELD;break;
    case 5:assert(endpoint==3 && live[0]==0x33);m->m_type=APP_FILE;m->m1_i1=CP32_APP_WAITPID;m->m1_i2=101;m->m1_p1=(char *)CP32_APP_DATA;
-    if(yielding>1){m->m_type=APP_EXIT;m->m1_i1=23;if(yielding==3)app_fault.signal=4;}break;
+    if(yielding>1){m->m_type=APP_EXIT;m->m1_i1=23;if(yielding==3)p->p_exitstatus=4;}break;
    case 6:assert(endpoint==4 && live[0]==0x44);m->m_type=APP_FILE;m->m1_i1=CP32_APP_YIELD;break;
    case 7:assert(endpoint==4);p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=7;break;
    default:assert(endpoint==3 && received==9);m->m_type=APP_EXIT;break;
@@ -232,13 +232,13 @@ static int receive(int endpoint,message *m){
  case 0:assert(endpoint==3);m->m_type=APP_FILE;m->m1_i1=CP32_APP_FORK;break;
  case 1:case 2:assert(endpoint==4);m->m_type=APP_FILE;m->m1_i1=received==2 ? CP32_APP_SETSID:CP32_APP_GETPGRP;break;
  case 3:assert(endpoint==4);memset(live,0x22,sizeof(live));m->m_type=APP_FILE;m->m1_i1=CP32_APP_FORK;break;
- case 4:assert(endpoint==5);memset(live,0x33,sizeof(live));p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=9;if(faults)app_fault.signal=11;break;
+ case 4:assert(endpoint==5);memset(live,0x33,sizeof(live));p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=9;if(faults)p->p_exitstatus=11;break;
  case 5:assert(endpoint==4 && cp32_app_state.pid==101 && live[0]==0x22);m->m_type=APP_FILE;m->m1_i1=CP32_APP_WAITPID;m->m1_i2=0;m->m1_p1=(char *)CP32_APP_DATA;break;
- case 6:assert(endpoint==4);p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=7;if(faults)app_fault.signal=4;break;
+ case 6:assert(endpoint==4);p->user_time=2;p->sys_time=3;m->m_type=APP_EXIT;m->m1_i1=7;if(faults)p->p_exitstatus=4;break;
  case 7:assert(endpoint==3 && cp32_app_state.pid==100 && !memcmp(live,original,sizeof(live)));m->m_type=APP_FILE;m->m1_i1=CP32_APP_WAITPID;m->m1_i2=-101;m->m1_p1=(char *)CP32_APP_DATA;break;
  case 8:assert(endpoint==3);m->m_type=APP_FILE;m->m1_i1=CP32_APP_TIMES;m->m1_i3=20;m->m1_p1=(char *)CP32_APP_DATA;break;
  case 9:assert(endpoint==3);m->m_type=APP_FILE;m->m1_i1=CP32_APP_TIMES;m->m1_i3=20;m->m1_p1=(char *)(CP32_APP_TOP-1);break;
- default:assert(endpoint==3 && received==11);m->m_type=APP_EXIT;if(faults)app_fault.signal=4;break;
+ default:assert(endpoint==3 && received==11);m->m_type=APP_EXIT;if(faults)p->p_exitstatus=4;break;
  }return 0;
 }
 static int send(int endpoint,message *m){
@@ -306,10 +306,10 @@ static int send(int endpoint,message *m){
 fs=f.fs+'\nstatic void cp32_shell_app_files_reset(void){cp32_fproc_exit(&cp32_app_state);}\n'
 functions='\n'.join(extract_function(f.root/'src/kernel/process.c',n) for n in ('cp32_proc_reserve','cp32_proc_publish'))
 functions+=extract_function(f.root/'src/kernel/context.c','cp32_exec_frame')
-functions+=extract_function(f.root/'src/kernel/application.c','cp32_trace_app_fault')
-functions+=extract_function(f.root/'src/kernel/application.c','application_fault_take')
-functions+=extract_function(f.root/'src/kernel/application.c','application_times').replace('memcpy((void *)p,&t,sizeof(t));','memcpy(live+16384+p-CP32_APP_DATA,&t,sizeof(t));')
-run=extract_function(f.root/'src/kernel/application.c','cp32_application_run')
+functions+=extract_function(f.root/'tests/mm/application_legacy.c','cp32_trace_app_fault')
+functions+=extract_function(f.root/'tests/mm/application_legacy.c','application_fault_take')
+functions+=extract_function(f.root/'tests/mm/application_legacy.c','application_times').replace('memcpy((void *)p,&t,sizeof(t));','memcpy(live+16384+p-CP32_APP_DATA,&t,sizeof(t));')
+run=extract_function(f.root/'tests/mm/application_legacy.c','cp32_application_run')
 run=run.replace('__asm__ volatile("memw\\n\\tisync" ::: "memory");','syncs++;')
 run=run.replace('memset((void *)old,0,child->p_heap_break-old);','memset(live+16384+old-CP32_APP_DATA,0,child->p_heap_break-old);')
 run=run.replace('memset((void *)CP32_APP_STACK,0,CP32_APP_TOP-CP32_APP_STACK);','/* fake loader supplies backing bytes */')
@@ -320,7 +320,7 @@ int main(int argc,char **argv){
  for(int n=3;n<NR_PROCS;n++){procs[n].p_nr=n;procs[n].p_flags=P_SLOT_FREE;}
  const char *args[]={"hello"};int status=-1;
  assert(!cp32_application_run(0,0,0,1,args,output,&status));
- assert(status==(yielding==16 || yielding==18 ? 143:yielding==17 ? 137:yielding==14 ? 138:yielding==12 ? 143:yielding==9 ? 137:yielding==3 || faults ? 132:yielding==2 ? 23:0) && !app_fault.signal && !app_busy && app_endpoint==-1);
+ assert(status==(yielding==16 || yielding==18 ? 143:yielding==17 ? 137:yielding==14 ? 138:yielding==12 ? 143:yielding==9 ? 137:yielding==3 || faults ? 132:yielding==2 ? 23:0) && !procs[3].p_exitstatus && !app_busy && app_endpoint==-1);
  assert(received==(yielding>=15 ? (yielding==20 ? 9:yielding==19 ? 8:yielding==15 ? 8:yielding==16 ? 5:yielding==17 ? 3:4):yielding==13 ? 14:yielding>=10 ? ((yielding==12 || yielding==14) ? 6:12):yielding>=6 ? (yielding==9 ? 7:yielding==7 ? 4:8):yielding>=4 ? 13:yielding ? (yielding>1 ? 8:9):11) && replied==(yielding>=15 ? (yielding==20 ? 8:yielding==19 ? 7:yielding==15 ? 7:yielding==16 ? 4:yielding==17 ? 2:3):yielding==13 ? 13:yielding>=10 ? ((yielding==12 || yielding==14) ? 5:11):yielding>=6 ? (yielding==9 ? 6:yielding==7 ? 3:7):yielding>=4 ? 12:yielding ? (yielding>1 ? 7:8):10));
  assert(!allocated && allocs==frees && !refs && !cp32_fproc_suspended);
  assert(procs[3].p_flags==P_SLOT_FREE && procs[4].p_flags==P_SLOT_FREE && procs[5].p_flags==P_SLOT_FREE);

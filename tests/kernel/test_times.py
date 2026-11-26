@@ -5,7 +5,7 @@ sys.dont_write_bytecode=True
 root=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(root/'tests'))
 from test_idle_handoff import extract_function
-source=extract_function(root/'src/kernel/application.c','application_times')
+source=extract_function(root/'tests/mm/application_legacy.c','application_times')
 pre=r'''
 #include <assert.h>
 #include <stdint.h>

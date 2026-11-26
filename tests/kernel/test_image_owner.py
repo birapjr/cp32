@@ -1,4 +1,4 @@
-"""Process-owned backing images: commit, transfer, rollback and final release."""
+"""Process-owned backing images: commit, stable ownership, rollback and final release."""
 from pathlib import Path
 import subprocess,tempfile,sys
 sys.dont_write_bytecode=True
@@ -13,28 +13,46 @@ int main(void){
   fail_dup=1;assert(cp32_fork_start(&active,200)==-24 && !active->p_shadow);fail_dup=0;
   assert(!cp32_fork_start(&active,200));
   active->p_flags=RECEIVING;active->p_getfrom=FS_PROC_NR;
-  assert(procs[3].p_shadow==123 && !active->p_shadow && allocated==1);
+  assert(procs[3].p_shadow==122 && !active->p_shadow && allocated==1);
+  /* Generic activation has no FS/continuation side effects or allocations. */
+  struct cp32_fproc *selected=cp32_active_files;
+  struct cp32_fork_state *context=active_state;
+  message continuation=context->resume;int allocations=allocs,releases=frees;
+  live[0]=0x55;
+  int irq=lock_save();
+  window_busy=1;assert(cp32_image_activate(procs+3)==-16 && image_owner==active);window_busy=0;
+  assert(cp32_image_activate(procs+6)==-22 && image_owner==active);
+  assert(cp32_image_activate(0)==-22 && image_owner==active);
+  assert(!cp32_image_activate(procs+3));
+  assert(live[0]==original[0] && stage(123)[0]==0x55 && image_owner==procs+3);
+  assert(cp32_active_files==selected && active_state==context && !memcmp(&continuation,&context->resume,sizeof(continuation)));
+  assert(allocs==allocations && frees==releases);
+  assert(!cp32_image_activate(procs+3)); /* resident selection is a no-op */
+  assert(!cp32_image_activate(active) && live[0]==0x55 && image_owner==active);
+  assert(cp32_active_files==selected && active_state==context && allocs==allocations && frees==releases);
+  restore_lock(irq);
   struct proc saved=procs[3];
   assert(cp32_proc_release(procs+3)==EINVAL && !memcmp(&saved,procs+3,sizeof(saved)));
   assert(cp32_proc_clone(3,5,201,FS_PROC_NR)==EINVAL);
   assert(!cp32_fork_start(&active,201));
   active->p_flags=RECEIVING;active->p_getfrom=FS_PROC_NR;
-  assert(procs[3].p_shadow==123 && procs[4].p_shadow==124 && !active->p_shadow);
+  assert(procs[3].p_shadow==122 && procs[4].p_shadow==123 && !active->p_shadow);
   for(int i=0;i<3;i++) {
    assert(cp32_fork_handoff(&active,&request)==(i ? 0:201));
-   assert(active==procs+4 && !active->p_shadow && procs[5].p_shadow==124 && procs[3].p_shadow==123);
+   assert(active==procs+4 && !active->p_shadow && procs[5].p_shadow==124 && procs[3].p_shadow==122);
    assert(cp32_fork_handoff(&active,&request)==0);
-   assert(active==procs+5 && !active->p_shadow && procs[4].p_shadow==124);
+   assert(active==procs+5 && !active->p_shadow && procs[4].p_shadow==123);
   }
   assert(cp32_fork_finish(&active,0,0)==201 && !active->p_shadow && !inuse[1]);
-  assert(cp32_fork_wait(201,0,0)==201 && procs[3].p_shadow==123);
+  assert(cp32_fork_wait(201,0,0)==201 && procs[3].p_shadow==122);
   assert(cp32_fork_handoff(&active,&request)==200);
   assert(active==procs+3 && !active->p_shadow && procs[4].p_shadow==123);
   assert(cp32_fork_handoff(&active,&request)==0);
-  assert(active==procs+4 && !active->p_shadow && procs[3].p_shadow==123);
+  assert(active==procs+4 && !active->p_shadow && procs[3].p_shadow==122);
   assert(cp32_fork_finish(&active,0,0)==200 && !active->p_shadow);
   assert(cp32_fork_wait(200,0,0)==200 && !allocated && allocs==frees && refs==1);
   for(int n=3;n<NR_PROCS;n++)assert(!procs[n].p_shadow);
+  assert(root_inuse);cp32_fork_reset();assert(!root_inuse && !image_owner);
  }
  puts("image owner: allocation rollback, parked release/clone rejection, nested exchanges and cleanup PASS");
 }
